@@ -1,0 +1,7 @@
+# 已省略AstrBot在用的常见依赖
+
+xxhash>=3.6.0,<4.0.0
+apscheduler>=3.0,<4.0
+cachetools>=7.0.0,<8.0.0
+lancedb>=0.30.0,<1.0.0
+fastembed>=0.8.0,<1.0.0

@@ -1,0 +1,188 @@
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.star import Context
+
+from .xml_parse import (
+    Decision,
+    MediaCaption,
+    XmlLlmResult,
+    XmlParse,
+)
+
+
+class CallLLM:
+    def __init__(
+        self,
+        context: Context,
+        xml_parse: XmlParse,
+        network_config: dict,
+        caption_config: dict,
+    ):
+        self.context = context
+        self.xml_parse = xml_parse
+        self.network_conf = network_config
+        # 图片转述配置
+        self.image_caption_provider_ids = [
+            caption_config.get("image_caption_provider_id", "")
+        ] + caption_config.get("image_caption_fallback_provider_ids", [])
+        self.image_caption_prompt = caption_config.get(
+            "image_caption_system_prompt", ""
+        )
+        # 音频转述配置
+        self.audio_caption_provider_ids = [
+            caption_config.get("audio_caption_provider_id", "")
+        ] + caption_config.get("audio_caption_fallback_provider_ids", [])
+        self.audio_caption_prompt = caption_config.get(
+            "audio_caption_system_prompt", ""
+        )
+
+    async def call_llm_decision(
+        self, provider_ids: list[str], system_prompt: str, user_prompt: str
+    ) -> Decision | None:
+        """调用LLM进行决策"""
+        # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
+        # logger.info(f"\n<user_prompt>{user_prompt}</user_prompt>")
+        for provider_id in provider_ids:
+            for i in range(self.network_conf["decision_retry_times"]):
+                if i > 0:
+                    logger.warning(f"LLM决策失败，{provider_id} 重试第 {i} 次")
+                try:
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        system_prompt=system_prompt,
+                        prompt=user_prompt,
+                    )
+                    if llm_resp.completion_text:
+                        logger.info(
+                            f"\n<completion>{llm_resp.completion_text}</completion>"
+                        )
+                        return self.xml_parse.decode_decision_xml(
+                            llm_resp.completion_text
+                        )
+                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                    continue
+                except Exception as e:
+                    logger.error(f"LLM回复失败: {str(e)}")
+                    continue
+        return None
+
+    async def call_llm_reply(
+        self,
+        event: AstrMessageEvent,
+        group_or_user_id: str,
+        provider_ids: list[str],
+        system_prompt: str,
+        user_prompt: str,
+        timeout: int = 120,
+        use_source_tools: bool = False,
+        image_urls: list[str] | None = None,
+        audio_urls: list[str] | None = None,
+    ) -> XmlLlmResult | None:
+        """调用LLM进行回复"""
+        # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
+        # logger.info(f"\n<user_prompt>{user_prompt}</user_prompt>")
+        for provider_id in provider_ids:
+            for i in range(self.network_conf["reply_retry_times"]):
+                if i > 0:
+                    logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
+                try:
+                    if use_source_tools:
+                        tools_set = (
+                            self.context.get_llm_tool_manager().get_full_tool_set()
+                        )
+                        for tool in tools_set.tools[:]:
+                            if not tool.active:
+                                tools_set.remove_tool(tool.name)
+                        llm_resp = await self.context.tool_loop_agent(
+                            event=event,
+                            chat_provider_id=provider_id,
+                            system_prompt=system_prompt,
+                            prompt=user_prompt,
+                            image_urls=image_urls,
+                            audio_urls=audio_urls,
+                            tools=tools_set,
+                            max_steps=10,
+                            tool_call_timeout=timeout,
+                        )
+                    else:
+                        llm_resp = await self.context.tool_loop_agent(
+                            event=event,
+                            chat_provider_id=provider_id,
+                            system_prompt=system_prompt,
+                            prompt=user_prompt,
+                            image_urls=image_urls,
+                            audio_urls=audio_urls,
+                            tool_call_timeout=timeout,
+                        )
+                    if llm_resp.tools_call_name:
+                        logger.info(
+                            f"\n<tools_call>{llm_resp.tools_call_name}</tools_call>"
+                        )
+                    if llm_resp.reasoning_content:
+                        logger.info(
+                            f"\n<reasoning>{llm_resp.reasoning_content}</reasoning>"
+                        )
+                    if llm_resp.completion_text:
+                        logger.info(
+                            f"\n<completion>{llm_resp.completion_text}</completion>"
+                        )
+                        result = await self.xml_parse.decode_llm_xml(
+                            llm_resp.completion_text, group_or_user_id
+                        )
+                        return result
+                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                    continue
+                except Exception as e:
+                    logger.error(f"LLM回复失败: {str(e)}")
+                    continue
+        return None
+
+    async def call_llm_image_caption(
+        self, image_urls: list[str]
+    ) -> MediaCaption | None:
+        """调用LLM生成图片描述"""
+        for provider_id in self.image_caption_provider_ids:
+            for i in range(self.network_conf["image_caption_retry_times"]):
+                if i > 0:
+                    logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
+                try:
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=self.image_caption_prompt,
+                        image_urls=image_urls,
+                    )
+                    if llm_resp.completion_text:
+                        return self.xml_parse.decode_media_caption_xml(
+                            llm_resp.completion_text
+                        )
+                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                    continue
+                except Exception as e:
+                    logger.error(f"LLM回复失败: {str(e)}")
+                    continue
+        return None
+
+    async def call_llm_audio_caption(
+        self, audio_urls: list[str]
+    ) -> MediaCaption | None:
+        """调用LLM生成音频描述"""
+        for provider_id in self.audio_caption_provider_ids:
+            for i in range(self.network_conf["audio_caption_retry_times"]):
+                if i > 0:
+                    logger.warning(f"LLM生成音频描述失败，{provider_id} 重试第 {i} 次")
+                try:
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=self.audio_caption_prompt,
+                        audio_urls=audio_urls,
+                    )
+                    if llm_resp.completion_text:
+                        return self.xml_parse.decode_media_caption_xml(
+                            llm_resp.completion_text
+                        )
+                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                    continue
+                except Exception as e:
+                    logger.error(f"LLM回复失败: {str(e)}")
+                    continue
+        return None

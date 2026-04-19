@@ -1,0 +1,417 @@
+{
+    "bot_template": {
+        "type": "template_list",
+        "description": "机器人",
+        "hint": "可添加多个机器人，每个机器人的记忆独立",
+        "templates": {
+            "bot_conf": {
+                "name": "机器人",
+                "items": {
+                    "enabled": {
+                        "type": "bool",
+                        "description": "启用机器人",
+                        "default": false,
+                        "hint": "启用机器人"
+                    },
+                    "name": {
+                        "description": "机器人名称",
+                        "hint": "名称必须唯一，用于索引机器人配置",
+                        "type": "str",
+                        "default": ""
+                    },
+                    "adapter_ids": {
+                        "description": "适配器ID列表",
+                        "hint": "通过 /sid 可查看机器人ID，与适配器配置里面填写的机器人名称是一致的。用于多适配器共享记忆或者更换适配器后回溯记忆使用，但是聊天记录的用户ID依旧是原始账号的，且当前记忆依旧是按群隔离的。",
+                        "type": "list",
+                        "default": []
+                    },
+                    "decision_conf": {
+                        "type": "object",
+                        "description": "小模型判断配置",
+                        "items": {
+                            "enabled": {
+                                "type": "bool",
+                                "description": "启用小模型判断功能",
+                                "default": true,
+                                "hint": "启用小模型判断功能，如果关闭，将不会触发主动回复功能。"
+                            },
+                            "provider_id": {
+                                "type": "string",
+                                "description": "小模型提供商",
+                                "_special": "select_provider",
+                                "default": "",
+                                "hint": "留空将跳过使用小模型判断功能。如果使用谷歌API，建议关闭原生搜索功能，否则很容易429"
+                            },
+                            "fallback_provider_ids": {
+                                "description": "回退提供商",
+                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                                "type": "list",
+                                "default": []
+                            },
+                            "decision_prompt": {
+                                "type": "text",
+                                "editor_mode": true,
+                                "editor_language": "markdown",
+                                "description": "小模型判断系统提示词",
+                                "default": "",
+                                "hint": "小模型判断的系统提示词。当前仅支持修改系统提示词，如果要修改用户提示词，请直接修改prompt.py文件。"
+                            }
+                        }
+                    },
+                    "llm_reply_conf": {
+                        "type": "object",
+                        "description": "大模型回复配置",
+                        "items": {
+                            "enabled": {
+                                "type": "bool",
+                                "description": "启用大模型回复功能",
+                                "default": false,
+                                "hint": "启用大模型回复功能"
+                            },
+                            "provider_id": {
+                                "type": "string",
+                                "description": "大模型回复提供商",
+                                "_special": "select_provider",
+                                "default": "",
+                                "hint": "留空将跳过使用大模型回复功能"
+                            },
+                            "fallback_provider_ids": {
+                                "description": "回退提供商",
+                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                                "type": "list",
+                                "default": []
+                            },
+                            "llm_reply_prompt": {
+                                "type": "text",
+                                "editor_mode": true,
+                                "editor_language": "markdown",
+                                "description": "大模型回复系统提示词",
+                                "default": "",
+                                "hint": "大模型回复的系统提示词。当前仅支持修改系统提示词，如果要修改用户提示词，请直接修改prompt.py文件。"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "msg_history": {
+        "description": "消息历史配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "msg_number": {
+                "description": "消息历史数量",
+                "type": "int",
+                "default": 50,
+                "hint": "消息历史数量"
+            }
+        }
+    },
+    "caption_config": {
+        "description": "媒体转述配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "image_caption_enabled": {
+                "description": "启用图片转述",
+                "type": "bool",
+                "default": true,
+                "hint": "即使关闭图片转述，当前消息的图片仍然会与提示词一起发送给LLM。"
+            },
+            "image_caption_provider_id": {
+                "type": "string",
+                "description": "图片转述提供商",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "若不填写则不启用。"
+            },
+            "image_caption_fallback_provider_ids": {
+                "description": "回退提供商",
+                "hint": "当主图片转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+                "type": "list",
+                "default": []
+            },
+            "image_caption_system_prompt": {
+                "type": "text",
+                "editor_mode": true,
+                "editor_language": "markdown",
+                "description": "图片转述系统提示词",
+                "default": "",
+                "hint": "图片转述的系统提示词。依旧是只能修改系统提示词。"
+            },
+            "audio_caption_enabled": {
+                "description": "启用音频转述",
+                "type": "bool",
+                "default": true,
+                "hint": "即使关闭音频转述，当前消息的音频仍然会与提示词一起发送给LLM。"
+            },
+            "audio_caption_provider_id": {
+                "type": "string",
+                "description": "音频转述提供商",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "若不填写则不启用。"
+            },
+            "audio_caption_fallback_provider_ids": {
+                "description": "回退提供商",
+                "hint": "当主音频转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+                "type": "list",
+                "default": []
+            },
+            "audio_caption_system_prompt": {
+                "type": "text",
+                "editor_mode": true,
+                "editor_language": "markdown",
+                "description": "音频转述系统提示词",
+                "default": "",
+                "hint": "音频转述的系统提示词。依旧是只能修改系统提示词。"
+            }
+        }
+    },
+    "normal_config": {
+        "description": "常规配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "min_reply_interval": {
+                "description": "多条消息最小回复间隔",
+                "type": "int",
+                "default": 2,
+                "hint": "多条消息最小回复间隔"
+            },
+            "max_reply_interval": {
+                "description": "多条消息最大回复间隔",
+                "type": "int",
+                "default": 5,
+                "hint": "多条消息最大回复间隔"
+            },
+            "energy_recovery_interval": {
+                "description": "多少秒能量恢复一个单位能量",
+                "type": "int",
+                "default": 120,
+                "hint": "多少秒能量恢复一个单位能量。防止机器人把自己能量调到最低假死。"
+            }
+        }
+    },
+    "network_config": {
+        "description": "网络配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "decision_retry_times": {
+                "description": "决策请求重试上限",
+                "type": "int",
+                "default": 2,
+                "hint": "决策请求重试上限"
+            },
+            "reply_retry_times": {
+                "description": "回复请求重试上限",
+                "type": "int",
+                "default": 2,
+                "hint": "回复请求重试上限"
+            },
+            "image_caption_retry_times": {
+                "description": "图片转述重试上限",
+                "type": "int",
+                "default": 2,
+                "hint": "图片转述重试上限"
+            },
+            "audio_caption_retry_times": {
+                "description": "音频转述重试上限",
+                "type": "int",
+                "default": 2,
+                "hint": "音频转述重试上限"
+            }
+        }
+    },
+    "concurrent_config": {
+        "description": "并发配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "concurrent_strategy": {
+                "description": "并发策略",
+                "type": "string",
+                "options": [
+                    "stall",
+                    "discard"
+                ],
+                "default": "discard",
+                "hint": "stall：挂起超过限制数量的后续消息。discard：丢弃超过限制数量的后续消息。仅影响小模型判断和大模型回复，不影响图片等媒体转述，也不影响消息记录。"
+            },
+            "concurrent_limit": {
+                "description": "并发限制",
+                "type": "int",
+                "default": 2,
+                "hint": "并发限制，超过并发限制将根据策略处理后续消息。"
+            },
+            "user_throttle_time": {
+                "description": "用户节流时间",
+                "type": "int",
+                "default": 10,
+                "hint": "同一用户在X秒内连续发送的消息，只有第一条会被决策系统处理"
+            },
+            "group_throttle_time": {
+                "description": "群组节流时间",
+                "type": "int",
+                "default": 5,
+                "hint": "同一群组在X秒内连续发送的消息，只有第一条会被决策系统处理"
+            }
+        }
+    },
+    "tools_config": {
+        "description": "函数调用工具",
+        "type": "object",
+        "hint": "本插件的内置工具均以XML格式提供，这里不再写开关，直接在系统提示词中加入/删除XML代码即可。",
+        "items": {
+            "use_source_tools": {
+                "description": "启用原生函数调用工具",
+                "type": "bool",
+                "default": true,
+                "hint": "启用原生的函数调用工具，需提供商支持。无论是否启用此项，XML工具都可以被调用。"
+            },
+            "max_loop": {
+                "description": "工具调用轮数上限",
+                "type": "int",
+                "default": 10,
+                "hint": "工具调用轮数上限，超过轮数上限将停止调用工具。"
+            },
+            "timeout": {
+                "description": "工具调用超时时间",
+                "type": "int",
+                "default": 300,
+                "hint": "工具调用超时时间，单位秒，超过超时时间将停止调用工具，每个工具独立计时"
+            }
+        }
+    },
+    "memory_config": {
+        "description": "记忆检索配置",
+        "type": "object",
+        "hint": "当前仅支持本地模型，且仅支持CPU计算。启用此功能需预留至少2GB硬盘空间以及3GB空闲内存。可以使用 /读取记忆 <群号> <问题> 来测试记忆检索功能以及查看相关性得分。",
+        "items": {
+            "embedding_conf": {
+                "type": "object",
+                "description": "嵌入模型配置",
+                "items": {
+                    "enabled": {
+                        "description": "启用嵌入模型",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "只有当启动嵌入模型的时候，才支持写入和查询长期记忆。"
+                    },
+                    "model": {
+                        "description": "模型名称",
+                        "type": "string",
+                        "default": "BAAI/bge-small-zh-v1.5",
+                        "hint": "嵌入模型名称。FastEmbed并不官方支持通用模型，且支持的模型名单上并没有BAAI/bge-base-zh-v1.5。如需修改，可用 /打印embedding模型 在控制台查看支持的模型列表。更换模型后需手动删除插件数据目录下的lancedb文件夹。"
+                    },
+                    "top_k": {
+                        "description": "返回记忆数量",
+                        "type": "int",
+                        "default": 10,
+                        "hint": "最多返回多少条余弦相似性最低的记忆。"
+                    },
+                    "threshold": {
+                        "description": "阈值",
+                        "type": "float",
+                        "default": 0.7,
+                        "hint": "余弦相似度阈值，高于该阈值的记忆将不会被返回。"
+                    }
+                }
+            },
+            "rerank_conf": {
+                "type": "object",
+                "description": "重排模型配置",
+                "items": {
+                    "enabled": {
+                        "description": "启用重排模型",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "若不开启重排序，嵌入搜索结果将直接作为记忆输入大模型。"
+                    },
+                    "model": {
+                        "description": "模型名称",
+                        "type": "string",
+                        "default": "BAAI/bge-reranker-base",
+                        "hint": "重排模型名称。BAAI/bge-base-zh-v1.5模型权重大小为1.04 GB。如需修改，可用 /打印rerank模型 在控制台查看支持的模型列表。"
+                    },
+                    "top_k": {
+                        "description": "返回记忆数量",
+                        "type": "int",
+                        "default": 5,
+                        "hint": "重排后最多返回多少条记忆。"
+                    },
+                    "threshold": {
+                        "description": "阈值",
+                        "type": "float",
+                        "default": 0.45,
+                        "hint": "BERT文本分类得分，低于该阈值的记忆将不会被返回。"
+                    }
+                }
+            }
+        }
+    },
+    "r2_config": {
+        "description": "R2配置",
+        "type": "object",
+        "hint": "用于备份聊天记录，需自行部署Cloudflare Worker，详见源代码JS注释。嵌入模型的记忆备份暂未实现。",
+        "items": {
+            "r2_enabled": {
+                "description": "启用R2",
+                "type": "bool",
+                "default": false,
+                "hint": "启用R2备份聊天记录功能"
+            },
+            "backup_time": {
+                "description": "备份时间",
+                "type": "string",
+                "default": "0 * * * *",
+                "hint": "cron表达式，例如：0 * * * * 表示每小时备份一次"
+            },
+            "r2_base_url": {
+                "description": "R2 BASE URL",
+                "type": "string",
+                "default": "",
+                "hint": "R2 Worker URL"
+            },
+            "r2_auth_token": {
+                "description": "R2 AUTH TOKEN",
+                "type": "string",
+                "default": "",
+                "hint": "R2鉴权Token，需在Worker的环境变量配置X-Auth-Token"
+            }
+        }
+    },
+    "whitelist_config": {
+        "description": "白名单配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "group_whitelist_enabled": {
+                "description": "启用群组白名单",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，只响应白名单内的群组"
+            },
+            "group_whitelist": {
+                "description": "群组UMO白名单",
+                "type": "list",
+                "default": [],
+                "hint": "白名单群组UMO列表，可在对应群内使用/sid获取。要把UMO写完整。"
+            },
+            "user_whitelist_enabled": {
+                "description": "启用用户白名单",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，只响应白名单内的用户"
+            },
+            "user_whitelist": {
+                "description": "用户ID白名单",
+                "type": "list",
+                "default": [],
+                "hint": "用户ID列表"
+            }
+        }
+    }
+}
