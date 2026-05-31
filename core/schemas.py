@@ -13,11 +13,13 @@ class MessageData:
     content: str = ""
     is_recalled: int = 0  # 0: 未撤回, 1: 已撤回
     media_id_list: list[str] = field(default_factory=list)  # 这里只存储媒体ID
+    role: str = "message"  # "message" or "operation_log"
 
 
 @dataclass(repr=False, slots=True)
 class MediaCaption:
     hash_val: str = ""
+    file_name: str = ""
     url: str = ""
     media_type: str = ""  # image, video, audio
     genre: str = ""
@@ -45,10 +47,36 @@ class Decision:
 
 
 @dataclass(repr=False, slots=True)
+class MemoryItem:
+    memory_id: str
+    text: str
+    vector: bytes
+    metadata: str
+    updated_at: str
+    created_at: str
+
+
+@dataclass(repr=False, slots=True)
+class Sticker:
+    sticker_id: str
+    name: str
+    category: str
+    tags: list[str]
+    description: str
+    filename: str = ""
+
+@dataclass(repr=False, slots=True)
+class BotSticker:
+    timestamp: float    # 缓存时间戳
+    sticker_list: list[str] # 完整的sticker_id列表
+    sticker_set: set[str]  # 完整的sticker_id集合
+
+@dataclass(repr=False, slots=True)
 class XmlLlmResult:
     status: Status = field(default_factory=Status)
     # 这个主要是给aiocqhttp用的，其他平台可能没这么多功能
     msg_chains: list[list[BaseMessageComponent]] = field(default_factory=list)
+    msg_logs: list[str] = field(default_factory=list)  # AI自身消息的消息链日志
     # 给aiocqhttp发送失败后降级以及其他平台用的文本消息
     msg_texts: list[str] = field(default_factory=list)
     # 同样是aiocqhttp用的，只不过消息链没这个组件就独立了出来
@@ -61,9 +89,15 @@ class XmlLlmResult:
     poke: list[tuple[str, str]] = field(default_factory=list)
     # 禁言，同上。群号，用户ID，时长(秒)
     ban: list[tuple[str, str, str]] = field(default_factory=list)
+    # 踢人，同上。群号，用户ID
+    kick: list[tuple[str, str]] = field(default_factory=list)
+    # 退群，同上。群号
+    leave: list[str] = field(default_factory=list)
     # 长期记忆。群号/用户ID，内容
     save_memories: list[tuple[str, str]] = field(default_factory=list)
     search_memories: list[tuple[str, str]] = field(default_factory=list)
+    delete_memories: list[str] = field(default_factory=list)
+    update_memories: list[tuple[str, str]] = field(default_factory=list)
     # 用户画像，群号，用户ID，内容
     summary_user_profiles: list[tuple[str, str, str]] = field(default_factory=list)
     # 群画像，群号，内容
@@ -72,7 +106,18 @@ class XmlLlmResult:
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
     )  # (工具名, 工具参数)
+    # 调整关系
+    update_relations: list[tuple[str, int]] = field(default_factory=list)
+    set_relation_titles: list[tuple[str, str]] = field(
+        default_factory=list
+    )  # 用户ID，头衔文本
     # 定时任务，群号/用户ID，时间，内容
     schedule_tasks: list[tuple[str, str, str]] = field(default_factory=list)
     # 删除定时任务，任务ID
     delete_schedule_tasks: list[str] = field(default_factory=list)
+    # 获取全部定时任务，群号
+    all_tasks: list[str] = field(default_factory=list)
+    # 添加表情包，媒体ID
+    add_stickers: list[str] = field(default_factory=list)
+    # 发送表情包，表情ID
+    send_stickers: list[str] = field(default_factory=list)

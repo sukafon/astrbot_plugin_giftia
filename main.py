@@ -1,6 +1,8 @@
 import asyncio
+import copy
 import json
 import random
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -12,7 +14,16 @@ from aiocqhttp import CQHttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Node, Nodes, Plain
+from astrbot.api.message_components import (
+    At,
+    File,
+    Image,
+    Node,
+    Nodes,
+    Plain,
+    Record,
+    Reply,
+)
 from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
 from astrbot.core.astr_agent_context import (
@@ -31,14 +42,19 @@ from .core.aiocqhttp_action import AIoCQHTTPAction
 from .core.call_llm import CallLLM
 from .core.data_cache import DataCache
 from .core.database import Database
+from .core.emoji_manager import EmojiManager
 from .core.http_manager import HttpManager
 from .core.memory import LTM
-from .core.message_parse import MessageData, MessageParser
+from .core.message_parse import (
+    MessageData,
+    MessageParser,
+)
 from .core.prompt import (
     build_decision_prompt,
     build_reply_prompt,
 )
 from .core.scheduler import Scheduler
+from .core.schemas import Status
 from .core.tools_func import ToolsFunc
 from .core.xml_parse import MediaCaption, XmlLlmResult, XmlParse
 
@@ -64,7 +80,7 @@ class Giftia(Star):
         self.caption_config = self.conf.get("caption_config", {})
         # 聊天记录配置
         msg_history = self.conf.get("msg_history", {})
-        self.msg_number = msg_history.get("msg_number", 50)
+        self.msg_number = msg_history.get("msg_number", 300)
 
         # 白名单配置
         self.whitelist_config = self.conf.get("whitelist_config", {})
@@ -87,6 +103,20 @@ class Giftia(Star):
         self.user_throttle_time = self.concurrent_config.get("user_throttle_time", 10)
         self.group_throttle_time = self.concurrent_config.get("group_throttle_time", 5)
         self.throttle_map: dict[str, float] = {}
+        # 防抖字典
+        self.user_debounce_time = self.concurrent_config.get("user_debounce_time", 3)
+        self.user_max_debounce_time = self.concurrent_config.get(
+            "user_max_debounce_time", 12
+        )
+        self.debounce_map: dict[str, float] = {}
+        self.debounce_start_map: dict[str, float] = {}
+        self.debounce_at_map: dict[str, bool] = {}
+        # 表情包配置
+        self.sticker_config = self.conf.get("sticker_config", {})
+        self.random_sticker_count = self.sticker_config.get("random_sticker_count", 20)
+        self.sticker_analysis_prompt = self.sticker_config.get(
+            "sticker_analysis_prompt", ""
+        )
         # 常规配置
         self.normal_config = self.conf.get("normal_config", {})
         self.min_reply_interval = self.normal_config.get("min_reply_interval", 2)
@@ -103,6 +133,12 @@ class Giftia(Star):
         self.tools_config = self.conf.get("tools_config", {})
         # 并发锁
         self.group_locks = defaultdict(lambda: asyncio.Semaphore(self.concurrent_limit))
+        # 用户并发锁
+        self.user_locks = defaultdict(asyncio.Lock)
+        # 消息解析锁
+        self.parse_locks = defaultdict(asyncio.Lock)
+        # 表情包并发锁
+        self.sticker_locks = defaultdict(asyncio.Lock)
 
         # 实例化
         self.http_manager = HttpManager(self.conf)
@@ -114,22 +150,31 @@ class Giftia(Star):
         # 正在运行的任务映射
         self.running_tasks: dict[str, asyncio.Task] = {}
 
+        # 正在回复的状态映射
+        self.replying_status: dict[str, int] = {}
+
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
         # 实例化
+        self.ltm = LTM(self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
         self.data_cache = DataCache(
-            self.db,
-            self.http_manager,
-            self.msg_number,
-            self.energy_recovery_interval,
+            db=self.db,
+            http_manager=self.http_manager,
+            ltm=self.ltm,
+            msg_number=self.msg_number,
+            energy_recovery_interval=self.energy_recovery_interval,
         )
-        self.xml_parse = XmlParse(self.data_cache)
+        self.emoji_manager = EmojiManager(
+            self.db, random_sticker_count=self.random_sticker_count
+        )
+        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager)
         self.call_llm = CallLLM(
             context=self.context,
             xml_parse=self.xml_parse,
             caption_config=self.conf.get("caption_config", {}),
             network_config=self.conf.get("network_config", {}),
+            sticker_analysis_prompt=self.sticker_analysis_prompt,
         )
         self.message_parser = MessageParser(
             data_cache=self.data_cache,
@@ -142,7 +187,6 @@ class Giftia(Star):
             ),
             call_llm=self.call_llm,
         )
-        self.ltm = LTM(self.embedding_conf, self.rerank_conf)
         # 定时任务
         self.task_manager = Scheduler()
         self.tools_func = ToolsFunc(
@@ -209,7 +253,7 @@ class Giftia(Star):
             yield await event.send(MessageChain([Plain(f"未找到工具: {name}")]))
             return
         # 解析成xml
-        xml = f'<tool_call name="{tool.name}" description="{tool.description}">{json.dumps(tool.parameters)}</tool_call>'
+        xml = f'<tool_call name="{tool.name}" description="{tool.description}">{json.dumps(tool.parameters, ensure_ascii=False)}</tool_call>'
         node = Node(
             uin=event.get_sender_id(),
             name=event.get_sender_name(),
@@ -291,7 +335,7 @@ class Giftia(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("读取近期记忆")
-    async def get_recent_memory(
+    async def get_early_memory(
         self,
         event: AstrMessageEvent,
         bot_name: str,
@@ -304,18 +348,17 @@ class Giftia(Star):
             yield await event.send(MessageChain([Plain("未启用embedding功能")]))
             return
 
-        embedding_memories = await self.ltm.get_all_memories(
-            bot_name,
-            group_or_user_id,
+        long_memories = await self.data_cache.get_memories(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
             limit=limit,
         )
         nodes = []
-        for mem in embedding_memories:
+        for mem in long_memories:
             data = {
-                "id": mem["id"],
-                "bot_name": mem["bot_name"],
-                "text": mem["text"],
-                "created_at": mem["created_at"],
+                "memory_id": mem.memory_id,
+                "text": mem.text,
+                "created_at": mem.created_at,
             }
             nodes.append(
                 Node(
@@ -328,6 +371,89 @@ class Giftia(Star):
             yield await event.send(MessageChain([Plain("未找到相关记忆")]))
             return
         yield await event.send(MessageChain([Nodes(nodes)]))
+
+    # 删除消息
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("删除消息")
+    async def delete_message(self, event: AstrMessageEvent):
+        """根据ID删除消息"""
+        # 查找引用消息
+        message_id = None
+        for comp in event.get_messages():
+            if isinstance(comp, Reply):
+                message_id = comp.id
+                break
+        if not message_id:
+            yield await event.send(MessageChain([Plain("未找到引用消息的消息ID")]))
+            return
+        # 获取机器人名称
+        bot_name = self.adapter_id_map[event.platform_meta.id]
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        await self.data_cache.delete_message(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            message_id=str(message_id),
+        )
+        yield await event.send(MessageChain([Plain("删除消息成功")]))
+
+    # 删除记忆
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("删除记忆")
+    async def delete_memory(self, event: AstrMessageEvent, memory_id: str):
+        """根据ID删除记忆"""
+        if not self.embedding_conf.get("enabled", False):
+            logger.error("未启用embedding功能")
+            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
+            return
+        await self.data_cache.delete_memory(memory_id)
+        yield await event.send(MessageChain([Plain("删除记忆成功")]))
+
+    # 删除全部记忆
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("清空记忆")
+    async def delete_all_memories(
+        self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
+    ):
+        """删除全部记忆"""
+        if not self.embedding_conf.get("enabled", False):
+            logger.error("未启用embedding功能")
+            yield await event.send(MessageChain([Plain("未启用embedding功能")]))
+            return
+        try:
+            await self.data_cache.delete_all_memories(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            )
+        except Exception:
+            logger.error("删除全部记忆失败")
+        yield await event.send(MessageChain([Plain("删除全部记忆成功")]))
+
+    # 加满能量
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("加满能量")
+    async def fill_energy(self, event: AstrMessageEvent, bot_name: str):
+        """给当前群的指定机器人加满能量"""
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("请输入机器人名称")]))
+            return
+
+        status = Status(energy="100.0")
+        await self.data_cache.set_bot_status(
+            bot_name=bot_name, group_id=group_or_user_id, status=status
+        )
+        yield await event.send(MessageChain([Plain(f"已为机器人 {bot_name} 加满能量")]))
+
+    # 清空媒体缓存
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("清空媒体缓存")
+    async def delete_all_media_cache(self, event: AstrMessageEvent):
+        """清空全部媒体缓存"""
+        try:
+            await self.data_cache.clear_caption()
+            yield await event.send(MessageChain([Plain("清空媒体缓存成功")]))
+        except Exception as e:
+            logger.error(f"清空媒体缓存失败，报错：{e}")
+            yield await event.send(MessageChain([Plain("清空媒体缓存失败")]))
 
     # 获取全部定时任务
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -376,6 +502,25 @@ class Giftia(Star):
             )
         yield await event.send(MessageChain([Nodes(nodes)]))
 
+    # 根据botname+group_or_user_id获取定时任务
+    @filter.command("获取定时任务")
+    async def get_task_by_group(self, event: AstrMessageEvent, prefix: str):
+        """根据botname+group_or_user_id获取定时任务"""
+        tasks = self.task_manager.get_prefix_jobs(prefix)
+        if not tasks:
+            yield await event.send(MessageChain([Plain("没有找到相关定时任务")]))
+            return
+        nodes = []
+        for task in tasks:
+            nodes.append(
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain(task)],
+                )
+            )
+        yield await event.send(MessageChain([Nodes(nodes)]))
+
     # 删除定时任务
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("删除定时任务")
@@ -384,18 +529,83 @@ class Giftia(Star):
         result = self.task_manager.remove_job(task_id)
         yield await event.send(MessageChain([Plain(result)]))
 
+    # 读取媒体转述
+    @filter.command("读取媒体转述", alias={"媒体转述"})
+    async def get_media_caption(self, event: AstrMessageEvent):
+        """读取媒体转述"""
+        bot_name = self.adapter_id_map.get(event.platform_meta.id, "")
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+        file_name = ""
+        media_hash = ""
+
+        for comp in event.get_messages():
+            if isinstance(comp, Reply):
+                # 优先通过引用消息的ID查找缓存的media_id，这对于引用机器人自己的消息非常有效
+                if bot_name:
+                    msg_data = await self.data_cache.get_message_by_id(
+                        bot_name, group_or_user_id, str(comp.id)
+                    )
+                    if msg_data and msg_data.media_id_list:
+                        media_hash = msg_data.media_id_list[0]
+
+                if comp.chain:
+                    for quote in comp.chain:
+                        if isinstance(quote, Image) and quote.file:
+                            file_name = quote.file
+                            break
+                        elif isinstance(quote, Record) and quote.file:
+                            file_name = quote.file
+                            break
+                        elif isinstance(quote, File) and quote.file:
+                            file_name = quote.file
+                            break
+            elif isinstance(comp, Image) and comp.file:
+                file_name = comp.file
+                break
+            elif isinstance(comp, Record) and comp.file:
+                file_name = comp.file
+                break
+            elif isinstance(comp, File) and comp.file:
+                file_name = comp.file
+                break
+
+        media_caption = None
+        if media_hash:
+            media_caption = await self.data_cache.get_caption_by_hash(media_hash)
+
+        if not media_caption and file_name:
+            _, media_caption = await self.data_cache.get_caption_by_filename(file_name)
+
+        if media_caption:
+            msg = f"""media_type: {media_caption.media_type}
+file_name: {media_caption.file_name}
+genre: {media_caption.genre}
+character: {media_caption.character}
+source: {media_caption.source}
+text: {media_caption.text}
+caption: {media_caption.caption}"""
+            yield await event.send(MessageChain([Plain(msg)]))
+        else:
+            if not media_hash and not file_name:
+                yield await event.send(
+                    MessageChain([Plain("没有获取到文件或引用消息")])
+                )
+            else:
+                yield await event.send(MessageChain([Plain("未找到媒体转述缓存")]))
+
     # 删除数据表
-    # @filter.permission_type(filter.PermissionType.ADMIN)
-    # @filter.command("删除数据表")
-    # async def delete_table(self, event: AstrMessageEvent, table_name: str):
-    #     """删除数据表"""
-    #     result = await self.db.drop_table(table_name)
-    #     if result:
-    #         yield await event.send(
-    #             MessageChain([Plain(f"数据表 {table_name} 删除成功")])
-    #         )
-    #     else:
-    #         yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("删除数据表")
+    async def delete_table(self, event: AstrMessageEvent, table_name: str):
+        """删除数据表"""
+        result = await self.db.drop_table(table_name)
+        if result:
+            yield await event.send(
+                MessageChain([Plain(f"数据表 {table_name} 删除成功")])
+            )
+        else:
+            yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-1000)
     async def on_message(self, event: AstrMessageEvent):
@@ -428,28 +638,64 @@ class Giftia(Star):
             logger.debug(f"{event.platform_meta.id} 消息为机器人自己的消息，跳过处理")
             return
 
+        task = asyncio.create_task(self.job(event))
+        task_id = str(id(task))
+        self.running_tasks[task_id] = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.info(f"{task_id} 任务被取消")
+        except Exception as e:
+            logger.error(f"{task_id} 任务执行失败: {e}", exc_info=True)
+        finally:
+            self.running_tasks.pop(task_id, None)
+
+    async def job(self, event: AstrMessageEvent):
         # 获取机器人名称
         bot_name = self.adapter_id_map[event.platform_meta.id]
         # 获取机器人配置
         bot_conf = self.bot_map[bot_name]
+        nickname = bot_conf.get("nickname", bot_name)
 
-        # 读取群ID，兼容私聊
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
         # 处理当前消息同时进行了缓存
-        (
-            current_message,
-            image_urls,
-            audio_urls,
-        ) = await self.message_parser.parse_user_message(event, bot_name)
+        async with self.parse_locks[f"{bot_name}:{group_or_user_id}"]:
+            (
+                current_message,
+                image_urls,
+                audio_urls,
+            ) = await self.message_parser.parse_user_message(event, bot_name)
 
+        decision_conf = bot_conf.get("decision_conf", {})
         # 如果没有at机器人且未开启决策，直接返回
-        if not event.is_at_or_wake_command and (
-            not bot_conf.get("decision_conf", {}).get("enabled", True)
-            or not bot_conf.get("decision_conf", {}).get("provider_id")
-        ):
-            logger.debug("没有at机器人且未开启决策，跳过处理")
-            return
+        # 判断是不是@唤醒
+        is_just_at = any(
+            isinstance(c, At) and str(c.qq) == event.get_self_id()
+            for c in event.message_obj.message
+        )
+
+        debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
+        if self.user_debounce_time > 0:
+            if debounce_key in self.debounce_start_map:
+                self.debounce_at_map[debounce_key] = (
+                    self.debounce_at_map.get(debounce_key, False) or is_just_at
+                )
+                is_just_at = self.debounce_at_map[debounce_key]
+            else:
+                self.debounce_at_map[debounce_key] = is_just_at
+
+        if not is_just_at:
+            if not decision_conf.get("enabled", True) or not decision_conf.get(
+                "provider_id"
+            ):
+                logger.debug("没有at机器人且未开启决策，跳过处理")
+                return
+            if decision_conf.get(
+                "group_whitelist"
+            ) and group_or_user_id not in decision_conf.get("group_whitelist"):
+                logger.debug("没有at机器人且当前群组不在决策白名单内，跳过处理")
+                return
 
         # 跳过没有文本也没有图片的消息
         if not current_message.content and not image_urls and not audio_urls:
@@ -461,179 +707,243 @@ class Giftia(Star):
             logger.debug(f"{bot_name} 跳过已唤醒的消息: {current_message.content}")
             return
 
-        # 并发锁key
-        fmt_lock = f"{bot_name}:{group_or_user_id}"
-        lock = self.group_locks[fmt_lock]
-        if self.concurrent_strategy == "discard" and lock.locked():
-            logger.debug(f"{bot_name} 消息群组{fmt_lock}并发数已达上限，跳过处理")
-            return
+        # Debounce logic
+        if self.user_debounce_time > 0:
+            current_time = time.time()
 
-        # 节流
-        user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
-        if self.user_throttle_time > 0 and not self.can_execute(
-            user_throttle_key, self.user_throttle_time
-        ):
-            logger.debug(f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理")
-            return
-        group_throttle_key = f"{bot_name}:{event.get_group_id()}"
-        if self.group_throttle_time > 0 and not self.can_execute(
-            group_throttle_key, self.group_throttle_time
-        ):
-            logger.debug(f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理")
-            return
+            if debounce_key not in self.debounce_start_map:
+                self.debounce_start_map[debounce_key] = current_time
 
-        async with lock:
-            task = asyncio.create_task(
-                self.job(
-                    event,
-                    bot_name=bot_name,
-                    current_message=current_message,
-                    bot_conf=bot_conf,
-                    image_urls=image_urls,
-                    audio_urls=audio_urls,
-                )
-            )
-            task_id = str(id(task))
-            self.running_tasks[task_id] = task
-            try:
-                await task
-            except asyncio.CancelledError:
-                logger.info(f"{task_id} 任务被取消")
-            except Exception as e:
-                logger.error(f"{task_id} 任务执行失败: {e}", exc_info=True)
-            finally:
-                self.running_tasks.pop(task_id, None)
+            time_since_start = current_time - self.debounce_start_map[debounce_key]
 
-    async def job(
-        self,
-        event: AstrMessageEvent,
-        bot_name: str,
-        current_message: MessageData,
-        bot_conf: dict,
-        image_urls: list[str] | None = None,
-        audio_urls: list[str] | None = None,
-    ):
-        logger.debug(f"{bot_name} 处理消息: {current_message.content}")
-        rag_memories = None
-        group_or_user_id = event.get_group_id() or event.get_sender_id()
-        # 如果没有@机器人，需先进行决策
-        if (
-            not event.is_at_or_wake_command
-            and bot_conf.get("decision_conf", {}).get("enabled", True)
-            and bot_conf.get("decision_conf", {}).get("provider_id")
-        ):
-            # 获取近期聊天记录
-            recent_messages = await self.data_cache.get_recent_message(
-                bot_name=bot_name,
-                group_id=group_or_user_id,
-                limit=self.msg_number,
-            )
-            # 获取机器人状态
-            bot_status = await self.data_cache.get_bot_status(
-                bot_name=bot_name,
-                group_id=group_or_user_id,
-            )
-            # 读取群画像
-            group_profile = await self.data_cache.get_group_profile(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-            )
-            # 读取用户画像
-            user_profile = await self.data_cache.get_user_profile(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                user_id=event.get_sender_id(),
-            )
-            user_prompt = build_decision_prompt(
-                user_id=event.get_sender_id(),
-                recent_messages=recent_messages,
-                current_message=current_message,
-                bot_status=bot_status,
-                group_profile=group_profile,
-                user_profile=user_profile,
-            )
-            decision_conf = bot_conf.get("decision_conf", {})
-            provider_id = decision_conf.get("provider_id")
-            if not provider_id:
-                logger.error(f"{bot_name} 未配置决策模型ID")
-                return None
-            provider_ids = [provider_id] + decision_conf.get(
-                "fallback_provider_ids", []
-            )
-            result = await self.call_llm.call_llm_decision(
-                provider_ids=provider_ids,
-                system_prompt=decision_conf.get("decision_prompt"),
-                user_prompt=user_prompt,
-            )
-            if result is None:
-                logger.error(f"{bot_name} LLM决策失败，默认判定为不回复")
-                return None
-            # 更新数据库消息的决策标注
-            if result.reply_decision != 2 or result.use_rag != 2:
-                await self.db.update_message_decision(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    message_id=current_message.message_id,
-                    reply_decision=result.reply_decision,
-                    use_rag=result.use_rag,
+            if time_since_start >= self.user_max_debounce_time:
+                logger.debug(
+                    f"{bot_name} 消息 {debounce_key} 达到最大防抖时间，强制执行"
                 )
-            if result.reply_decision == 0 or result.reply_decision == 2:
-                logger.info(f"{bot_name} LLM决策判定：不回复")
-                return None
-            logger.info(f"{bot_name} LLM决策判定：回复")
-            if result.use_rag == 1 and self.embedding_conf.get("enabled", False):
-                # 使用RAG
-                embedding_memories = await self.ltm.search_memory(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    query=result.rag_query,
-                    limit=self.embedding_conf.get("limit", 5),
-                    threshold=self.embedding_conf.get("threshold", 0.7),
-                )
-                if len(embedding_memories) > 0 and self.rerank_conf.get(
-                    "enabled", False
-                ):
-                    rerank_memories = await self.ltm.rerank_memories(
-                        query=result.rag_query,
-                        memories=embedding_memories,
-                        top_k=self.rerank_conf.get("top_k", 5),
-                        threshold=self.rerank_conf.get("threshold", 0.45),
-                    )
-                    rag_memories = []
-                    for memory in rerank_memories:
-                        rag_memories.append(memory["text"])
+                self.debounce_start_map.pop(debounce_key, None)
+                self.debounce_at_map.pop(debounce_key, None)
+                self.debounce_map[debounce_key] = current_time
+            else:
+                self.debounce_map[debounce_key] = current_time
+                await asyncio.sleep(self.user_debounce_time)
+                if self.debounce_map.get(debounce_key) != current_time:
+                    logger.debug(f"{bot_name} 消息 {debounce_key} 触发防抖，跳过处理")
+                    return
                 else:
-                    rag_memories = []
-                    for memory in embedding_memories:
-                        rag_memories.append(memory["text"])
+                    self.debounce_start_map.pop(debounce_key, None)
+                    self.debounce_at_map.pop(debounce_key, None)
+
+        logger.debug(f"{bot_name} 处理消息: {current_message.content}")
+        logger.debug(f"{bot_name} 处理消息: {current_message.content}")
+        relevant_memories = None
+
+        decision_conf = bot_conf.get("decision_conf", {})
+        reply_key = f"{bot_name}:{group_or_user_id}"
+
+        # 即使是@消息，也更新节流时间，用于给后续的决策节流，但自身不受拦截
+        if is_just_at:
+            now = time.time()
+            if self.user_throttle_time > 0:
+                user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
+                self.throttle_map[user_throttle_key] = now
+            if self.group_throttle_time > 0:
+                group_throttle_key = f"{bot_name}:{event.get_group_id()}"
+                self.throttle_map[group_throttle_key] = now
+
+        # 如果没有@机器人，需先进行决策
+        if not is_just_at:
+            # 检查是否正在回复中，防止新的自动决策打断
+            if self.replying_status.get(reply_key, 0) > 0:
+                logger.debug(f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策")
+                return
+
+            # 节流
+            user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
+            if self.user_throttle_time > 0 and not self.can_execute(
+                user_throttle_key, self.user_throttle_time
+            ):
+                logger.info(f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理")
+                return
+            group_throttle_key = f"{bot_name}:{event.get_group_id()}"
+            if self.group_throttle_time > 0 and not self.can_execute(
+                group_throttle_key, self.group_throttle_time
+            ):
+                logger.info(f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理")
+                return
+
+            # 用户并发锁key
+            fmt_user_lock = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
+            user_lock = self.user_locks[fmt_user_lock]
+            if user_lock.locked():
+                logger.info(f"{bot_name} 用户{fmt_user_lock}正在决策中，跳过处理")
+                return
+
+            # 并发锁key
+            fmt_lock = f"{bot_name}:{group_or_user_id}"
+            lock = self.group_locks[fmt_lock]
+            if self.concurrent_strategy == "discard" and lock.locked():
+                logger.info(f"{bot_name} 消息群组{fmt_lock}并发数已达上限，跳过处理")
+                return
+
+            async with user_lock:
+                async with lock:
+                    # 双重检查：防止在等待锁的过程中，上一条消息已经开始回复
+                    if self.replying_status.get(reply_key, 0) > 0:
+                        logger.debug(
+                            f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策 (队列拦截)"
+                        )
+                        return
+
+                    # 获取近期聊天记录
+                    recent_messages = await self.data_cache.get_recent_message(
+                        bot_name=bot_name,
+                        group_id=group_or_user_id,
+                        limit=self.msg_number,
+                    )
+                    # 获取机器人状态
+                    bot_status = await self.data_cache.get_bot_status(
+                        bot_name=bot_name,
+                        group_id=group_or_user_id,
+                    )
+                    # 读取群画像
+                    group_profile = await self.data_cache.get_group_profile(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                    )
+                    # 读取用户画像
+                    user_profile = await self.data_cache.get_user_profile(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        user_id=event.get_sender_id(),
+                    )
+                    # 读取用户关系
+                    user_relation = await self.data_cache.get_user_relation(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        user_id=event.get_sender_id(),
+                    )
+                    user_prompt = build_decision_prompt(
+                        user_id=event.get_sender_id(),
+                        group_data=str(
+                            await event.get_group(event.get_group_id())
+                            if event.get_group_id()
+                            else ""
+                        ),
+                        recent_messages=recent_messages,
+                        current_message=current_message,
+                        bot_status=bot_status,
+                        group_profile=group_profile,
+                        user_profile=user_profile,
+                        user_relation=user_relation,
+                    )
+                    decision_conf = bot_conf.get("decision_conf", {})
+                    provider_id = decision_conf.get("provider_id")
+                    if not provider_id:
+                        logger.error(f"{bot_name} 未配置决策模型ID")
+                        return None
+                    provider_ids = [provider_id] + decision_conf.get(
+                        "fallback_provider_ids", []
+                    )
+                    result = await self.call_llm.call_llm_decision(
+                        provider_ids=provider_ids,
+                        system_prompt=decision_conf.get("decision_prompt"),
+                        user_prompt=user_prompt,
+                        image_urls=image_urls,
+                        audio_urls=audio_urls,
+                    )
+                    if result is None:
+                        logger.error(f"{bot_name} LLM决策失败，默认判定为不回复")
+                        return None
+                    # 更新数据库消息的决策标注
+                    if result.reply_decision != 2 or result.use_rag != 2:
+                        await self.db.update_message_decision(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            message_id=current_message.message_id,
+                            reply_decision=result.reply_decision,
+                            use_rag=result.use_rag,
+                        )
+                    if result.reply_decision == 0 or result.reply_decision == 2:
+                        logger.info(f"{bot_name} LLM决策判定：不回复")
+                        return None
+                    logger.info(f"{bot_name} LLM决策判定：回复")
+                    if result.use_rag == 1 and self.embedding_conf.get(
+                        "enabled", False
+                    ):
+                        # 使用RAG
+                        embedding_memories = await self.ltm.search_memory(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            query=result.rag_query,
+                            limit=self.embedding_conf.get("limit", 5),
+                            threshold=self.embedding_conf.get("threshold", 0.7),
+                        )
+                        if len(embedding_memories) > 0 and self.rerank_conf.get(
+                            "enabled", False
+                        ):
+                            rerank_memories = await self.ltm.rerank_memories(
+                                query=result.rag_query,
+                                memories=embedding_memories,
+                                top_k=self.rerank_conf.get("top_k", 5),
+                                threshold=self.rerank_conf.get("threshold", 0.45),
+                            )
+                            relevant_memories = []
+                            for memory in rerank_memories:
+                                relevant_memories.append(memory["text"])
+                        else:
+                            relevant_memories = []
+                            for memory in embedding_memories:
+                                relevant_memories.append(memory["text"])
+
+                    # 决策完成并确定要回复，增加回复计数
+                    self.replying_status[reply_key] = (
+                        self.replying_status.get(reply_key, 0) + 1
+                    )
+
         # 调用LLM进行回复
-        async for chunk in self.dispatch_llm_reply(
-            event=event,
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            current_message=current_message,
-            image_urls=image_urls,
-            audio_urls=audio_urls,
-            rag_memories=rag_memories,
-        ):
-            await self.dispatch_message(
+        if is_just_at:
+            # @的消息直接增加回复计数开始回复
+            self.replying_status[reply_key] = self.replying_status.get(reply_key, 0) + 1
+
+        try:
+            async for chunk in self.dispatch_llm_reply(
                 event=event,
                 bot_name=bot_name,
+                nickname=nickname,
                 group_or_user_id=group_or_user_id,
-                llm_result=chunk,
+                current_message=current_message,
+                image_urls=image_urls,
+                audio_urls=audio_urls,
+                relevant_memories=relevant_memories,
+            ):
+                if chunk:
+                    await self.dispatch_message(
+                        event=event,
+                        bot_name=bot_name,
+                        nickname=nickname,
+                        group_or_user_id=group_or_user_id,
+                        llm_result=chunk,
+                    )
+                else:
+                    logger.error(f"{bot_name} 生成消息失败，收到空消息块")
+        finally:
+            self.replying_status[reply_key] = max(
+                0, self.replying_status.get(reply_key, 0) - 1
             )
 
     async def dispatch_llm_reply(
         self,
         event: AstrMessageEvent,
         bot_name: str,
+        nickname: str,
         group_or_user_id: str,
         current_message: MessageData | None = None,
         remind_message: str | None = None,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
-        rag_memories: list[str] | None = None,
+        relevant_memories: list[str] | None = None,
         tool_results: list[dict[str, str]] | None = None,
+        other_data: list[str] | None = None,
         times=0,
     ):
         """集成用户提示词构建、LLM调用、发送消息、更新数据库、循环函数工具调用等流程"""
@@ -643,6 +953,8 @@ class Giftia(Star):
             )
             return
         bot_conf = self.bot_map[bot_name]
+        success_logs = []
+        iso_string = datetime.now().isoformat()
         # 近期消息可能比当前消息新，方便AI拿到决策期间以及函数调用工具执行期间的消息补充
         recent_messages = await self.data_cache.get_recent_message(
             bot_name, group_or_user_id, self.msg_number
@@ -651,10 +963,14 @@ class Giftia(Star):
         hash_vals = list({
             media_id for msg in recent_messages for media_id in msg.media_id_list
         })
+
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
+                if await self.emoji_manager.has_sticker(bot_name, hash_val):
+                    media_caption = copy.copy(media_caption)
+                    media_caption.caption += " (你已收藏此表情包)"
                 media_captions.append(media_caption)
         # 获取机器人状态
         bot_status = await self.data_cache.get_bot_status(
@@ -672,6 +988,22 @@ class Giftia(Star):
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
         )
+        # 读取用户关系
+        user_relation = await self.data_cache.get_user_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=event.get_sender_id(),
+        )
+        # 读取长期记忆
+        long_memories = []
+        if self.embedding_conf.get("enabled", False):
+            long_memories = await self.data_cache.get_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                limit=self.embedding_conf.get("inject_limit", 20),
+            )
+        # 获取机器人表情包并随机抽取50个
+        bot_sticker_cache = await self.emoji_manager.get_random_stickers(bot_name)
         # 这里需要重新构建用户提示词，以补充新的聊天记录以及更新状态
         user_prompt = build_reply_prompt(
             recent_messages=recent_messages,
@@ -684,11 +1016,16 @@ class Giftia(Star):
                 else ""
             ),
             user_id=event.get_sender_id(),
+            nickname=nickname,
             bot_status=bot_status,
             tool_results=tool_results,
-            rag_memories=rag_memories,
+            long_memories=long_memories,
+            relevant_memories=relevant_memories,
             user_profile=user_profile,
             group_profile=group_profile,
+            other_data=other_data,
+            user_relation=user_relation,
+            bot_sticker=bot_sticker_cache,
         )
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
         provider_id = llm_reply_conf.get("provider_id")
@@ -696,6 +1033,11 @@ class Giftia(Star):
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
         provider_ids = [provider_id] + llm_reply_conf.get("fallback_provider_ids", [])
+        provider_selection_mode = llm_reply_conf.get(
+            "provider_selection_mode", "fallback"
+        )
+        if provider_selection_mode == "random":
+            random.shuffle(provider_ids)
         # 调用LLM进行回复
         llm_result = await self.call_llm.call_llm_reply(
             event=event,
@@ -729,17 +1071,6 @@ class Giftia(Star):
                 group_id=group_or_user_id,
                 status=llm_result.status,
             )
-        # 处理客户端互动
-        yield llm_result
-        # 处理长期记忆
-        if llm_result.save_memories and self.embedding_conf.get("enabled", False):
-            for group_or_user_id, memory in llm_result.save_memories:
-                await self.ltm.add_memory(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    text=memory,
-                    metadata=json.dumps({"user_id": event.get_sender_id()}),
-                )
         # 处理用户画像
         if llm_result.summary_user_profiles:
             for group_id, user_id, profile_content in llm_result.summary_user_profiles:
@@ -757,9 +1088,87 @@ class Giftia(Star):
                     group_or_user_id=group_id,
                     profile=profile_content,
                 )
+        # 处理好感度
+        if llm_result.update_relations:
+            for user_id, relation in llm_result.update_relations:
+                await self.data_cache.update_relation(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                    relation=relation,
+                )
+        # 处理好感度标题
+        if llm_result.set_relation_titles:
+            for user_id, title in llm_result.set_relation_titles:
+                await self.data_cache.set_relation_title(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                    title=title,
+                )
+        # 添加表情包
+        if llm_result.add_stickers:
+            categories = await self.db.get_sticker_categories()
+            for sticker_id in llm_result.add_stickers:
+                async with self.sticker_locks[sticker_id]:
+                    # 先检查有没有添加过，如果全局有过，就直接关联而无需再次消耗Token分析
+                    if sticker_id in self.emoji_manager.stickers:
+                        await self.emoji_manager.add_sticker(
+                            bot_name=bot_name, media_id=sticker_id
+                        )
+                        continue
+
+                    caption = await self.data_cache.get_caption_by_hash(sticker_id)
+                    is_useful, sticker = False, None
+                    if caption and caption.url:
+                        # 先将图片下载并转为 base64，防止大模型无法访问本地/内网 URL
+                        image_bytes = await self.http_manager.download_media(
+                            caption.url
+                        )
+                        if image_bytes:
+                            base64s, _ = await asyncio.to_thread(
+                                self.http_manager.handle_image, image_bytes
+                            )
+                            if base64s:
+                                (
+                                    is_useful,
+                                    sticker,
+                                ) = await self.call_llm.call_llm_sticker_analysis(
+                                    image_urls=base64s,
+                                    categories=categories,
+                                    media_id=sticker_id,
+                                )
+                            # 如果判定为有用，则下载保存到本地
+                            if is_useful and sticker:
+                                local_path = (
+                                    await self.emoji_manager.save_sticker_image(
+                                        image_bytes, sticker_id
+                                    )
+                                )
+                                sticker.filename = local_path.name
+
+                    if is_useful and sticker:
+                        await self.emoji_manager.add_sticker(
+                            bot_name=bot_name, media_id=sticker_id, sticker=sticker
+                        )
+        # 处理客户端互动
+        yield llm_result
+        # 读取定时任务
+        if other_data is None:
+            other_data = []
+        if llm_result.all_tasks:
+            for group_id in llm_result.all_tasks:
+                if not group_id:
+                    group_id = group_or_user_id
+                task_id_prefix = bot_name + "_" + group_id + "_"
+                tasks = self.task_manager.get_prefix_jobs(task_id_prefix)
+                if not tasks:
+                    other_data.append("# 查询到的定时任务\n这个群没有设置定时任务")
+                else:
+                    other_data.append("# 查询到的定时任务\n" + "\n".join(tasks))
         # 处理RAG检索
-        if rag_memories is None:
-            rag_memories = []
+        if relevant_memories is None:
+            relevant_memories = []
         if llm_result.search_memories and self.embedding_conf.get("enabled", False):
             # 这个群号由后端填写，可以要求AI在记忆的时候标注群号等信息，以后实现跨群记忆
             for group_or_user_id, query in llm_result.search_memories:
@@ -778,12 +1187,12 @@ class Giftia(Star):
                         threshold=self.rerank_conf.get("threshold", 0.45),
                     )
                     for memory in rerank_memories:
-                        rag_memories.append(memory["text"])
+                        relevant_memories.append(memory["text"])
                 else:
                     for memory in embedding_memories:
-                        rag_memories.append(memory["text"])
-            if len(rag_memories) == 0:
-                rag_memories.append("没有找到相关记忆")
+                        relevant_memories.append(memory["text"])
+            if len(relevant_memories) == 0:
+                relevant_memories.append("没有找到相关记忆")
         # 如果有函数调用工具，继续调用LLM
         if tool_results is None:
             tool_results = []
@@ -816,25 +1225,60 @@ class Giftia(Star):
                         if isinstance(content, mcp.types.TextContent):
                             result.append(content.text)
                         elif isinstance(content, mcp.types.ImageContent):
+                            result.append("图片已直接发送给用户")
                             image_base64.append("base64://" + content.data)
                 result = {
                     "name": tool_name,
                     "results": "\n".join(result),
                 }
                 tool_results.append(result)
-        if len(llm_result.tools_to_call) > 0 or len(llm_result.search_memories) > 0:
+                success_logs.append(
+                    f"<tool_call name={tool_name} args={tool_args} status='finished' />"
+                )
+        # 如果有图片，直接发送图片
+        if image_base64:
+            yield await event.send(
+                MessageChain([Image.fromBase64(b64) for b64 in image_base64])
+            )
+            logger.info(
+                f"{bot_name} 从MCP工具收到 {len(image_base64)} 张图片，直接发出去了"
+            )
+        # 记录操作日志
+        if len(success_logs) > 0:
+            await self.data_cache.add_message(
+                bot_name,
+                group_or_user_id,
+                MessageData(
+                    nickname=nickname,
+                    user_id=event.get_self_id(),
+                    group_or_user_id=group_or_user_id,
+                    time=iso_string,
+                    message_id="",
+                    content="\n".join(success_logs),
+                    is_recalled=False,
+                    media_id_list=[],
+                    role="operation_log",
+                ),
+            )
+        if (
+            len(llm_result.tools_to_call) > 0
+            or len(llm_result.search_memories) > 0
+            or len(llm_result.all_tasks) > 0
+        ):
             # 这里将仅传递MCP工具的图片，不再传递消息图片（没写错的话）
             logger.debug(f"{bot_name} llm step {times + 1} ...")
             async for chunk in self.dispatch_llm_reply(
                 event=event,
                 bot_name=bot_name,
+                nickname=nickname,
                 group_or_user_id=group_or_user_id,
                 current_message=current_message,
-                rag_memories=rag_memories,
+                relevant_memories=relevant_memories,
                 tool_results=tool_results,
                 remind_message=remind_message,
                 image_urls=image_base64,
                 times=times + 1,
+                other_data=other_data,
             ):
                 yield chunk
 
@@ -842,6 +1286,7 @@ class Giftia(Star):
         self,
         event: AstrMessageEvent,
         bot_name: str,
+        nickname: str,
         group_or_user_id: str,
         llm_result: XmlLlmResult,
     ):
@@ -851,6 +1296,56 @@ class Giftia(Star):
             # 统一记录操作，防止多条消息抢占上下文窗口
             success_logs = []
             iso_string = datetime.now().isoformat()
+            # 处理长期记忆
+            if llm_result.save_memories and self.embedding_conf.get("enabled", False):
+                for group_or_user_id, text in llm_result.save_memories:
+                    memory_id = await self.data_cache.add_memory(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        text=text,
+                        user_id=event.get_sender_id(),
+                    )
+                    if memory_id is None:
+                        success_logs.append(
+                            f"<save_memory text={text[:50]}... result='failed'/>"
+                        )
+                    else:
+                        success_logs.append(
+                            f"<save_memory memory_id={memory_id} result='success'/>"
+                        )
+            if llm_result.delete_memories and self.embedding_conf.get("enabled", False):
+                for memory_id in llm_result.delete_memories:
+                    result = await self.data_cache.delete_memory(memory_id=memory_id)
+                    if result:
+                        success_logs.append(
+                            f"<delete_memory memory_id={memory_id} result='success'/>"
+                        )
+                    else:
+                        success_logs.append(
+                            f"<delete_memory memory_id={memory_id} result='failed'/>"
+                        )
+            # 更新记忆（删除+添加）
+            if llm_result.update_memories and self.embedding_conf.get("enabled", False):
+                for memory_id, text in llm_result.update_memories:
+                    if not await self.data_cache.delete_memory(memory_id=memory_id):
+                        success_logs.append(
+                            f"<update_memory memory_id={memory_id} result='failed'/>"
+                        )
+                        continue
+                    new_memory_id = await self.data_cache.add_memory(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        text=text,
+                        user_id=event.get_sender_id(),
+                    )
+                    if new_memory_id is None:
+                        success_logs.append(
+                            f"<update_memory memory_id={memory_id} result='failed'/>"
+                        )
+                    else:
+                        success_logs.append(
+                            f"<update_memory memory_id={new_memory_id} result='success'/>"
+                        )
             # 撤回消息
             if llm_result.delete_message_ids:
                 # str -> int
@@ -941,13 +1436,21 @@ class Giftia(Star):
                         logger.error(
                             f"{bot_name} 禁言数据格式错误: {group_id}, {user_id}, {duration}"
                         )
+            # 记录工具的调用情况
+            if llm_result.tools_to_call:
+                for tool_name, tool_args in llm_result.tools_to_call:
+                    success_logs.append(
+                        f"<tool_call name={tool_name} args={tool_args} status='dispatched' info='The system has received the call and is processing it.'/>"
+                    )
             # 定时任务
             if llm_result.schedule_tasks:
                 for group_id, time_expr, remind_content in llm_result.schedule_tasks:
                     task_id = f"{bot_name}_{group_or_user_id}_{uuid.uuid4().hex[:6]}"
                     kwargs = {
                         "unified_msg_origin": event.unified_msg_origin,
+                        "adapter_id": event.platform_meta.id,
                         "bot_name": bot_name,
+                        "nickname": nickname,
                         "self_id": event.get_self_id(),
                         "platform_name": event.get_platform_name(),
                         "user_id": event.get_sender_id(),
@@ -972,23 +1475,12 @@ class Giftia(Star):
                     success_logs.append(
                         f"<delete_task task_id={task_id} result={err_msg or 'success'}/>"
                     )
-
-            # 记录成功操作
-            if len(success_logs) > 0:
-                await self.data_cache.add_message(
-                    bot_name,
-                    group_or_user_id,
-                    MessageData(
-                        nickname=bot_name,
-                        user_id=event.get_self_id(),
-                        group_or_user_id=group_or_user_id,
-                        time=iso_string,
-                        message_id="",
-                        content="操作日志:\n" + "\n".join(success_logs),
-                        is_recalled=False,
-                        media_id_list=[],
-                    ),
-                )
+            # 添加表情包日志
+            if llm_result.add_stickers:
+                for sticker_id in llm_result.add_stickers:
+                    success_logs.append(
+                        f"<add_sticker media_id={sticker_id} result='success'/>"
+                    )
             # 其他行为通过消息链统一处理
             for index, msg_chain in enumerate(llm_result.msg_chains):
                 if not msg_chain:
@@ -1006,11 +1498,14 @@ class Giftia(Star):
                 if success and message_id:
                     # 发送成功后再将消息写入缓存
                     iso_string = datetime.now().isoformat()
-                    msg_str, media_id_list = await self.message_parser.chain_to_str(
-                        msg_chain
+                    msg_str = (
+                        llm_result.msg_logs[index]
+                        if llm_result.msg_logs and index < len(llm_result.msg_logs)
+                        else ""
                     )
+                    media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
                     msg_data = MessageData(
-                        nickname=bot_name,
+                        nickname=nickname,
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
@@ -1023,6 +1518,55 @@ class Giftia(Star):
                     await self.data_cache.add_message(
                         bot_name, group_or_user_id, msg_data
                     )
+            # 踢人
+            if llm_result.kick:
+                for group_id, user_id in llm_result.kick:
+                    try:
+                        group_id_int = int(group_id)
+                        user_id_int = int(user_id)
+                        err_msg = await self.aiocqhttp.group_kick(
+                            event=event,
+                            group_id=group_id_int,
+                            user_id=user_id_int,
+                        )
+                        success_logs.append(
+                            f"<kick user_id={user_id} result={err_msg or 'success'}/>"
+                        )
+                    except ValueError:
+                        logger.error(
+                            f"{bot_name} 踢人数据格式错误: {group_id}, {user_id}"
+                        )
+            # 退群
+            if llm_result.leave:
+                for group_id in llm_result.leave:
+                    try:
+                        group_id_int = int(group_id)
+                        err_msg = await self.aiocqhttp.group_leave(
+                            event=event,
+                            group_id=group_id_int,
+                        )
+                        success_logs.append(
+                            f"<leave user_id={event.get_self_id()} result={err_msg or 'success'}/>"
+                        )
+                    except ValueError:
+                        logger.error(f"{bot_name} 退群数据格式错误: {group_id}")
+            # 记录成功操作
+            if len(success_logs) > 0:
+                await self.data_cache.add_message(
+                    bot_name,
+                    group_or_user_id,
+                    MessageData(
+                        nickname=nickname,
+                        user_id=event.get_self_id(),
+                        group_or_user_id=group_or_user_id,
+                        time=iso_string,
+                        message_id="",
+                        content="\n".join(success_logs),
+                        is_recalled=False,
+                        media_id_list=[],
+                        role="operation_log",
+                    ),
+                )
             # 无论这里是否发送成功都返回，防止重复发送
             return
         # 其他平台使用通用发送方法
@@ -1042,7 +1586,7 @@ class Giftia(Star):
                         msg_chain
                     )
                     msg_data = MessageData(
-                        nickname=bot_name,
+                        nickname=nickname,
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
@@ -1062,14 +1606,13 @@ class Giftia(Star):
         """
         节流
         """
-        if len(self.throttle_map) > 5000:
-            now = time.time()
-            self.throttle_map = {
-                k: v
-                for k, v in self.throttle_map.items()
-                if now - v < max(self.user_throttle_time, self.group_throttle_time)
-            }
         now = time.time()
+        # if len(self.throttle_map) > 5000:
+        #     self.throttle_map = {
+        #         k: v
+        #         for k, v in self.throttle_map.items()
+        #         if now - v < max(self.user_throttle_time, self.group_throttle_time)
+        #     }
         last_time = self.throttle_map.get(key, 0)
 
         if now - last_time >= throttle_time:
@@ -1077,18 +1620,22 @@ class Giftia(Star):
             return True
         return False
 
-    def get_platform_adapter(self) -> tuple[CQHttp, PlatformMetadata] | None:
+    def get_platform_adapter(
+        self, adapter_id: str
+    ) -> tuple[CQHttp, PlatformMetadata] | None:
         """获取平台适配器实例，目前仅支持aiocqhttp"""
         platforms = self.context.platform_manager.get_insts()  # type: ignore
         for p in platforms:
-            if isinstance(p, AiocqhttpAdapter):
+            if isinstance(p, AiocqhttpAdapter) and p.metadata.id == adapter_id:
                 return p.bot, p.metadata
         return None
 
     async def remind_task(
         self,
         unified_msg_origin: str,
+        adapter_id: str,
         bot_name: str,
+        nickname: str,
         self_id: str,
         platform_name: str,
         user_id: str,
@@ -1098,27 +1645,40 @@ class Giftia(Star):
         remind_message: str,
     ):
         mock_event = self.fake_event(
-            self_id, user_id, user_name, group_id, unified_msg_origin
+            self_id=self_id,
+            sender_id=user_id,
+            sender_name=user_name,
+            group_id=group_id,
+            unified_msg_origin=unified_msg_origin,
+            adapter_id=adapter_id,
         )
         async for chunk in self.dispatch_llm_reply(
             event=mock_event,
             bot_name=bot_name,
+            nickname=nickname,
             group_or_user_id=group_or_user_id,
             remind_message=f"[定时任务唤醒] {user_name}({user_id}): {remind_message}",
         ):
-            if platform_name == "aiocqhttp":
-                if mock_event:
-                    await self.dispatch_message(
-                        mock_event, bot_name, group_or_user_id, chunk
-                    )
+            if chunk:
+                if platform_name == "aiocqhttp":
+                    if mock_event:
+                        await self.dispatch_message(
+                            event=mock_event,
+                            bot_name=bot_name,
+                            nickname=nickname,
+                            group_or_user_id=group_or_user_id,
+                            llm_result=chunk,
+                        )
+                        continue
+                # 降级到普通消息发送
+                if not chunk.msg_chains:
                     continue
-            # 降级到普通消息发送
-            if not chunk.msg_chains:
-                continue
-            for msg_chain in chunk.msg_chains:
-                await self.context.send_message(
-                    unified_msg_origin, MessageChain(msg_chain)
-                )
+                for msg_chain in chunk.msg_chains:
+                    await self.context.send_message(
+                        unified_msg_origin, MessageChain(msg_chain)
+                    )
+            else:
+                logger.error(f"{bot_name} 定时任务调度失败，未获取到回复内容")
 
     def fake_event(
         self,
@@ -1127,10 +1687,11 @@ class Giftia(Star):
         sender_name: str,
         group_id: str,
         unified_msg_origin: str,
+        adapter_id: str,
     ) -> AstrMessageEvent:
         """伪造一个aiocqhttp的event，用于主动消息复用被动消息函数"""
         mock_event = MagicMock(spec=AiocqhttpMessageEvent)
-        adapter = self.get_platform_adapter()
+        adapter = self.get_platform_adapter(adapter_id)
         if adapter:
             bot, metadata = adapter
             mock_event.bot = bot

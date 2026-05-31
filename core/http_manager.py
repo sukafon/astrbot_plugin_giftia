@@ -25,11 +25,14 @@ class HttpManager:
         """下载媒体文件"""
         for _ in range(3):
             try:
-                async with self.session.get(url) as resp:
+                headers = {
+                    "Referer": "https://im.qq.com/"
+                }
+                async with self.session.get(url, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.read()
                     else:
-                        logger.error(f"下载媒体文件失败: {resp.status}")
+                        logger.error(f"下载媒体文件失败: {resp.status}, URL: {url}")
             except (
                 ClientConnectorSSLError,
                 ClientConnectorCertificateError,
@@ -40,12 +43,12 @@ class HttpManager:
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
-                async with self.session.get(url, ssl=ssl_context) as resp:
+                async with self.session.get(url, ssl=ssl_context, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.read()
                     else:
                         logger.error(
-                            f"下载媒体文件失败: {resp.status}，retry: {_ + 1} times"
+                            f"下载媒体文件失败: {resp.status}，retry: {_ + 1} times, URL: {url}"
                         )
             except Exception as e:
                 logger.error(f"下载媒体文件失败: {e}，retry: {_ + 1} times")

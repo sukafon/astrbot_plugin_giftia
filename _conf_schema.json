@@ -19,9 +19,15 @@
                         "type": "str",
                         "default": ""
                     },
+                    "nickname": {
+                        "description": "机器人名称",
+                        "hint": "机器人昵称，用于聊天记录识别",
+                        "type": "str",
+                        "default": ""
+                    },
                     "adapter_ids": {
                         "description": "适配器ID列表",
-                        "hint": "通过 /sid 可查看机器人ID，与适配器配置里面填写的机器人名称是一致的。用于多适配器共享记忆或者更换适配器后回溯记忆使用，但是聊天记录的用户ID依旧是原始账号的，且当前记忆依旧是按群隔离的。",
+                        "hint": "通过 /sid 可查看机器人ID，与适配器配置里面填写的机器人名称是一致的。用于多适配器共享记忆或者更换适配器后回溯记忆使用",
                         "type": "list",
                         "default": []
                     },
@@ -47,6 +53,12 @@
                                 "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
                                 "type": "list",
                                 "default": []
+                            },
+                            "group_whitelist": {
+                                "description": "白名单群组",
+                                "type": "list",
+                                "default": [],
+                                "hint": "填写数字群号，不填则默认全部群都能触发。"
                             },
                             "decision_prompt": {
                                 "type": "text",
@@ -80,6 +92,16 @@
                                 "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
                                 "type": "list",
                                 "default": []
+                            },
+                            "provider_selection_mode": {
+                                "type": "string",
+                                "description": "多提供商选择模式",
+                                "options": [
+                                    "fallback",
+                                    "random"
+                                ],
+                                "default": "fallback",
+                                "hint": "fallback：按顺序依次尝试主提供商和回退提供商。random：在主提供商和回退提供商中随机打乱顺序使用。"
                             },
                             "llm_reply_prompt": {
                                 "type": "text",
@@ -169,6 +191,27 @@
             }
         }
     },
+    "sticker_config": {
+        "description": "表情包配置",
+        "type": "object",
+        "hint": "",
+        "items": {
+            "sticker_analysis_prompt": {
+                "type": "text",
+                "editor_mode": true,
+                "editor_language": "markdown",
+                "description": "表情包分析系统提示词",
+                "default": "",
+                "hint": "表情包分析提示词"
+            },
+            "random_sticker_count": {
+                "description": "随机提取表情包数量",
+                "type": "int",
+                "default": 50,
+                "hint": "每次带入大模型上下文的随机表情包数量，过多会影响速度和占用大量Token"
+            }
+        }
+    },
     "normal_config": {
         "description": "常规配置",
         "type": "object",
@@ -190,7 +233,7 @@
                 "description": "多少秒能量恢复一个单位能量",
                 "type": "int",
                 "default": 120,
-                "hint": "多少秒能量恢复一个单位能量。防止机器人把自己能量调到最低假死。"
+                "hint": "多少秒恢复一个单位能量。防止机器人把自己能量调到最低假死。"
             }
         }
     },
@@ -244,19 +287,31 @@
                 "description": "并发限制",
                 "type": "int",
                 "default": 2,
-                "hint": "并发限制，超过并发限制将根据策略处理后续消息。"
+                "hint": "并发限制，超过并发限制将根据策略处理后续消息。节流冷却完后，AI可能还未完成所有回复，可以通过此项防止任务堆积。"
             },
             "user_throttle_time": {
                 "description": "用户节流时间",
                 "type": "int",
                 "default": 10,
-                "hint": "同一用户在X秒内连续发送的消息，只有第一条会被决策系统处理"
+                "hint": "开始决策处理后的冷却时间"
             },
             "group_throttle_time": {
                 "description": "群组节流时间",
                 "type": "int",
                 "default": 5,
-                "hint": "同一群组在X秒内连续发送的消息，只有第一条会被决策系统处理"
+                "hint": "开始决策处理后的冷却时间"
+            },
+            "user_debounce_time": {
+                "description": "用户防抖",
+                "type": "int",
+                "default": 3,
+                "hint": "用户防抖时间（秒）"
+            },
+            "user_max_debounce_time": {
+                "description": "用户防抖时间上限",
+                "type": "int",
+                "default": 30,
+                "hint": "用户防抖时间上限（秒），超过这个时间直接开始处理"
             }
         }
     },
@@ -310,13 +365,19 @@
                         "description": "返回记忆数量",
                         "type": "int",
                         "default": 10,
-                        "hint": "最多返回多少条余弦相似性最低的记忆。"
+                        "hint": "返回多少条余弦距离最低的记忆"
                     },
                     "threshold": {
                         "description": "阈值",
                         "type": "float",
                         "default": 0.7,
-                        "hint": "余弦相似度阈值，高于该阈值的记忆将不会被返回。"
+                        "hint": "余弦距离阈值，高于该阈值的记忆将不会被返回。"
+                    },
+                    "inject_limit": {
+                        "description": "注入记忆数量",
+                        "type": "int",
+                        "default": 20,
+                        "hint": "直接将近期记忆注入上下文，不经过检索，开启后可以适当降低聊天记录的传递数量"
                     }
                 }
             },

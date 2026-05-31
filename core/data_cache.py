@@ -1,14 +1,20 @@
+import asyncio
+import json
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict
+from datetime import datetime
 
 from cachetools import LRUCache
 
+from astrbot.api import logger
+
 from .database import Database
 from .http_manager import HttpManager
-from .schemas import MediaCaption, MessageData, Status
+from .memory import LTM
+from .schemas import MediaCaption, MemoryItem, MessageData, Status
 
-MAX_CAPTION_CACHE_SIZE = 1000
+MAX_CAPTION_CACHE_SIZE = 500
 
 
 class DataCache:
@@ -16,8 +22,8 @@ class DataCache:
 
     # 键是文件二进制数据的xxhash，而不是URL的xxhash
     caption: LRUCache[str, MediaCaption]  # xxhash:caption
-    # url:xxhash，由于hash统一为文件二进制数据的hash，所以需要一个url到hash的映射
-    url_to_hash: LRUCache[str, str]
+    # filename:xxhash，需要一个文件名到hash的映射
+    filename_to_hash: LRUCache[str, str]
     # 聊天记录缓存
     recent_messages: defaultdict[
         str, deque[MessageData]
@@ -29,25 +35,38 @@ class DataCache:
         self,
         db: Database,
         http_manager: HttpManager,
-        msg_number=50,
-        energy_recovery_interval=90,
+        ltm: LTM,
+        memory_number: int = 20,
+        msg_number: int = 50,
+        energy_recovery_interval: int = 90,
     ):
         self.db = db
-        self.msg_number = msg_number
         self.http_manager = http_manager
+        self.ltm = ltm
+        self.memory_number = memory_number
+        self.msg_number = msg_number
+        self.energy_recovery_interval = energy_recovery_interval
         self.caption = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
-        self.url_to_hash = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
+        self.filename_to_hash = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
         # 用户画像缓存
         self.user_profiles: dict[str, str] = {}
         # 群画像缓存
         self.group_profiles: dict[str, str] = {}
         self.bot_status: dict[str, Status] = {}
-        self.energy_recovery_interval = energy_recovery_interval
+
+        # 关系缓存
+        self.relations: dict[
+            str, tuple[int, str]
+        ] = {}  # bot_name:group_or_user_id:user_id -> (relation, title)
 
         # 使用 defaultdict 自动管理每个会话的 deque
         # lambda 确保每个新 key 都会得到一个指定长度的 deque
         self.recent_messages: defaultdict[str, deque[MessageData]] = defaultdict(
             lambda: deque(maxlen=self.msg_number)
+        )
+        # 记忆缓存
+        self.memories: defaultdict[str, deque[MemoryItem]] = defaultdict(
+            lambda: deque(maxlen=self.memory_number)
         )
 
     async def get_recent_message(
@@ -101,21 +120,29 @@ class DataCache:
     async def get_bot_status(self, bot_name: str, group_id: str) -> Status:
         fmt_key = f"{bot_name}:{group_id}"
         status = self.bot_status.get(fmt_key)
-        if status:
-            # 当前时间
-            current_time = time.time()
+
+        if not status:
+            status = await self.db.get_bot_status(
+                bot_name=bot_name, group_or_user_id=group_id
+            )
+            self.bot_status[fmt_key] = status
+
+        # 当前时间
+        current_time = time.time()
+
+        if status.timestamp > 0:
             # 恢复的能量
             recovered_energy = (
                 current_time - status.timestamp
             ) / self.energy_recovery_interval
-            status.energy = str(min(float(status.energy) + recovered_energy, 100.0))
-            status.timestamp = current_time
-            return status
-        status = await self.db.get_bot_status(
-            bot_name=bot_name, group_or_user_id=group_id
-        )
-        status.timestamp = time.time()
-        self.bot_status[fmt_key] = status
+            clean_energy = status.energy.strip().strip('"').strip("'")
+            try:
+                status.energy = str(min(float(clean_energy) + recovered_energy, 100.0))
+            except Exception as e:
+                logger.error(f"能量数据异常：{e}，自动重置为100")
+                status.energy = "100.0"
+
+        status.timestamp = current_time
         return status
 
     async def set_message_recalled(
@@ -135,6 +162,21 @@ class DataCache:
             is_recalled=1,
         )
 
+    async def delete_message(
+        self, bot_name: str, group_or_user_id: str, message_id: str
+    ) -> None:
+        """删除消息"""
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        messages = self.recent_messages.get(fmt_key)
+        if messages:
+            for msg in messages:
+                if msg.message_id == message_id:
+                    messages.remove(msg)
+                    break
+        await self.db.delete_message(
+            bot_name=bot_name, group_or_user_id=group_or_user_id, message_id=message_id
+        )
+
     async def set_bot_status(
         self, bot_name: str, group_id: str, status: Status
     ) -> None:
@@ -143,7 +185,7 @@ class DataCache:
         status_data = asdict(status)
         # 仅对非空值进行差分覆盖
         for key, value in status_data.items():
-            if value is not None and value != "":
+            if key != "timestamp" and value is not None and value != "":
                 setattr(current_status, key, value)
         await self.db.upsert_bot_status(
             bot_name=bot_name,
@@ -162,24 +204,30 @@ class DataCache:
             return media_caption
         return None
 
-    async def get_caption_by_url(
-        self, url: str
+    async def get_caption_by_filename(
+        self, filename: str
     ) -> tuple[str | None, MediaCaption | None]:
-        hash_val = self.url_to_hash.get(url)
+        hash_val = self.filename_to_hash.get(filename)
         if hash_val and self.caption.get(hash_val):
             return hash_val, self.caption[hash_val]
         # 从数据库中获取
-        media_caption = await self.db.get_media_caption_by_url(url)
+        media_caption = await self.db.get_media_caption_by_filename(filename)
         if media_caption:
-            await self.set_caption(media_caption)
+            await self.set_caption(media_caption, False)
             return media_caption.hash_val, media_caption
         return None, None
 
     async def set_caption(self, caption: MediaCaption, is_new: bool = True) -> None:
         self.caption[caption.hash_val] = caption
-        self.url_to_hash[caption.url] = caption.hash_val
+        if caption.file_name:
+            self.filename_to_hash[caption.file_name] = caption.hash_val
         if is_new:
             await self.db.insert_media_caption(media_caption=caption)
+
+    async def clear_caption(self):
+        self.caption.clear()
+        self.filename_to_hash.clear()
+        await self.db.clear_media_caption()
 
     async def get_user_profile(
         self, bot_name: str, group_or_user_id: str, user_id: str
@@ -240,4 +288,159 @@ class DataCache:
             group_or_user_id=group_or_user_id,
             bot_name=bot_name,
             profile=profile,
+        )
+
+    async def update_relation(
+        self, bot_name: str, group_or_user_id: str, user_id: str, relation: int
+    ) -> None:
+        """更新关系"""
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        current_relation = self.relations.get(fmt_key, (0, ""))[0]
+        new_relation = current_relation + relation
+        self.relations[fmt_key] = (
+            new_relation,
+            self.relations.get(fmt_key, (0, ""))[1],
+        )
+        await self.db.upsert_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+            relation=new_relation,
+        )
+
+    async def set_relation_title(
+        self, bot_name: str, group_or_user_id: str, user_id: str, title: str
+    ) -> None:
+        """设置关系头衔"""
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        current_relation = self.relations.get(fmt_key, (0, ""))[0]
+        self.relations[fmt_key] = (current_relation, title)
+        await self.db.upsert_relation_title(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+            title=title,
+        )
+
+    async def get_user_relation(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> tuple[int, str]:
+        """获取用户关系"""
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        relation = self.relations.get(fmt_key)
+        if relation:
+            return relation
+        # 从数据库中获取
+        relation_data = await self.db.get_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+        )
+        if relation_data:
+            self.relations[fmt_key] = relation_data
+            return relation_data
+        return 0, ""
+
+    async def get_memories(
+        self, bot_name: str, group_or_user_id: str, limit: int = 20
+    ) -> list[MemoryItem]:
+        """获取记忆"""
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        memories = self.memories.get(fmt_key)
+        if memories and len(memories) >= limit:
+            return list(memories)[-limit:]
+        # 从数据库中获取
+        db_memories = await self.db.get_memories(
+            group_or_user_id=group_or_user_id, bot_name=bot_name, limit=limit
+        )
+        # 缓存最新的一批
+        self.memories[fmt_key] = deque(db_memories, maxlen=limit)
+        return db_memories
+
+    async def add_memory(
+        self, bot_name: str, group_or_user_id: str, text: str, user_id: str
+    ) -> str | None:
+        """添加记忆"""
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        now = datetime.now().isoformat()
+        result = await self.ltm.add_memory(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            text=text,
+            time=now,
+            metadata=json.dumps({"user_id": user_id}),
+        )
+        if result is None:
+            return
+        memory_id, vector = result
+        memory = MemoryItem(
+            memory_id=memory_id,
+            text=text,
+            vector=vector,
+            metadata=json.dumps({"user_id": user_id}),
+            updated_at=now,
+            created_at=now,
+        )
+        self.memories[fmt_key].append(memory)
+        # 将记忆写入数据库
+        await self.db.insert_memory(
+            bot_name=bot_name, group_or_user_id=group_or_user_id, memory=memory
+        )
+        return memory_id
+
+    async def delete_memory(self, memory_id: str) -> bool:
+        """删除记忆"""
+        result = await self.ltm.delete_memory(memory_id=memory_id)
+        if result is None:
+            return False
+        await self.db.delete_memory(memory_id=memory_id)
+        # 从缓存中删除
+        for memories in self.memories.values():
+            for memory in memories:
+                if memory.memory_id == memory_id:
+                    memories.remove(memory)
+                    break
+        return True
+
+    async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
+        """删除全部记忆"""
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        targets = [
+            self.group_profiles,
+            self.memories,
+            self.bot_status,
+            self.recent_messages,
+        ]
+        for cache in targets:
+            cache.pop(fmt_key, None)
+
+        prefix = f"{fmt_key}:"
+        for cache_dict in [self.user_profiles, self.relations]:
+            keys_to_delete = [k for k in cache_dict.keys() if k.startswith(prefix)]
+            for k in keys_to_delete:
+                cache_dict.pop(k, None)
+
+        await asyncio.gather(
+            self.db.delete_group_user_profiles(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            ),
+            self.db.delete_group_profile(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            ),
+            self.ltm.delete_all_memories(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            ),
+            self.db.delete_all_memories(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            ),
+            self.db.delete_bot_status(
+                group_or_user_id=group_or_user_id, bot_name=bot_name
+            ),
+            self.db.delete_all_relations(
+                bot_name=bot_name, group_or_user_id=group_or_user_id
+            ),
+            self.db.delete_chat_history(
+                group_or_user_id=group_or_user_id, bot_name=bot_name
+            ),
+            return_exceptions=True,
         )

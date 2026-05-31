@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import uuid
-from datetime import datetime
 
 import lancedb
 from fastembed import TextEmbedding
@@ -36,6 +35,8 @@ class LTM:
         self.table = self.db.create_table(
             self.table_name, schema=MemorySchema, exist_ok=True
         )
+        # 创建索引
+        # self.table.create_index()
         # 使用 FastEmbed 初始化计算引擎，它底层自带针对 CPU 的 ONNX 优化
         # 请注意：FastEmbed并不官方支持通用模型，且支持的模型名单上并没有BAAI/bge-base-zh-v1.5
         if self.embedding_conf.get("enabled", False):
@@ -71,22 +72,32 @@ class LTM:
         return TextCrossEncoder.list_supported_models()
 
     async def add_memory(
-        self, bot_name: str, group_or_user_id: str, text: str, metadata: str = "{}"
-    ) -> str:
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        text: str,
+        time: str,
+        metadata: str = "{}",
+    ) -> tuple[str, bytes] | None:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self._add_memory_sync, bot_name, group_or_user_id, text, metadata
+            None,
+            self._add_memory_sync,
+            bot_name,
+            group_or_user_id,
+            text,
+            time,
+            metadata,
         )
 
     def _add_memory_sync(
-        self, bot_name: str, group_or_user_id: str, text: str, metadata: str
-    ) -> str:
+        self, bot_name: str, group_or_user_id: str, text: str, time: str, metadata: str
+    ) -> tuple[str, bytes] | None:
         """添加一条记忆"""
         if not hasattr(self, "embed_model"):
             logger.error("Embedding model not initialized")
-            return ""
+            return None
         memory_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
 
         # 使用 TextEmbedding 实例手动计算向量
         vector = list(self.embed_model.embed([text]))[0]
@@ -99,24 +110,28 @@ class LTM:
                 "text": text,
                 "vector": vector.tolist() if hasattr(vector, "tolist") else vector,
                 "metadata": metadata,
-                "created_at": now,
-                "updated_at": now,
+                "created_at": time,
+                "updated_at": time,
             }
         ])
-        return memory_id
+        return memory_id, vector.tobytes()
 
-    async def get_memory(self, memory_id: str) -> dict | None:
+    async def get_memory(self, memory_ids: list[str]) -> list[dict] | None:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._get_memory_sync, memory_id)
+        return await loop.run_in_executor(None, self._get_memory_sync, memory_ids)
 
-    def _get_memory_sync(self, memory_id: str) -> dict | None:
+    def _get_memory_sync(self, memory_ids: list[str]) -> list[dict] | None:
         """根据ID获取记忆"""
         try:
             results = (
-                self.table.search().where(f"id = '{memory_id}'").limit(1).to_list()
+                self.table
+                .search()
+                .where(f"id IN ({','.join(memory_ids)})")
+                .limit(len(memory_ids))
+                .to_list()
             )
             if results:
-                return results[0]
+                return results
             return None
         except Exception as e:
             logger.error(f"Get memory failed: {e}")
@@ -189,7 +204,7 @@ class LTM:
     def _get_all_memories_sync(
         self, bot_name: str, group_or_user_id: str, limit: int
     ) -> list[dict]:
-        """获取所有近期记忆"""
+        """获取所有早期记忆"""
         try:
             results = (
                 self.table
@@ -205,37 +220,38 @@ class LTM:
             logger.error(f"Get all memories failed: {e}")
             return []
 
-    async def update_memory(
-        self, memory_id: str, text: str, metadata: str = "{}"
-    ) -> bool:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self._update_memory_sync, memory_id, text, metadata
-        )
+    # async def update_memory(
+    #     self, memory_id: str, text: str, metadata: str = "{}"
+    # ) -> bool:
+    #     """修改记忆内容（重写以更新向量）"""
+    #     loop = asyncio.get_running_loop()
+    #     return await loop.run_in_executor(
+    #         None, self._update_memory_sync, memory_id, text, metadata
+    #     )
 
-    def _update_memory_sync(self, memory_id: str, text: str, metadata: str) -> bool:
-        """修改记忆内容（重写以更新向量）"""
-        try:
-            memory = self._get_memory_sync(memory_id)
-            if not memory:
-                return False
-            self._delete_memory_sync(memory_id)
-            now = datetime.now().isoformat()
-            self.table.add([
-                {
-                    "id": memory_id,
-                    "bot_name": memory["bot_name"],
-                    "group_or_user_id": memory["group_or_user_id"],
-                    "text": text,
-                    "metadata": metadata,
-                    "created_at": memory["created_at"],
-                    "updated_at": now,
-                }
-            ])
-            return True
-        except Exception as e:
-            logger.error(f"Update memory failed: {e}")
-            return False
+    # def _update_memory_sync(self, memory_id: str, text: str, metadata: str) -> bool:
+    #     """修改记忆内容（重写以更新向量）"""
+    #     try:
+    #         memory = self._get_memory_sync([memory_id])
+    #         if not memory:
+    #             return False
+    #         self._delete_memory_sync(memory_id)
+    #         now = datetime.now().isoformat()
+    #         self.table.add([
+    #             {
+    #                 "id": memory_id,
+    #                 "bot_name": memory[0]["bot_name"],
+    #                 "group_or_user_id": memory[0]["group_or_user_id"],
+    #                 "text": text,
+    #                 "metadata": metadata,
+    #                 "created_at": memory[0]["created_at"],
+    #                 "updated_at": now,
+    #             }
+    #         ])
+    #         return True
+    #     except Exception as e:
+    #         logger.error(f"Update memory failed: {e}")
+    #         return False
 
     async def delete_memory(self, memory_id: str) -> bool:
         loop = asyncio.get_running_loop()
@@ -248,6 +264,17 @@ class LTM:
             return True
         except Exception as e:
             logger.error(f"Delete memory failed: {e}")
+            return False
+
+    async def delete_all_memories(self, bot_name: str, group_or_user_id: str) -> bool:
+        """删除全部记忆"""
+        try:
+            self.table.delete(
+                f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Delete all memories failed: {e}")
             return False
 
     async def rerank_memories(

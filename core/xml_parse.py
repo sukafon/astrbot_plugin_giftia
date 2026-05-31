@@ -1,19 +1,24 @@
 import ast
 import json
 import re
-import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
+
+from bs4 import BeautifulSoup
+from bs4.element import NavigableString, Tag
 
 from astrbot.api import logger
 from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.core.message.components import BaseMessageComponent
 
 from .data_cache import DataCache
+from .emoji_manager import EmojiManager
 from .schemas import Decision, MediaCaption, XmlLlmResult
 
 
 class XmlParse:
-    def __init__(self, data_cache: DataCache):
+    def __init__(self, data_cache: DataCache, emoji_manager: EmojiManager):
         self.data_cache = data_cache
+        self.emoji_manager = emoji_manager
 
     @staticmethod
     def str_to_int_bool(val):
@@ -31,32 +36,17 @@ class XmlParse:
         """解码决策XML字符串"""
         if not xml_str:
             return None
-        # 初始化
-        result = Decision()
-
-        # 开始解析
         try:
-            clean_str = re.sub(
-                r"```[a-zA-Z]*\s*|\s*```", "", xml_str, flags=re.IGNORECASE
-            ).strip()
-            wrapped_data = f"<root>{clean_str}</root>"
-            root = ET.fromstring(wrapped_data)
-
-            for child in root:
-                # if child.tag == "think":
-                #     # 打印思考看看
-                #     logger.info(
-                #         f"<think>{child.text.strip() if child.text else ''}</think>"
-                #     )
-                if child.tag == "decision":
-                    result.reply_decision = self.str_to_int_bool(child.get("reply"))
-                    result.use_rag = self.str_to_int_bool(child.get("use_rag"))
-                    result.rag_query = (
-                        child.get("rag_query", "") or child.text.strip()
-                        if child.text
-                        else ""
-                    )
-            # 检查数据是否有效
+            result = Decision()
+            safe_xml = self.preprocess_xml(xml_str)
+            soup = BeautifulSoup(safe_xml, "xml")
+            decision_node = soup.find("decision")
+            if decision_node:
+                result.reply_decision = self.str_to_int_bool(decision_node.get("reply"))
+                result.use_rag = self.str_to_int_bool(decision_node.get("use_rag"))
+                result.rag_query = str(
+                    decision_node.get("rag_query", "")
+                ) or decision_node.get_text(strip=True)
             if result.reply_decision == 2 or result.use_rag == 2:
                 logger.error(f"决策数据无效: {result}, xml_str: {xml_str[:1000]}")
                 return None
@@ -71,227 +61,314 @@ class XmlParse:
         """解码LLM返回的XML字符串"""
         if not xml_str:
             return None
-        # 初始化
-        result = XmlLlmResult()
         try:
-            # 开始解析
-            clean_str = re.sub(
-                r"```[a-zA-Z]*\s*|\s*```", "", xml_str, flags=re.IGNORECASE
-            ).strip()
-            wrapped_data = f"<root>{clean_str}</root>"
-            safe_xml = self.mask_think_content(wrapped_data)
-            root = ET.fromstring(safe_xml)
+            result = XmlLlmResult()
+            safe_xml = self.preprocess_xml(xml_str)
+            # BeautifulSoup 容错解析
+            soup = BeautifulSoup(safe_xml, "xml")
+            root = soup.find("root")
+            if not root:
+                return None
 
-            for child in root:
-                # if child.tag == "think":
-                #     # 打印思考看看
-                #     logger.info(
-                #         f"<think>{child.text.strip() if child.text else ''}</think>"
-                #     )
-                if child.tag == "status":
-                    result.status.mood = child.get("mood", "")
-                    result.status.state = child.get("state", "")
-                    result.status.action = child.get("action", "")
-                    result.status.energy = child.get("energy", "")
-                    result.status.memory = child.text.strip() if child.text else ""
-                    # 打印状态看看
-                    # logger.info(
-                    #     f"<mood>{result.status.mood}</mood>"
-                    #     f"<state>{result.status.state}</state>"
-                    #     f"<memory>{result.status.memory}</memory>"
-                    #     f"<action>{result.status.action}</action>"
-                    #     f"<energy>{result.status.energy}</energy>"
-                    # )
-                # 仅将reply、at、image、plain合并为同一条消息，其他拆分成独立消息链，避免行为不自然
-                elif child.tag == "message":
+            for child in root.find_all(recursive=False):
+                tag_name = child.name
+
+                if tag_name == "status":
+                    raw_text = child.get_text(strip=True)
+                    parsed_data = dict(re.findall(r"(\w+)[:：]\s*([^\n]+)", raw_text))
+                    result.status.mood = parsed_data.get("心情", "")
+                    result.status.state = parsed_data.get("状态", "")
+                    result.status.action = parsed_data.get("动作", "")
+                    result.status.energy = parsed_data.get("能量", "100")
+                    result.status.memory = parsed_data.get("记忆", "")
+
+                elif tag_name == "message":
                     sub_chain: list[BaseMessageComponent] = []
-                    # 收集纯文本消息，用于非aiocqhttp平台发送
                     sub_text: str = ""
+                    sub_log: str = ""
+
                     if child.get("quote"):
-                        if child.get("quote"):
-                            sub_chain.append(Reply(id=child.get("quote")))
-                        else:
-                            logger.error(
-                                f"Reply组件缺少quote属性: {child.attrib}, xml_str: {xml_str[:1000]}"
-                            )
-                    # 标签<message>内，子标签前的文本
-                    if child.text and child.text.strip():
-                        # 判断前面是不是AT，是AT加入\u200b字符
-                        if sub_chain and isinstance(sub_chain[-1], At):
-                            sub_chain.append(Plain(text="\u200b" + child.text.strip()))
-                        else:
-                            sub_chain.append(Plain(text=child.text.strip()))
-                        sub_text = child.text.strip()
-                    for element in child:
-                        if element.tag == "at":
-                            if element.get("user_id"):
-                                sub_chain.append(At(qq=element.get("user_id")))
-                            else:
-                                logger.error(
-                                    f"At组件缺少user_id属性: {element.attrib}, xml_str: {xml_str[:1000]}"
-                                )
-                        # sticker作为表情包的语义比image更强烈一些
-                        elif element.tag == "sticker":
-                            if element.get("media_id"):
-                                media_caption = (
-                                    await self.data_cache.get_caption_by_hash(
-                                        element.get("media_id", "")
-                                    )
-                                )
-                                if media_caption and media_caption.url:
-                                    sub_chain.append(Image.fromURL(media_caption.url))
+                        sub_chain.append(Reply(id=child.get("quote")))
+
+                    for content in child.contents:
+                        # 如果是纯文本内容
+                        if isinstance(content, NavigableString):
+                            text_content = str(content).strip()
+                            if text_content:
+                                sub_chain.append(Plain(text=text_content))
+                                sub_text += text_content
+                                sub_log += text_content
+
+                        # 如果是子标签 (<at>, <sticker>等)
+                        elif isinstance(content, Tag):
+                            if content.name == "at":
+                                if content.get("user_id"):
+                                    sub_chain.append(At(qq=content.get("user_id")))
+                                    sub_log += f" <@{content.get('user_id')}>"
                                 else:
                                     logger.error(
-                                        f"未找到图片: {element.get('media_id')}, xml_str: {xml_str[:1000]}"
+                                        f"At组件缺少user_id属性: {content.attrs}, xml_str: {xml_str[:1000]}"
                                     )
-                            else:
-                                logger.error(
-                                    f"Sticker组件缺少media_id属性: {element.attrib}, xml_str: {xml_str[:1000]}"
-                                )
-                        # 标签<message>内，子标签后的文本
-                        if element.tail and element.tail.strip():
-                            # 判断前面是不是AT，是AT加入\u200b字符
-                            if sub_chain and isinstance(sub_chain[-1], At):
-                                sub_chain.append(
-                                    Plain(text="\u200b" + element.tail.strip())
-                                )
-                            else:
-                                sub_chain.append(Plain(text=element.tail.strip()))
-                            sub_text += element.tail.strip()
+
+                            elif content.name == "sticker":
+                                sticker_id = self._attr_str(content, "sticker_id", "")
+                                if sticker_id:
+                                    local_path = self.emoji_manager.get_sticker_path(
+                                        sticker_id
+                                    )
+                                    if local_path:
+                                        sub_chain.append(
+                                            Image.fromFileSystem(str(local_path))
+                                        )
+                                    else:
+                                        media_caption = (
+                                            await self.data_cache.get_caption_by_hash(
+                                                sticker_id
+                                            )
+                                        )
+                                        if media_caption and media_caption.url:
+                                            sub_chain.append(
+                                                Image.fromURL(media_caption.url)
+                                            )
+                                        else:
+                                            logger.error(
+                                                f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
+                                            )
+                                    result.send_stickers.append(sticker_id)
+                                    sub_log += f" [图片:{sticker_id}]"
+                                else:
+                                    logger.error(
+                                        f"Sticker组件缺少sticker_id属性: {content.attrs}, xml_str: {xml_str[:1000]}"
+                                    )
+
                     result.msg_chains.append(sub_chain)
                     result.msg_texts.append(sub_text)
-                # 允许at也作为独立的消息，增强可靠性
-                elif child.tag == "at":
-                    if child.get("user_id"):
-                        result.msg_chains.append([At(qq=child.get("user_id"))])
-                # 图片和表情包
-                elif child.tag == "sticker":
-                    if child.get("media_id"):
-                        # 暂时先这样，做好偷表情包再修这里
-                        media_caption = await self.data_cache.get_caption_by_hash(
-                            child.get("media_id", "")
-                        )
-                        if media_caption and media_caption.url:
-                            result.msg_chains.append([Image.fromURL(media_caption.url)])
+                    result.msg_logs.append(sub_log)
+
+                elif tag_name == "at":
+                    if self._attr_str(child, "user_id", ""):
+                        result.msg_chains.append([
+                            At(qq=self._attr_str(child, "user_id", ""))
+                        ])
+                        result.msg_logs.append(f"<@{self._attr_str(child, 'user_id', '')}>")
+
+                elif tag_name == "sticker":
+                    sticker_id = self._attr_str(child, "sticker_id", "")
+                    if sticker_id:
+                        local_path = self.emoji_manager.get_sticker_path(sticker_id)
+                        if local_path:
+                            result.msg_chains.append([
+                                Image.fromFileSystem(str(local_path))
+                            ])
                         else:
-                            logger.error(
-                                f"未找到图片: {child.get('media_id')}, xml_str: {xml_str[:1000]}"
+                            media_caption = await self.data_cache.get_caption_by_hash(
+                                sticker_id
                             )
-                # 贴表情
-                elif child.tag == "emoji_like":
-                    if child.get("message_id") and child.get("emoji_id"):
+                            if media_caption and media_caption.url:
+                                result.msg_chains.append([
+                                    Image.fromURL(media_caption.url)
+                                ])
+                            else:
+                                logger.error(
+                                    f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
+                                )
+                        result.send_stickers.append(sticker_id)
+                        result.msg_logs.append(f"[图片:{sticker_id}]")
+                elif tag_name == "emoji_like":
+                    if self._attr_str(child, "message_id", "") and self._attr_str(
+                        child, "emoji_id", ""
+                    ):
                         result.emoji_ids.append((
-                            child.get("message_id", ""),
-                            child.get("emoji_id", ""),
+                            self._attr_str(child, "message_id", ""),
+                            self._attr_str(child, "emoji_id", ""),
                         ))
                     else:
                         logger.error(
-                            f"贴表情数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"贴表情数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 撤回消息
-                elif child.tag == "delete":
-                    # 优先获取属性，如果属性为空，则尝试获取标签内部的文本
-                    msg_id = child.get("message_id") or (
-                        child.text.strip() if child.text else ""
+
+                elif tag_name == "delete":
+                    msg_id = self._attr_str(child, "message_id", "") or child.get_text(
+                        strip=True
                     )
                     if msg_id:
                         result.delete_message_ids.append(msg_id)
-                # 点赞
-                elif child.tag == "like":
-                    if child.get("user_id") and child.get("count"):
+
+                elif tag_name == "like":
+                    if self._attr_str(child, "user_id", "") and self._attr_str(
+                        child, "count", ""
+                    ):
                         result.likes.append((
-                            child.get("user_id", ""),
-                            child.get("count", ""),
+                            self._attr_str(child, "user_id", ""),
+                            self._attr_str(child, "count", ""),
                         ))
                     else:
                         logger.error(
-                            f"点赞标签数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"点赞标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 戳一戳
-                elif child.tag == "poke":
-                    if child.get("user_id"):
+
+                elif tag_name == "poke":
+                    if self._attr_str(child, "user_id", ""):
                         result.poke.append((
-                            child.get("group_id", "") or group_or_user_id,
-                            child.get("user_id", ""),
+                            self._attr_str(child, "group_id", "") or group_or_user_id,
+                            self._attr_str(child, "user_id", ""),
                         ))
                     else:
                         logger.error(
-                            f"戳一戳标签数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"戳一戳标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 禁言
-                elif child.tag == "ban":
-                    if child.get("user_id"):
+
+                elif tag_name == "ban":
+                    if self._attr_str(child, "user_id", ""):
                         result.ban.append((
-                            child.get("group_id", "") or group_or_user_id,
-                            child.get("user_id", ""),
-                            child.get("duration", ""),
+                            self._attr_str(child, "group_id", "") or group_or_user_id,
+                            self._attr_str(child, "user_id", ""),
+                            self._attr_str(child, "duration", ""),
                         ))
                     else:
                         logger.error(
-                            f"禁言标签数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"禁言标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 用户画像
-                elif child.tag == "summary_user_profile":
-                    if child.text:
-                        user_id = child.get("user_id")
-                        if user_id:
-                            result.summary_user_profiles.append((
-                                group_or_user_id,
-                                user_id,
-                                child.text.strip(),
-                            ))
-                # 群画像
-                elif child.tag == "summary_group_profile":
-                    if child.text:
-                        result.summary_group_profiles.append((
-                            group_or_user_id,
-                            child.text.strip(),
+
+                elif tag_name == "kick":
+                    if self._attr_str(child, "user_id", ""):
+                        result.kick.append((
+                            self._attr_str(child, "group_id", "") or group_or_user_id,
+                            self._attr_str(child, "user_id", ""),
                         ))
-                # 记忆
-                elif child.tag == "save_memory":
-                    if child.text:
-                        result.save_memories.append((
+                    else:
+                        logger.error(
+                            f"踢人标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "leave":
+                    result.leave.append(group_or_user_id)
+
+                elif tag_name == "summary_user_profile":
+                    text = child.get_text(strip=True)
+                    user_id = self._attr_str(child, "user_id", "")
+                    if text and user_id:
+                        result.summary_user_profiles.append((
                             group_or_user_id,
-                            child.text.strip(),
+                            user_id,
+                            text,
                         ))
-                elif child.tag == "search_memory":
-                    if child.text:
-                        result.search_memories.append((
-                            group_or_user_id,
-                            child.text.strip(),
-                        ))
-                # 工具调用
-                elif child.tag == "tool_call":
-                    tool_name = child.get("name")
-                    if tool_name and child.text:
-                        arg_dict = self.parse_str_json(child.text)
+
+                elif tag_name == "summary_group_profile":
+                    text = child.get_text(strip=True)
+                    if text:
+                        result.summary_group_profiles.append((group_or_user_id, text))
+
+                elif tag_name == "save_memory":
+                    text = child.get_text(strip=True)
+                    if text:
+                        result.save_memories.append((group_or_user_id, text))
+
+                elif tag_name == "search_memory":
+                    text = child.get_text(strip=True)
+                    if text:
+                        result.search_memories.append((group_or_user_id, text))
+
+                elif tag_name == "delete_memory":
+                    memory_id = self._attr_str(child, "id", "")
+                    if memory_id:
+                        result.delete_memories.append(memory_id)
+                    else:
+                        logger.error(
+                            f"Delete memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "update_memory":
+                    memory_id = self._attr_str(child, "id", "")
+                    text = child.get_text(strip=True)
+                    if memory_id and text:
+                        result.update_memories.append((memory_id, text))
+                    else:
+                        logger.error(
+                            f"Update memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "update_relation":
+                    user_id = self._attr_str(child, "user_id", "")
+                    delta = self._attr_str(child, "delta", "")
+                    if user_id and delta:
+                        # delta应该是数字类型，尝试转换
+                        try:
+                            # 如果有+号，去掉它再转换
+                            if delta.startswith("+"):
+                                delta = delta[1:]
+                            delta_int = int(delta)
+                            # 如果delta绝对值大于+-5，截断到+-5，防止误操作导致关系崩盘
+                            if delta_int > 5:
+                                delta_int = 5
+                            elif delta_int < -5:
+                                delta_int = -5
+                            result.update_relations.append((user_id, delta_int))
+                        except ValueError:
+                            logger.error(
+                                f"Update relation delta值无效: {delta}, xml_str: {xml_str[:1000]}"
+                            )
+                    else:
+                        logger.error(
+                            f"Update relation数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "set_relation_title":
+                    user_id = self._attr_str(child, "user_id", "")
+                    title = child.get_text(strip=True)
+                    if user_id and title:
+                        result.set_relation_titles.append((user_id, title))
+                    else:
+                        logger.error(
+                            f"Set relation title数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "tool_call":
+                    tool_name = self._attr_str(child, "name", "")
+                    text = child.get_text(strip=True)
+                    if tool_name and text:
+                        arg_dict = self.parse_str_json(text)
                         if arg_dict:
                             result.tools_to_call.append((tool_name, arg_dict))
                     else:
                         logger.error(
-                            f"Tool call数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"Tool call数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 设置定时任务
-                elif child.tag == "schedule_task":
-                    task_time = child.get("time")
-                    if task_time and child.text:
+
+                elif tag_name == "schedule_task":
+                    task_time = self._attr_str(child, "time", "")
+                    text = child.get_text(strip=True)
+                    if task_time and text:
                         result.schedule_tasks.append((
                             group_or_user_id,
                             task_time,
-                            child.text.strip(),
+                            text,
                         ))
                     else:
                         logger.error(
-                            f"Schedule task数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"Schedule task数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
-                # 删除定时任务
-                elif child.tag == "delete_task":
-                    task_id = child.get("task_id")
+
+                elif tag_name == "delete_task":
+                    task_id = self._attr_str(child, "task_id", "")
                     if task_id:
                         result.delete_schedule_tasks.append(task_id)
                     else:
                         logger.error(
-                            f"Delete task数据不完整: {child.attrib}, xml_str: {xml_str[:1000]}"
+                            f"Delete task数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
+                elif tag_name == "all_task":
+                    group_id = self._attr_str(child, "group_id", group_or_user_id)
+                    result.all_tasks.append(group_id)
+
+                elif tag_name == "add_sticker":
+                    media_id = self._attr_str(child, "media_id", "")
+                    if media_id:
+                        result.add_stickers.append(media_id)
+                    else:
+                        logger.error(
+                            f"Add sticker数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
             return result
@@ -301,26 +378,23 @@ class XmlParse:
 
     def decode_media_caption_xml(self, xml_str: str) -> MediaCaption | None:
         """解码媒体图片描述XML字符串"""
-        # 初始化
         result = MediaCaption()
         result.media_type = "image"
-        try:
-            # 开始解析
-            clean_str = re.sub(
-                r"```[a-zA-Z]*\s*|\s*```", "", xml_str, flags=re.IGNORECASE
-            ).strip()
-            wrapped_data = f"<root>{clean_str}</root>"
-            root = ET.fromstring(wrapped_data)
 
-            for child in root:
-                if child.tag == "caption":
-                    result.genre = child.get("genre", "")
-                    result.character = child.get("character", "")
-                    result.source = child.get("source", "")
-                    result.text = child.get("text", "")
-                    result.caption = child.text.strip() if child.text else ""
-            # 检查数据是否有效
-            if result.caption == "":
+        try:
+            safe_xml = self.preprocess_xml(xml_str)
+            soup = BeautifulSoup(safe_xml, "xml")
+            root = soup.find("root")
+            if root:
+                for child in root.find_all(recursive=False):
+                    if child.name == "caption":
+                        result.genre = self._attr_str(child, "genre", "")
+                        result.character = self._attr_str(child, "character", "")
+                        result.source = self._attr_str(child, "source", "")
+                        result.text = self._attr_str(child, "text", "")
+                        result.caption = child.get_text(strip=True)
+
+            if not result.caption:
                 logger.warning(
                     f"媒体图片描述数据无效: {result}, xml_str: {xml_str[:1000]}"
                 )
@@ -332,26 +406,23 @@ class XmlParse:
 
     def decode_media_audio_xml(self, xml_str: str) -> MediaCaption | None:
         """解码媒体语音描述XML字符串"""
-        # 初始化
         result = MediaCaption()
         result.media_type = "audio"
-        try:
-            # 开始解析
-            clean_str = re.sub(
-                r"```[a-zA-Z]*\s*|\s*```", "", xml_str, flags=re.IGNORECASE
-            ).strip()
-            wrapped_data = f"<root>{clean_str}</root>"
-            root = ET.fromstring(wrapped_data)
 
-            for child in root:
-                if child.tag == "caption":
-                    result.genre = child.get("genre", "")
-                    result.character = child.get("character", "")
-                    result.source = child.get("source", "")
-                    result.text = child.get("text", "")
-                    result.caption = child.text.strip() if child.text else ""
-            # 检查数据是否有效
-            if result.caption == "":
+        try:
+            safe_xml = self.preprocess_xml(xml_str)
+            soup = BeautifulSoup(safe_xml, "xml")
+            root = soup.find("root")
+            if root:
+                for child in root.find_all(recursive=False):
+                    if child.name == "caption":
+                        result.genre = self._attr_str(child, "genre", "")
+                        result.character = self._attr_str(child, "character", "")
+                        result.source = self._attr_str(child, "source", "")
+                        result.text = self._attr_str(child, "text", "")
+                        result.caption = child.get_text(strip=True)
+
+            if not result.caption:
                 logger.warning(
                     f"媒体语音描述数据无效: {result}, xml_str: {xml_str[:1000]}"
                 )
@@ -362,10 +433,7 @@ class XmlParse:
             return None
 
     def parse_str_json(self, response_text: str) -> dict | None:
-        """
-        把AI回复的json字符串解析成字典
-        """
-        # 清理markdown代码块标记
+        """把AI回复的json字符串解析成字典"""
         clean_text = response_text.strip()
         if clean_text.startswith("```json"):
             clean_text = clean_text[7:]
@@ -375,7 +443,6 @@ class XmlParse:
             clean_text = clean_text[:-3]
         clean_text = clean_text.strip()
 
-        # 正则取花括号内容
         match = re.search(r"\{.*\}", clean_text, re.DOTALL)
         if match:
             clean_text = match.group(0)
@@ -383,24 +450,56 @@ class XmlParse:
             logger.error(f"未找到JSON对象，原始文本: {response_text[:1000]}")
             return None
 
-        # 尝试解析
         try:
             return json.loads(clean_text)
         except json.JSONDecodeError:
             try:
-                # 解决单引号问题
                 return ast.literal_eval(clean_text)
             except Exception as e:
                 logger.error(f"解析JSON失败: {e}, clean_text: {clean_text[:1000]}")
                 return None
 
-    def mask_think_content(self, xml_raw):
-        # 找到 <think> 和 </think> 之间的所有内容
-        def escape_match(match):
-            content = match.group(1)
-            # 仅对内部的尖括号进行转义
-            safe_content = content.replace("<", "&lt;").replace(">", "&gt;")
-            return f"<think>{safe_content}</think>"
+    def preprocess_xml(self, xml_raw: str) -> str:
+        """全能型 XML 预处理：融合了 escape 的终极安全版本"""
+        if not xml_raw:
+            return ""
 
-        # 使用非贪婪匹配获取 think 块
-        return re.sub(r"<think>(.*?)</think>", escape_match, xml_raw, flags=re.DOTALL)
+        # 移除首尾的 ```xml 等代码块标记
+        clean_str = re.sub(
+            r"```[a-zA-Z]*\s*|\s*```", "", xml_raw, flags=re.IGNORECASE
+        ).strip()
+
+        # 处理 <think>...</think> 标签内部的xml，进行转义
+        pattern_think = re.compile(
+            r"(<\s*think\s*>)(.*?)(<\s*/\s*think\s*>)", re.DOTALL | re.IGNORECASE
+        )
+
+        def escape_think(match):
+            # 使用 escape 自动转义 <, >, &
+            return f"{match.group(1)}{escape(match.group(2))}{match.group(3)}"
+
+        clean_str = pattern_think.sub(escape_think, clean_str)
+
+        # # 模型用 Markdown 列表打草稿（比如以 * 或 1. 开头）
+        # lines = clean_str.split("\n")
+        # processed_lines = []
+        # for line in lines:
+        #     # 正则匹配：以 *、- 或数字加点开头（前面允许有空格）
+        #     if re.match(r"^\s*([\*\-]|\d+\.)\s+", line):
+        #         # 用 escape 把整行草稿变为安全的纯文本
+        #         line = escape(line)
+        #     processed_lines.append(line)
+
+        # clean_str = "\n".join(processed_lines)
+
+        # 包裹根节点
+        return f"<root>{clean_str}</root>"
+
+    @staticmethod
+    def _attr_str(tag: Tag, attr_name: str, default: str = "") -> str:
+        """安全获取 BeautifulSoup 标签的字符串属性"""
+        val = tag.get(attr_name, default)
+        # 如果类型检查器认为可能是列表，取第一个值或转为字符串
+        if isinstance(val, list):
+            return val[0] if val else default
+        return val if val is not None else default

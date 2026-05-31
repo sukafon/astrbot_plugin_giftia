@@ -1,12 +1,6 @@
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import (
-    File,
-    Image,
-    Plain,
-    Record,
-    Video,
-)
+from astrbot.api.message_components import At, File, Image, Plain, Record, Video
 from astrbot.core.message.components import BaseMessageComponent
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -32,7 +26,6 @@ class AIoCQHTTPAction:
             message_chain: 消息链
         """
 
-        # 针对 aiocqhttp 平台使用更底层的 API 以确保获取 message_id 用于撤回
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
         ):
@@ -44,10 +37,6 @@ class AIoCQHTTPAction:
                         group_id=int(group_id), message=message_data
                     )
                 else:
-                    # 私聊过滤掉贴表情
-                    message_data = [
-                        item for item in message_data if item.get("type") != "Face"
-                    ]
                     resp = await event.bot.send_private_msg(
                         user_id=int(event.get_sender_id()), message=message_data
                     )
@@ -90,7 +79,7 @@ class AIoCQHTTPAction:
             event, AiocqhttpMessageEvent
         ):
             # 超过50个赞截断成50个
-            total_likes = min(int(count), 50)
+            total_likes = min(count, 50)
             # 计算分组
             full_groups = total_likes // 10
             remainder = total_likes % 10
@@ -99,7 +88,7 @@ class AIoCQHTTPAction:
                 batches.append(remainder)
             for index, count in enumerate(batches):
                 try:
-                    await event.bot.send_like(user_id=int(user_id), times=count)
+                    await event.bot.send_like(user_id=user_id, times=count)
                 except Exception as e:
                     logger.warning(f"点赞失败: {str(e)}")
                     # 如果是第一次点赞失败，返回错误信息
@@ -117,7 +106,7 @@ class AIoCQHTTPAction:
         group_id: int,
         user_id: int,
         reject_add_request=False,
-    ) -> bool:
+    ) -> str | None:
         """踢出群成员"""
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
@@ -128,13 +117,13 @@ class AIoCQHTTPAction:
                     user_id=user_id,
                     reject_add_request=reject_add_request,
                 )
-                return True
+                return None
             except Exception as e:
                 logger.warning(f"踢出群成员失败: {str(e)}")
-                return False
+                return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
-            return False
+            return "当前仅支持aiocqhttp平台"
 
     async def group_ban(
         self,
@@ -142,7 +131,7 @@ class AIoCQHTTPAction:
         group_id: int,
         user_id: int,
         duration: int = 30 * 60,
-    ) -> bool:
+    ) -> str | None:
         """禁言"""
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
@@ -153,13 +142,28 @@ class AIoCQHTTPAction:
                     user_id=user_id,
                     duration=duration,
                 )
-                return True
+                return None
             except Exception as e:
                 logger.warning(f"提出群成员失败: {str(e)}")
-                return False
+                return str(e)
         else:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
-            return False
+            return "当前仅支持aiocqhttp平台"
+
+    async def group_leave(self, event: AstrMessageEvent, group_id: int) -> str | None:
+        """退群"""
+        if event.get_platform_name() == "aiocqhttp" and isinstance(
+            event, AiocqhttpMessageEvent
+        ):
+            try:
+                await event.bot.set_group_leave(group_id=group_id)
+                return None
+            except Exception as e:
+                logger.warning(f"退群失败: {str(e)}")
+                return str(e)
+        else:
+            logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
+            return "当前仅支持aiocqhttp平台"
 
     async def msg_emoji_like(
         self,
@@ -197,6 +201,7 @@ class AIoCQHTTPAction:
             event, AiocqhttpMessageEvent
         ):
             try:
+                # logger.info(f"尝试戳一戳: group_id={group_id}, user_id={user_id}")
                 await event.bot.group_poke(
                     group_id=group_id,
                     user_id=user_id,
@@ -221,18 +226,27 @@ class AIoCQHTTPAction:
             if isinstance(component, Plain):
                 if not component.text.strip():
                     continue
+                # 检查前面是不是@，如果是@，添加\u200b字符
+                if message_data and message_data[-1].get("type") == "at":
+                    component.text = "\u200b " + component.text
+                message_data.append(await component.to_dict())
+            # 如果是@，也需要检查前面是不是@
+            elif isinstance(component, At):
+                if message_data and message_data[-1].get("type") == "at":
+                    message_data.append({
+                        "type": "text",
+                        "data": {"text": "\u200b \u200b"},
+                    })
                 message_data.append(await component.to_dict())
             elif isinstance(component, Image | Record):
                 # For Image and Record segments, we convert them to base64
                 bs64 = await component.convert_to_base64()
-                message_data.append(
-                    {
-                        "type": component.type.lower(),
-                        "data": {
-                            "file": f"base64://{bs64}",
-                        },
-                    }
-                )
+                message_data.append({
+                    "type": component.type.lower(),
+                    "data": {
+                        "file": f"base64://{bs64}",
+                    },
+                })
             elif isinstance(component, File):
                 # For File segments, we need to handle the file differently
                 d = await component.to_dict()

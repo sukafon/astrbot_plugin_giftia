@@ -6,7 +6,7 @@ import aiosqlite
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
-from .schemas import MediaCaption, MessageData, Status
+from .schemas import MediaCaption, MemoryItem, MessageData, Status, Sticker
 
 
 class Database:
@@ -57,6 +57,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS media_caption (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     hash_val TEXT NOT NULL UNIQUE,
+                    file_name TEXT,
                     url TEXT,
                     media_type TEXT,
                     genre TEXT,
@@ -126,6 +127,27 @@ class Database:
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_group_id_unique ON group_profiles (group_or_user_id, bot_name)"
             )
+            # 创建记忆缓存表
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_name TEXT NOT NULL,
+                    group_or_user_id TEXT NOT NULL,
+                    memory_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    vector BLOB,
+                    metadata TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
+            # 创建索引
+            await cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_id_unique ON memories (memory_id)"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memory_group_id_bot_name_created_at_index ON memories (group_or_user_id, bot_name, created_at)"
+            )
             # 创建键值对表
             await cursor.execute(
                 """
@@ -141,6 +163,45 @@ class Database:
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_kv_key_unique ON kv_store (key)"
             )
+            # 创建关系表
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS relations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_name TEXT NOT NULL,
+                    group_or_user_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    relation INTEGER,
+                    title TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
+            # 创建索引
+            await cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_relation_unique ON relations (user_id, group_or_user_id, bot_name)"
+            )
+            # 创建表情包表
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stickers (
+                    sticker_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    category TEXT,
+                    tags TEXT,
+                    description TEXT,
+                    filename TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
+            # 机器人表情包列表
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stickers_bot (
+                    bot_name TEXT PRIMARY KEY,
+                    sticker_ids TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
         # 提交
         await conn.commit()
         return cls(conn)
@@ -152,8 +213,8 @@ class Database:
     ):
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO chat_history (group_or_user_id, nickname, user_id, message_id, content, reply_decision, use_rag, is_recalled, bot_name, media_ids, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO chat_history (group_or_user_id, nickname, user_id, message_id, content, reply_decision, use_rag, is_recalled, bot_name, media_ids, role, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message.group_or_user_id,
@@ -166,6 +227,7 @@ class Database:
                 0,
                 bot_name,
                 json.dumps(message.media_id_list),
+                message.role,
                 message.time,
                 message.time,
             ),
@@ -178,7 +240,7 @@ class Database:
         async with self.conn.execute(
             """
             SELECT * FROM (
-                SELECT nickname, user_id, message_id, content, media_ids, is_recalled, created_at
+                SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
                 FROM chat_history
                 WHERE group_or_user_id = ? AND bot_name = ?
                 ORDER BY created_at DESC
@@ -198,6 +260,7 @@ class Database:
                 content=row["content"],
                 is_recalled=row["is_recalled"],
                 media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
             )
             for row in rows
         ]
@@ -208,7 +271,7 @@ class Database:
         """通过消息ID获取消息"""
         async with self.conn.execute(
             """
-            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, created_at
+            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
             FROM chat_history
             WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
             LIMIT 1
@@ -225,8 +288,19 @@ class Database:
                 content=row["content"],
                 is_recalled=row["is_recalled"],
                 media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
             )
         return None
+
+    # 清空聊天记录
+    async def delete_chat_history(self, bot_name: str, group_or_user_id: str):
+        await self.conn.execute(
+            """
+            DELETE FROM chat_history WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
 
     async def update_message_decision(
         self,
@@ -240,9 +314,9 @@ class Database:
             """
             UPDATE chat_history
             SET reply_decision = ?, use_rag = ?
-            WHERE bot_name = ? AND group_or_user_id = ? AND message_id = ?
+            WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
             """,
-            (reply_decision, use_rag, bot_name, group_or_user_id, message_id),
+            (reply_decision, use_rag, message_id, group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -257,9 +331,9 @@ class Database:
             """
             UPDATE chat_history
             SET reply_decision = ?
-            WHERE bot_name = ? AND group_or_user_id = ? AND message_id = ?
+            WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
             """,
-            (reply_decision, bot_name, group_or_user_id, message_id),
+            (reply_decision, message_id, group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -274,9 +348,9 @@ class Database:
             """
             UPDATE chat_history
             SET is_recalled = ?
-            WHERE bot_name = ? AND group_or_user_id = ? AND message_id IN ({})
+            WHERE message_id IN ({}) AND group_or_user_id = ? AND bot_name = ?
             """.format(",".join(["?"] * len(message_ids))),
-            (is_recalled, bot_name, group_or_user_id, *message_ids),
+            (is_recalled, *message_ids, group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -286,9 +360,9 @@ class Database:
         await self.conn.execute(
             """
             DELETE FROM chat_history
-            WHERE bot_name = ? AND group_or_user_id = ? AND message_id = ?
+            WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
             """,
-            (bot_name, group_or_user_id, message_id),
+            (message_id, group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -299,11 +373,12 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO media_caption (hash_val, url, media_type, genre, character, source, text, caption, query_times, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 media_caption.hash_val,
+                media_caption.file_name,
                 media_caption.url,
                 media_caption.media_type,
                 media_caption.genre,
@@ -321,7 +396,7 @@ class Database:
     async def get_media_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE hash_val = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE hash_val = ?
             """,
             (hash_val,),
         ) as cursor:
@@ -330,6 +405,7 @@ class Database:
             await self.increment_media_query_times(row["hash_val"])
             caption = MediaCaption(
                 hash_val=row["hash_val"],
+                file_name=row["file_name"],
                 url=row["url"],
                 media_type=row["media_type"],
                 genre=row["genre"],
@@ -341,18 +417,21 @@ class Database:
             return caption
         return None
 
-    async def get_media_caption_by_url(self, url: str) -> MediaCaption | None:
+    async def get_media_caption_by_filename(
+        self, file_name: str
+    ) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE url = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE file_name = ?
             """,
-            (url,),
+            (file_name,),
         ) as cursor:
             row = await cursor.fetchone()
         if row:
             await self.increment_media_query_times(row["hash_val"])
             caption = MediaCaption(
                 hash_val=row["hash_val"],
+                file_name=row["file_name"],
                 url=row["url"],
                 media_type=row["media_type"],
                 genre=row["genre"],
@@ -388,31 +467,47 @@ class Database:
         )
         await self.conn.commit()
 
+    async def clear_media_caption(self):
+        await self.conn.execute(
+            """
+            DELETE FROM media_caption
+            """
+        )
+        await self.conn.commit()
+
     async def get_bot_status(self, group_or_user_id: str, bot_name: str) -> Status:
         async with self.conn.execute(
             """
-            SELECT mood, state, memory, action, energy FROM bot_status WHERE group_or_user_id = ? AND bot_name = ?
+            SELECT mood, state, memory, action, energy, updated_at FROM bot_status WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (group_or_user_id, bot_name),
         ) as cursor:
             row = await cursor.fetchone()
-        return (
-            Status(
+
+        if row:
+            try:
+                ts = datetime.strptime(
+                    row["updated_at"], "%Y-%m-%d %H:%M:%S"
+                ).timestamp()
+            except Exception:
+                ts = 0.0
+            return Status(
                 mood=row["mood"],
                 state=row["state"],
                 memory=row["memory"],
                 action=row["action"],
                 energy=row["energy"],
+                timestamp=ts,
             )
-            if row
-            else Status(
-                mood="清爽",
-                state="刚刚苏醒",
-                memory="系统初始化完毕。缓存已清空，准备加载记忆碎片...",
-                action="伸了个懒腰，准备开始新的一天",
-                energy="100",
+        else:
+            return Status(
+                mood="开心",
+                state="发呆",
+                memory="",
+                action="拿起手机聊天",
+                energy="80",
+                timestamp=0.0,
             )
-        )
 
     async def upsert_bot_status(
         self, group_or_user_id: str, bot_name: str, status: Status
@@ -441,6 +536,16 @@ class Database:
                 update_time,
                 update_time,
             ),
+        )
+        await self.conn.commit()
+
+    # 删除bot状态
+    async def delete_bot_status(self, group_or_user_id: str, bot_name: str):
+        await self.conn.execute(
+            """
+            DELETE FROM bot_status WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -474,6 +579,30 @@ class Database:
         )
         await self.conn.commit()
 
+    async def delete_user_profile(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ):
+        """删除用户画像"""
+        await self.conn.execute(
+            """
+            DELETE FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (user_id, group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
+
+    # 删除整个群的用户画像
+    async def delete_group_user_profiles(self, bot_name: str, group_or_user_id: str):
+        """删除整个群的用户画像"""
+        await self.conn.execute(
+            """
+            DELETE FROM user_profiles WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
+
     async def get_group_profile(
         self, group_or_user_id: str, bot_name: str
     ) -> str | None:
@@ -501,6 +630,90 @@ class Database:
                 updated_at=excluded.updated_at
             """,
             (group_or_user_id, bot_name, profile, update_time, update_time),
+        )
+        await self.conn.commit()
+
+    async def delete_group_profile(self, bot_name: str, group_or_user_id: str):
+        """删除群画像"""
+        await self.conn.execute(
+            """
+            DELETE FROM group_profiles WHERE group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
+
+    async def insert_memory(
+        self, bot_name: str, group_or_user_id: str, memory: MemoryItem
+    ):
+        """写入记忆"""
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.conn.execute(
+            """
+            INSERT INTO memories (bot_name, group_or_user_id, memory_id, text, vector, metadata, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bot_name,
+                group_or_user_id,
+                memory.memory_id,
+                memory.text,
+                memory.vector,
+                memory.metadata,
+                update_time,
+                update_time,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_memories(
+        self, group_or_user_id: str, bot_name: str, limit: int = 10
+    ) -> list[MemoryItem]:
+        """获取近期记忆，并按时间正序排列"""
+        async with self.conn.execute(
+            """
+            SELECT * FROM (
+                SELECT memory_id, text, vector, metadata, created_at, updated_at
+                FROM memories
+                WHERE group_or_user_id = ? AND bot_name = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            )
+            ORDER BY created_at ASC
+            """,
+            (group_or_user_id, bot_name, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            MemoryItem(
+                memory_id=row["memory_id"],
+                text=row["text"],
+                vector=row["vector"],
+                metadata=row["metadata"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
+
+    async def delete_memory(self, memory_id: str):
+        """删除记忆"""
+        await self.conn.execute(
+            """
+            DELETE FROM memories WHERE memory_id = ?
+            """,
+            (memory_id,),
+        )
+        await self.conn.commit()
+
+    async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
+        """删除全部记忆"""
+        await self.conn.execute(
+            """
+            DELETE FROM memories WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
         )
         await self.conn.commit()
 
@@ -540,6 +753,208 @@ class Database:
             (key,),
         )
         await self.conn.commit()
+
+    # 更新关系数据
+    async def upsert_relation(
+        self, bot_name: str, group_or_user_id: str, user_id: str, relation: int
+    ):
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.conn.execute(
+            """
+            INSERT INTO relations (bot_name, group_or_user_id, user_id, relation, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
+                relation=excluded.relation,
+                updated_at=excluded.updated_at
+            """,
+            (
+                bot_name,
+                group_or_user_id,
+                user_id,
+                relation,
+                update_time,
+                update_time,
+            ),
+        )
+        await self.conn.commit()
+
+    # 更新关系头衔
+    async def upsert_relation_title(
+        self, bot_name: str, group_or_user_id: str, user_id: str, title: str
+    ):
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.conn.execute(
+            """
+            INSERT INTO relations (bot_name, group_or_user_id, user_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
+                title=excluded.title,
+                updated_at=excluded.updated_at
+            """,
+            (
+                bot_name,
+                group_or_user_id,
+                user_id,
+                title,
+                update_time,
+                update_time,
+            ),
+        )
+        await self.conn.commit()
+
+    # 获取关系数据
+    async def get_relation(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> tuple[int, str]:
+        async with self.conn.execute(
+            """
+            SELECT relation, title FROM relations WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (user_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            return row["relation"], row["title"]
+        return 0, ""
+
+    async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
+        """删除指定群或私聊的所有好感度和头衔数据"""
+        await self.conn.execute(
+            """
+            DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
+
+    # 添加表情包数据
+    async def insert_sticker(
+        self,
+        sticker_id: str,
+        name: str,
+        category: str,
+        tags: list[str],
+        description: str,
+        filename: str = "",
+    ):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tags_json = json.dumps(tags, ensure_ascii=False)
+        await self.conn.execute(
+            """
+            INSERT INTO stickers (sticker_id, name, category, tags, description, filename, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sticker_id) DO UPDATE SET
+                name=excluded.name,
+                category=excluded.category,
+                tags=excluded.tags,
+                description=excluded.description,
+                filename=excluded.filename,
+                updated_at=excluded.updated_at
+            """,
+            (
+                sticker_id,
+                name,
+                category,
+                tags_json,
+                description,
+                filename,
+                now_str,
+                now_str,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_sticker(self) -> list[Sticker]:
+        """获取全部表情包数据"""
+        async with self.conn.execute(
+            "SELECT sticker_id, name, category, tags, description, filename FROM stickers"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        results: list[Sticker] = []
+        for row in rows:
+            # 安全处理 tags 为 None 的情况
+            try:
+                tags = json.loads(row["tags"]) if row["tags"] else []
+            except json.JSONDecodeError:
+                tags = []
+
+            results.append(
+                Sticker(
+                    sticker_id=row["sticker_id"],
+                    name=row["name"],
+                    category=row["category"],
+                    tags=tags,
+                    description=row["description"],
+                    filename=row["filename"],
+                )
+            )
+        return results
+
+    async def delete_sticker(self, sticker_id: str):
+        """删除表情包数据"""
+        await self.conn.execute(
+            """
+            DELETE FROM stickers WHERE sticker_id = ?
+            """,
+            (sticker_id,),
+        )
+        await self.conn.commit()
+
+    # 机器人表情包列表
+    async def insert_sticker_bot(self, sticker_id: str, bot_name: str):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 先查询是否已有记录
+        async with self.conn.execute(
+            """
+            SELECT sticker_ids FROM stickers_bot WHERE bot_name = ?
+            """,
+            (bot_name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row["sticker_ids"]:
+            sticker_ids = set(json.loads(row["sticker_ids"]))
+        else:
+            sticker_ids = set()
+        sticker_ids.add(sticker_id)
+        sticker_ids_json = json.dumps(list(sticker_ids), ensure_ascii=False)
+        await self.conn.execute(
+            """
+            INSERT INTO stickers_bot (bot_name, sticker_ids, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(bot_name) DO UPDATE SET
+                sticker_ids=excluded.sticker_ids,
+                updated_at=excluded.updated_at
+            """,
+            (
+                bot_name,
+                sticker_ids_json,
+                now_str,
+                now_str,
+            ),
+        )
+        await self.conn.commit()
+
+    async def get_sticker_categories(self) -> list[str]:
+        """获取所有已知的表情包分类"""
+        cursor = await self.conn.execute(
+            "SELECT DISTINCT category FROM stickers WHERE category IS NOT NULL"
+        )
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows if row[0]]
+
+    async def get_sticker_bot(self, bot_name: str) -> list[str]:
+        """获取机器人表情包列表"""
+        async with self.conn.execute(
+            """
+            SELECT sticker_ids FROM stickers_bot WHERE bot_name = ?
+            """,
+            (bot_name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row["sticker_ids"]:
+            return json.loads(row["sticker_ids"])
+        return []
 
     # 删除数据表
     async def drop_table(self, table_name: str):

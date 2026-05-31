@@ -81,7 +81,7 @@ class Scheduler:
                 id=task_id,
                 name=f"{func_name}|{time_expr}",
                 replace_existing=True,
-                misfire_grace_time=600,  # 10分钟容错时间，防止意外宕机错过任务
+                misfire_grace_time=3600,  # 1小时容错时间，防止意外宕机错过任务
             )
             logger.info(f"添加定时任务成功: {task_id} (时间规则: {time_expr})")
             return f"添加定时任务成功: {task_id} (时间规则: {time_expr})"
@@ -142,6 +142,19 @@ next_run_time: {next_run}"""
         """
         jobs = self.scheduler.get_jobs()
         return [self._format_job(job) for job in jobs]
+
+    def get_prefix_jobs(self, task_id_prefix: str) -> list[str]:
+        """
+        获取某个前缀的所有定时任务信息
+        """
+        if not task_id_prefix.endswith("_"):
+            task_id_prefix += "_"
+        jobs = self.scheduler.get_jobs()
+        return [
+            f"任务ID：{job.id} | 任务名称：{job.name} | 任务内容：{job.kwargs.get('remind_message', '')}"
+            for job in jobs
+            if str(job.id).startswith(task_id_prefix)
+        ]
 
     def start(self):
         """
