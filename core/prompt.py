@@ -9,7 +9,8 @@ MSG_PROPS = [
     "user_id",
     "time",
     "message_id",
-]  # 由于没有做撤回监听，is_recalled暂时不加入
+    "is_recalled",
+]
 # 操作同上
 CAPTION_PROPS = ["genre", "character", "source", "text", "caption"]
 
@@ -43,7 +44,9 @@ def build_decision_prompt(
         f"<user_profile user_id={user_id}>\n{user_profile}\n</user_profile>"
     )
     # 好感度
-    user_prompt.append(f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>")
+    user_prompt.append(
+        f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>"
+    )
     # 近期消息
     if recent_messages:
         recent_messages_str = "\n".join(
@@ -99,7 +102,9 @@ def build_reply_prompt(
         f"<user_profile user_id={user_id}>\n{user_profile}\n</user_profile>"
     )
     # 好感度
-    user_prompt.append(f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>")
+    user_prompt.append(
+        f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>"
+    )
     # 长期记忆
     if long_memories:
         user_prompt.append(
@@ -145,19 +150,19 @@ def build_reply_prompt(
     if other_data:
         user_prompt.append("\n\n".join(other_data))
 
-#     user_prompt.append("""# 请按以下格式输出，包含空行
-# <status>
-# 更新后的状态
-# </status>
+    #     user_prompt.append("""# 请按以下格式输出，包含空行
+    # <status>
+    # 更新后的状态
+    # </status>
 
-# <other_tags...>
+    # <other_tags...>
 
-# <message>消息内容</message>
+    # <message>消息内容</message>
 
-# # 提示
-# - 综合分析上下文，结合角色知识和状态生成回复
-# - 请一次性输出所有需要的操作，除非需要分步调用获取信息
-# """)
+    # # 提示
+    # - 综合分析上下文，结合角色知识和状态生成回复
+    # - 请一次性输出所有需要的操作，除非需要分步调用获取信息
+    # """)
 
     #     user_prompt.append("""# 提示
     # - 并非每一条消息都需要回复：
@@ -175,11 +180,15 @@ def parse_message_to_str(message: MessageData) -> str:
     """构建xml格式的消息，用于提示词传递聊天记录"""
     if getattr(message, "role", "message") == "operation_log":
         time_str = format_time_to_hhmmss(message.time) if message.time else ""
-        return f'<operation_log time={quoteattr(time_str)}>\n{message.content.strip()}\n</operation_log>'
+        return f"<operation_log time={quoteattr(time_str)}>\n{message.content.strip()}\n</operation_log>"
 
     props = ""
     for prop in MSG_PROPS:
         value = getattr(message, prop, "")
+        # 如果是 is_recalled 字段，只有在值为真（非0）时才加入属性
+        if prop == "is_recalled" and not value:
+            continue
+
         if value is not None and value != "":
             # 如果是时间，格式化成 时:分:秒
             if prop == "time":
@@ -230,11 +239,13 @@ def build_rag_results(rag_memories: list[str]) -> str:
     rag_memories_str = "\n".join(rag_memories)
     return rag_memories_str
 
+
 def build_user_relation(relation: tuple[int, str]) -> str:
     text = [f"好感度：{relation[0] if relation else 0}"]
     if relation[1]:
         text.append(f"称号：{relation[1]}")
     return "\n".join(text)
+
 
 def format_time_to_hhmmss(db_value: str) -> str:
     if not db_value:

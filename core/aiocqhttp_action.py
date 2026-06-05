@@ -1,3 +1,5 @@
+import random
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, File, Image, Plain, Record, Video
@@ -12,8 +14,8 @@ class AIoCQHTTPAction:
     这个类用于处理AIOCQHTTP的互动
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, sticker_summaries: list[str] | None = None):
+        self.sticker_summaries = sticker_summaries or ["图片"]
 
     async def send_message(
         self,
@@ -214,8 +216,8 @@ class AIoCQHTTPAction:
             logger.warning("[Giftia] 当前仅支持aiocqhttp平台")
             return "当前仅支持aiocqhttp平台"
 
-    @staticmethod
     async def _msg_chain_to_data(
+        self,
         message_chain: list[BaseMessageComponent],
     ) -> list:
         """
@@ -241,11 +243,18 @@ class AIoCQHTTPAction:
             elif isinstance(component, Image | Record):
                 # For Image and Record segments, we convert them to base64
                 bs64 = await component.convert_to_base64()
+                data_dict: dict = {
+                    "file": f"base64://{bs64}",
+                }
+                if isinstance(component, Image):
+                    # 同时兼容NapCat/Lagrange/go-cqhttp的命名规范
+                    data_dict["subType"] = 1
+                    data_dict["sub_type"] = 1
+                    data_dict["subtype"] = 1
+                    data_dict["summary"] = random.choice(self.sticker_summaries)
                 message_data.append({
                     "type": component.type.lower(),
-                    "data": {
-                        "file": f"base64://{bs64}",
-                    },
+                    "data": data_dict,
                 })
             elif isinstance(component, File):
                 # For File segments, we need to handle the file differently

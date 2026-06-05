@@ -90,7 +90,7 @@ class CallLLM:
     ) -> XmlLlmResult | None:
         """调用LLM进行回复"""
         # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
-        # logger.info(f"\n<user_prompt>{user_prompt}</user_prompt>")
+        # logger.info(f"\n<user_prompt>\n{user_prompt}\n</user_prompt>")
         for provider_id in provider_ids:
             for i in range(self.network_conf["reply_retry_times"]):
                 if i > 0:

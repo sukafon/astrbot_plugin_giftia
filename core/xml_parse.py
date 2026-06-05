@@ -16,9 +16,18 @@ from .schemas import Decision, MediaCaption, XmlLlmResult
 
 
 class XmlParse:
-    def __init__(self, data_cache: DataCache, emoji_manager: EmojiManager):
+    def __init__(
+        self,
+        data_cache: DataCache,
+        emoji_manager: EmojiManager,
+        sticker_summaries: list[str] | None = None,
+    ):
         self.data_cache = data_cache
         self.emoji_manager = emoji_manager
+        import random
+
+        self.random = random
+        self.sticker_summaries = sticker_summaries or ["图片"]
 
     @staticmethod
     def str_to_int_bool(val):
@@ -76,11 +85,21 @@ class XmlParse:
                 if tag_name == "status":
                     raw_text = child.get_text(strip=True)
                     parsed_data = dict(re.findall(r"(\w+)[:：]\s*([^\n]+)", raw_text))
-                    result.status.mood = parsed_data.get("心情", "")
-                    result.status.state = parsed_data.get("状态", "")
-                    result.status.action = parsed_data.get("动作", "")
-                    result.status.energy = parsed_data.get("能量", "100")
-                    result.status.memory = parsed_data.get("记忆", "")
+                    result.status.mood = (
+                        parsed_data.get("心情", "").strip().strip("\"'")
+                    )
+                    result.status.state = (
+                        parsed_data.get("状态", "").strip().strip("\"'")
+                    )
+                    result.status.action = (
+                        parsed_data.get("动作", "").strip().strip("\"'")
+                    )
+                    result.status.energy = (
+                        parsed_data.get("能量", "100").strip().strip("\"'")
+                    )
+                    result.status.memory = (
+                        parsed_data.get("记忆", "").strip().strip("\"'")
+                    )
 
                 elif tag_name == "message":
                     sub_chain: list[BaseMessageComponent] = []
@@ -117,9 +136,8 @@ class XmlParse:
                                         sticker_id
                                     )
                                     if local_path:
-                                        sub_chain.append(
-                                            Image.fromFileSystem(str(local_path))
-                                        )
+                                        img = Image.fromFileSystem(str(local_path))
+                                        sub_chain.append(img)
                                     else:
                                         media_caption = (
                                             await self.data_cache.get_caption_by_hash(
@@ -127,9 +145,8 @@ class XmlParse:
                                             )
                                         )
                                         if media_caption and media_caption.url:
-                                            sub_chain.append(
-                                                Image.fromURL(media_caption.url)
-                                            )
+                                            img = Image.fromURL(media_caption.url)
+                                            sub_chain.append(img)
                                         else:
                                             logger.error(
                                                 f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
@@ -150,24 +167,24 @@ class XmlParse:
                         result.msg_chains.append([
                             At(qq=self._attr_str(child, "user_id", ""))
                         ])
-                        result.msg_logs.append(f"<@{self._attr_str(child, 'user_id', '')}>")
+                        result.msg_logs.append(
+                            f"<@{self._attr_str(child, 'user_id', '')}>"
+                        )
 
                 elif tag_name == "sticker":
                     sticker_id = self._attr_str(child, "sticker_id", "")
                     if sticker_id:
                         local_path = self.emoji_manager.get_sticker_path(sticker_id)
                         if local_path:
-                            result.msg_chains.append([
-                                Image.fromFileSystem(str(local_path))
-                            ])
+                            img = Image.fromFileSystem(str(local_path))
+                            result.msg_chains.append([img])
                         else:
                             media_caption = await self.data_cache.get_caption_by_hash(
                                 sticker_id
                             )
                             if media_caption and media_caption.url:
-                                result.msg_chains.append([
-                                    Image.fromURL(media_caption.url)
-                                ])
+                                img = Image.fromURL(media_caption.url)
+                                result.msg_chains.append([img])
                             else:
                                 logger.error(
                                     f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
@@ -268,6 +285,41 @@ class XmlParse:
                     text = child.get_text(strip=True)
                     if text:
                         result.search_memories.append((group_or_user_id, text))
+
+                elif tag_name == "search_chat_history":
+                    keyword = self._attr_str(child, "keyword", "")
+                    user_id = self._attr_str(child, "user_id", "")
+                    start_time = self._attr_str(child, "start_time", "")
+                    end_time = self._attr_str(child, "end_time", "")
+                    sort_order = self._attr_str(child, "sort_order", "desc")
+                    limit_str = self._attr_str(child, "limit", "30")
+                    try:
+                        limit = int(limit_str)
+                    except ValueError:
+                        limit = 30
+                    result.search_histories.append({
+                        "group_or_user_id": group_or_user_id,
+                        "keyword": keyword,
+                        "user_id": user_id,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "sort_order": sort_order,
+                        "limit": limit,
+                    })
+
+                elif tag_name == "get_message_context":
+                    message_id = self._attr_str(child, "message_id", "")
+                    limit_str = self._attr_str(child, "limit", "30")
+                    try:
+                        limit = int(limit_str)
+                    except ValueError:
+                        limit = 30
+                    if message_id:
+                        result.get_message_contexts.append({
+                            "group_or_user_id": group_or_user_id,
+                            "message_id": message_id,
+                            "limit": limit,
+                        })
 
                 elif tag_name == "delete_memory":
                     memory_id = self._attr_str(child, "id", "")

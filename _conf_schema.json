@@ -209,6 +209,12 @@
                 "type": "int",
                 "default": 50,
                 "hint": "每次带入大模型上下文的随机表情包数量，过多会影响速度和占用大量Token"
+            },
+            "sticker_summaries": {
+                "description": "表情包外显文字",
+                "type": "list",
+                "default": ["这是一张表情包"],
+                "hint": "发送表情包时外显的文字提示，将会随机抽取一个发送"
             }
         }
     },
@@ -318,7 +324,7 @@
     "tools_config": {
         "description": "函数调用工具",
         "type": "object",
-        "hint": "本插件的内置工具均以XML格式提供，这里不再写开关，直接在系统提示词中加入/删除XML代码即可。",
+        "hint": "对于XML格式的工具，这里不再写开关，直接在系统提示词中加入/删除XML代码即可。",
         "items": {
             "use_source_tools": {
                 "description": "启用原生函数调用工具",
@@ -337,6 +343,18 @@
                 "type": "int",
                 "default": 300,
                 "hint": "工具调用超时时间，单位秒，超过超时时间将停止调用工具，每个工具独立计时"
+            },
+            "search_chat_history_enabled": {
+                "description": "启用聊天记录检索工具",
+                "type": "bool",
+                "default": true,
+                "hint": "用于AI检索聊天记录"
+            },
+            "get_message_context_enabled": {
+                "description": "启用上下文搜索工具",
+                "type": "bool",
+                "default": true,
+                "hint": "用于AI获取指定消息的上下文"
             }
         }
     },
@@ -449,6 +467,12 @@
         "type": "object",
         "hint": "",
         "items": {
+            "private_chat_bypass_decision_and_whitelist": {
+                "description": "私聊免白名单与强制回复",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，私聊直接触发回复，无需经过小模型决策，也无需经过白名单限制。"
+            },
             "group_whitelist_enabled": {
                 "description": "启用群组白名单",
                 "type": "bool",

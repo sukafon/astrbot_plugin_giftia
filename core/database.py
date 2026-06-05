@@ -222,7 +222,7 @@ class Database:
                 message.user_id,
                 message.message_id,
                 message.content,
-                2,
+                2,  # 2: 未决策，3: @消息直接回复，1: 决策通过，0: 决策拒绝
                 2,
                 0,
                 bot_name,
@@ -291,6 +291,131 @@ class Database:
                 role=row["role"] if "role" in row.keys() else "message",
             )
         return None
+
+    async def search_messages(
+        self,
+        group_or_user_id: str,
+        bot_name: str,
+        user_id: str|None = None,
+        keyword: str|None = None,
+        start_time: str|None = None,
+        end_time: str|None = None,
+        sort_order: str = "desc",
+        limit: int = 100,
+    ) -> list[MessageData]:
+        """搜索历史消息，支持关键字、指定用户以及时间范围搜索"""
+        query = """
+            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+            FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ?
+        """
+        params = [group_or_user_id, bot_name]
+
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+
+        if keyword:
+            query += " AND content LIKE ?"
+            params.append(f"%{keyword}%")
+
+        if start_time is not None:
+            query += " AND created_at >= ?"
+            params.append(start_time)
+
+        if end_time is not None:
+            query += " AND created_at <= ?"
+            params.append(end_time)
+
+        if sort_order.lower() == "asc":
+            query += " ORDER BY created_at ASC"
+        else:
+            query += " ORDER BY created_at DESC"
+
+        query += " LIMIT ?"
+        params.append(str(limit))
+
+        async with self.conn.execute(query, tuple(params)) as cursor:
+            rows = await cursor.fetchall()
+
+        if sort_order.lower() == "desc":
+            rows = reversed(list(rows))
+
+        return [
+            MessageData(
+                nickname=row["nickname"],
+                user_id=row["user_id"],
+                time=row["created_at"],
+                message_id=row["message_id"],
+                content=row["content"],
+                is_recalled=row["is_recalled"],
+                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
+            )
+            for row in rows
+        ]
+
+    async def get_message_context(
+        self, message_id: str, group_or_user_id: str, bot_name: str, limit: int = 30
+    ) -> list[MessageData]:
+        """获取特定消息前后的上下文消息"""
+        # 1. 获取目标消息
+        target_msg = await self.get_message_by_id(
+            message_id, group_or_user_id, bot_name
+        )
+        if not target_msg:
+            return []
+
+        target_time = target_msg.time
+
+        # 2. 获取前面的消息（时间小于目标消息）
+        query_before = """
+            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+            FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ? AND created_at < ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        async with self.conn.execute(
+            query_before, (group_or_user_id, bot_name, target_time, limit)
+        ) as cursor:
+            rows_before = await cursor.fetchall()
+
+        # 3. 获取后面的消息（时间大于目标消息）
+        query_after = """
+            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+            FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ? AND created_at > ?
+            ORDER BY created_at ASC
+            LIMIT ?
+        """
+        async with self.conn.execute(
+            query_after, (group_or_user_id, bot_name, target_time, limit)
+        ) as cursor:
+            rows_after = await cursor.fetchall()
+
+        # 4. 组装结果（前面的消息需要反转以保证时间正序）
+        rows_before_list = list(rows_before)
+        all_rows = rows_before_list[::-1] + list(rows_after)
+
+        messages = [
+            MessageData(
+                nickname=row["nickname"],
+                user_id=row["user_id"],
+                time=row["created_at"],
+                message_id=row["message_id"],
+                content=row["content"],
+                is_recalled=row["is_recalled"],
+                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
+            )
+            for row in all_rows
+        ]
+
+        # 把目标消息插入到中间
+        messages.insert(len(rows_before_list), target_msg)
+
+        return messages
 
     # 清空聊天记录
     async def delete_chat_history(self, bot_name: str, group_or_user_id: str):

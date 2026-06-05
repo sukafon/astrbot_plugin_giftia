@@ -44,6 +44,7 @@ from .core.data_cache import DataCache
 from .core.database import Database
 from .core.emoji_manager import EmojiManager
 from .core.http_manager import HttpManager
+from .core.llm_tools import GetMessageContextTool, SearchChatHistoryTool, remove_tools
 from .core.memory import LTM
 from .core.message_parse import (
     MessageData,
@@ -92,6 +93,9 @@ class Giftia(Star):
             "user_whitelist_enabled", False
         )
         self.user_whitelist = self.whitelist_config.get("user_whitelist", [])
+        self.private_chat_bypass = self.whitelist_config.get(
+            "private_chat_bypass_decision_and_whitelist", True
+        )
 
         # 并发策略
         self.concurrent_config = self.conf.get("concurrent_config", {})
@@ -142,7 +146,8 @@ class Giftia(Star):
 
         # 实例化
         self.http_manager = HttpManager(self.conf)
-        self.aiocqhttp = AIoCQHTTPAction()
+        sticker_summaries = self.sticker_config.get("sticker_summaries", ["这是一张表情包"])
+        self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
 
         # 缓存
         self._recall_tasks = set()
@@ -168,7 +173,10 @@ class Giftia(Star):
         self.emoji_manager = EmojiManager(
             self.db, random_sticker_count=self.random_sticker_count
         )
-        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager)
+        sticker_summaries = self.conf.get("sticker_config", {}).get(
+            "sticker_summaries", ["这是一张表情包"]
+        )
+        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager, sticker_summaries)
         self.call_llm = CallLLM(
             context=self.context,
             xml_parse=self.xml_parse,
@@ -194,6 +202,14 @@ class Giftia(Star):
         )
         # 注册函数
         self.task_manager.register_func("remind", self.remind_task)
+
+        # 注册函数调用工具
+        if self.conf.get("tools_config", {}).get("search_chat_history_enabled", True):
+            self.context.add_llm_tools(SearchChatHistoryTool(plugin=self))
+            logger.info("已注册函数调用工具: search_chat_history")
+        if self.conf.get("tools_config", {}).get("get_message_context_enabled", True):
+            self.context.add_llm_tools(GetMessageContextTool(plugin=self))
+            logger.info("已注册函数调用工具: get_message_context")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("工具列表")
@@ -607,12 +623,16 @@ caption: {media_caption.caption}"""
         else:
             yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
 
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=-1000)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
     async def on_message(self, event: AstrMessageEvent):
         """接收消息"""
+        is_private = not event.get_group_id()
+        bypass_whitelist = is_private and self.private_chat_bypass
+
         # 群白名单判断
         if (
-            self.group_whitelist_enabled
+            not bypass_whitelist
+            and self.group_whitelist_enabled
             and event.unified_msg_origin not in self.group_whitelist
         ):
             logger.debug(f"群 {event.unified_msg_origin} 不在白名单内，跳过处理")
@@ -620,7 +640,8 @@ caption: {media_caption.caption}"""
 
         # 用户白名单判断
         if (
-            self.user_whitelist_enabled
+            not bypass_whitelist
+            and self.user_whitelist_enabled
             and event.get_sender_id() not in self.user_whitelist
         ):
             logger.debug(f"用户 {event.get_sender_id()} 不在白名单内，跳过处理")
@@ -632,6 +653,26 @@ caption: {media_caption.caption}"""
                 f"{event.platform_meta.id} 消息不是本插件管理的机器人收到的消息，跳过处理"
             )
             return
+
+        # 处理撤回消息
+        if hasattr(event.message_obj, "raw_message") and event.message_obj.raw_message:
+            raw_message = event.message_obj.raw_message
+            message_name = getattr(raw_message, "name", "")
+            if message_name in ["notice.group_recall", "notice.friend_recall"]:
+                recalled_message_id = str(getattr(raw_message, "message_id", ""))
+                bot_name = self.adapter_id_map.get(event.platform_meta.id)
+                if bot_name and recalled_message_id:
+                    group_or_user_id = event.get_group_id() or event.get_sender_id()
+                    try:
+                        await self.data_cache.set_message_recalled(
+                            bot_name, group_or_user_id, [recalled_message_id]
+                        )
+                        logger.debug(
+                            f"{bot_name} 收到撤回消息事件，已标注消息 {recalled_message_id} 为撤回"
+                        )
+                    except Exception as e:
+                        logger.error(f"处理撤回消息失败: {e}")
+                return
 
         # 跳过机器人自己的消息
         if event.get_sender_id() == event.get_self_id():
@@ -672,8 +713,12 @@ caption: {media_caption.caption}"""
         # 判断是不是@唤醒
         is_just_at = any(
             isinstance(c, At) and str(c.qq) == event.get_self_id()
-            for c in event.message_obj.message
+            for c in event.get_messages()
         )
+
+        is_private = not event.get_group_id()
+        if is_private and self.private_chat_bypass:
+            is_just_at = True
 
         debounce_key = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
         if self.user_debounce_time > 0:
@@ -734,7 +779,6 @@ caption: {media_caption.caption}"""
                     self.debounce_at_map.pop(debounce_key, None)
 
         logger.debug(f"{bot_name} 处理消息: {current_message.content}")
-        logger.debug(f"{bot_name} 处理消息: {current_message.content}")
         relevant_memories = None
 
         decision_conf = bot_conf.get("decision_conf", {})
@@ -758,18 +802,23 @@ caption: {media_caption.caption}"""
                 return
 
             # 节流
-            user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
-            if self.user_throttle_time > 0 and not self.can_execute(
-                user_throttle_key, self.user_throttle_time
-            ):
-                logger.info(f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理")
-                return
-            group_throttle_key = f"{bot_name}:{event.get_group_id()}"
-            if self.group_throttle_time > 0 and not self.can_execute(
-                group_throttle_key, self.group_throttle_time
-            ):
-                logger.info(f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理")
-                return
+            if not is_private:
+                user_throttle_key = f"{bot_name}:{event.get_sender_id()}"
+                if self.user_throttle_time > 0 and not self.can_execute(
+                    user_throttle_key, self.user_throttle_time
+                ):
+                    logger.info(
+                        f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理"
+                    )
+                    return
+                group_throttle_key = f"{bot_name}:{event.get_group_id()}"
+                if self.group_throttle_time > 0 and not self.can_execute(
+                    group_throttle_key, self.group_throttle_time
+                ):
+                    logger.info(
+                        f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理"
+                    )
+                    return
 
             # 用户并发锁key
             fmt_user_lock = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
@@ -902,6 +951,21 @@ caption: {media_caption.caption}"""
 
         # 调用LLM进行回复
         if is_just_at:
+            if is_private and self.replying_status.get(reply_key, 0) > 0:
+                logger.debug(
+                    f"{bot_name} 消息 {reply_key} 正在回复中，私聊防并发单线程拦截"
+                )
+                return
+
+            # @的消息视为直接回复，更新数据库状态为3
+            await self.db.update_message_decision(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                message_id=current_message.message_id,
+                reply_decision=3,
+                use_rag=2,
+            )
+
             # @的消息直接增加回复计数开始回复
             self.replying_status[reply_key] = self.replying_status.get(reply_key, 0) + 1
 
@@ -947,14 +1011,17 @@ caption: {media_caption.caption}"""
         times=0,
     ):
         """集成用户提示词构建、LLM调用、发送消息、更新数据库、循环函数工具调用等流程"""
-        if times >= self.tools_config.get("max_loop", 10):
-            logger.warning(
-                f"{bot_name} 达到最大工具调用次数 ({self.tools_config.get('max_loop', 10)})，强制退出循环"
-            )
-            return
         bot_conf = self.bot_map[bot_name]
         success_logs = []
         iso_string = datetime.now().isoformat()
+        max_loop = self.tools_config.get("max_loop", 10)
+        if times >= max_loop:
+            logger.warning(
+                f"{bot_name} 达到最大工具调用次数 ({max_loop})，强制退出循环"
+            )
+            success_logs.append(
+                f"系统提示：当前已经达到最大工具调用次数 {max_loop}，请立即停止调用工具，并以现有信息作为最终结果进行回复。"
+            )
         # 近期消息可能比当前消息新，方便AI拿到决策期间以及函数调用工具执行期间的消息补充
         recent_messages = await self.data_cache.get_recent_message(
             bot_name, group_or_user_id, self.msg_number
@@ -1120,11 +1187,33 @@ caption: {media_caption.caption}"""
 
                     caption = await self.data_cache.get_caption_by_hash(sticker_id)
                     is_useful, sticker = False, None
-                    if caption and caption.url:
+
+                    target_url = None
+                    for comp in event.get_messages():
+                        if isinstance(comp, Reply) and comp.chain:
+                            for quote in comp.chain:
+                                if isinstance(quote, Image) and quote.url:
+                                    if quote.file and sticker_id in quote.file.lower():
+                                        target_url = quote.url
+                                        break
+                                    elif quote.file:
+                                        (
+                                            quote_hash,
+                                            _,
+                                        ) = await self.data_cache.get_caption_by_filename(
+                                            quote.file
+                                        )
+                                        if quote_hash == sticker_id:
+                                            target_url = quote.url
+                                            break
+                            if target_url:
+                                break
+                    if not target_url and caption and caption.url:
+                        target_url = caption.url
+
+                    if target_url:
                         # 先将图片下载并转为 base64，防止大模型无法访问本地/内网 URL
-                        image_bytes = await self.http_manager.download_media(
-                            caption.url
-                        )
+                        image_bytes = await self.http_manager.download_media(target_url)
                         if image_bytes:
                             base64s, _ = await asyncio.to_thread(
                                 self.http_manager.handle_image, image_bytes
@@ -1193,6 +1282,59 @@ caption: {media_caption.caption}"""
                         relevant_memories.append(memory["text"])
             if len(relevant_memories) == 0:
                 relevant_memories.append("没有找到相关记忆")
+
+        # 搜索聊天记录
+        if llm_result.search_histories:
+            for item in llm_result.search_histories:
+                limit = min(item.get("limit", 30), 50)
+                msgs = await self.db.search_messages(
+                    group_or_user_id=item["group_or_user_id"],
+                    bot_name=bot_name,
+                    user_id=item.get("user_id") or None,
+                    keyword=item.get("keyword") or None,
+                    start_time=item.get("start_time") or None,
+                    end_time=item.get("end_time") or None,
+                    sort_order=item.get("sort_order") or "desc",
+                    limit=limit,
+                )
+                if not msgs:
+                    other_data.append("# 查询到的历史记录\n未找到相关历史记录")
+                else:
+                    lines = [
+                        f"[{m.time}] {m.nickname}({m.user_id}): {m.content}"
+                        for m in msgs
+                    ]
+                    other_data.append("# 查询到的历史记录\n" + "\n".join(lines))
+
+        # 获取上下文
+        if llm_result.get_message_contexts:
+            for item in llm_result.get_message_contexts:
+                limit = min(item.get("limit", 30), 50)
+                msgs = await self.db.get_message_context(
+                    message_id=item["message_id"],
+                    group_or_user_id=item["group_or_user_id"],
+                    bot_name=bot_name,
+                    limit=limit,
+                )
+                if not msgs:
+                    other_data.append(
+                        f"# 消息上下文(ID:{item['message_id']})\n未找到上下文"
+                    )
+                else:
+                    lines = []
+                    for m in msgs:
+                        prefix = (
+                            "=> "
+                            if str(m.message_id) == str(item["message_id"])
+                            else "   "
+                        )
+                        lines.append(
+                            f"{prefix}[{m.time}] {m.nickname}({m.user_id}): {m.content}"
+                        )
+                    other_data.append(
+                        f"# 消息上下文(ID:{item['message_id']})\n" + "\n".join(lines)
+                    )
+
         # 如果有函数调用工具，继续调用LLM
         if tool_results is None:
             tool_results = []
@@ -1264,6 +1406,8 @@ caption: {media_caption.caption}"""
             len(llm_result.tools_to_call) > 0
             or len(llm_result.search_memories) > 0
             or len(llm_result.all_tasks) > 0
+            or len(llm_result.search_histories) > 0
+            or len(llm_result.get_message_contexts) > 0
         ):
             # 这里将仅传递MCP工具的图片，不再传递消息图片（没写错的话）
             logger.debug(f"{bot_name} llm step {times + 1} ...")
@@ -1358,7 +1502,7 @@ caption: {media_caption.caption}"""
                         bot_name, group_or_user_id, llm_result.delete_message_ids
                     )
                     success_logs.append(
-                        f"<recall_message message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
+                        f"<recall message_ids={llm_result.delete_message_ids} result={err_msg or 'success'}/>"
                     )
                 except ValueError:
                     logger.error(
@@ -1721,3 +1865,5 @@ caption: {media_caption.caption}"""
         self.task_manager.shutdown()
         # 关闭LTM，释放模型内存
         self.ltm.close()
+        # 卸载函数调用工具
+        remove_tools(self.context)

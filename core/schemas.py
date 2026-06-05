@@ -121,3 +121,7 @@ class XmlLlmResult:
     add_stickers: list[str] = field(default_factory=list)
     # 发送表情包，表情ID
     send_stickers: list[str] = field(default_factory=list)
+    # 历史记录搜索
+    search_histories: list[dict] = field(default_factory=list)
+    # 消息上下文查询
+    get_message_contexts: list[dict] = field(default_factory=list)

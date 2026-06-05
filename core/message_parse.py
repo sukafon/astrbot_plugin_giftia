@@ -15,7 +15,6 @@ from astrbot.api.message_components import (
     Record,
     Reply,
     Video,
-    Poke,
 )
 from astrbot.core.message.components import BaseMessageComponent
 
@@ -130,7 +129,69 @@ class MessageParser:
             if isinstance(comp, Plain):
                 msg_parts.append(comp.text)
             elif isinstance(comp, Reply):
-                msg_parts.append(f"<quote:{comp.id}>")
+                # 引用消息文本
+                quote_text = ""
+                if comp.chain:
+                    quote_parts = []
+                    for quote in comp.chain:
+                        if isinstance(quote, Plain):
+                            quote_parts.append(quote.text)
+                        elif isinstance(quote, At):
+                            quote_parts.append(f"<@{quote.name}({quote.qq})>")
+                        elif isinstance(quote, Image):
+                            file_name = quote.file
+                            media_caption = None
+                            hash_val = None
+
+                            if file_name:
+                                (
+                                    hash_val,
+                                    media_caption,
+                                ) = await self.data_cache.get_caption_by_filename(file_name)
+
+                            if not media_caption and quote.url:
+                                hash_val, media_caption = await self._get_image_caption(
+                                    quote.url, file_name
+                                )
+                            if hash_val and media_caption:
+                                quote_parts.append(f"[图片:{hash_val}]")
+                                media_id_list.append(hash_val)
+                                # 写入缓存
+                                await self.data_cache.set_caption(media_caption)
+                                continue
+                            # 无法获取图片描述，使用默认值
+                            quote_parts.append("[图片]")
+                        elif isinstance(quote, Record):
+                            file_name = quote.file
+                            media_caption = None
+                            hash_val = None
+
+                            if file_name and self.audio_caption_enabled:
+                                (
+                                    hash_val,
+                                    media_caption,
+                                ) = await self.data_cache.get_caption_by_filename(file_name)
+
+                            if not media_caption and quote.url and self.audio_caption_enabled:
+                                hash_val, media_caption = await self._get_audio_caption(
+                                    quote.url, file_name
+                                )
+                            if hash_val and media_caption:
+                                quote_parts.append(f"[语音:{hash_val}]")
+                                media_id_list.append(hash_val)
+                                # 写入缓存
+                                await self.data_cache.set_caption(media_caption)
+                                continue
+                            # 无法获取语音描述，使用默认值
+                            quote_parts.append("[语音]")
+                        elif isinstance(quote, Video):
+                            quote_parts.append("[视频]")
+                        elif isinstance(quote, Json):
+                            quote_parts.append("[合并转发消息]")
+                        elif isinstance(quote, File):
+                            quote_parts.append(f"[文件:{quote.name}]")
+                    quote_text = " ".join(quote_parts)
+                msg_parts.append(f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>")
             elif isinstance(comp, At):
                 msg_parts.append(f"<@{comp.name}({comp.qq})>")
             elif isinstance(comp, Image):
