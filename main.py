@@ -146,7 +146,9 @@ class Giftia(Star):
 
         # 实例化
         self.http_manager = HttpManager(self.conf)
-        sticker_summaries = self.sticker_config.get("sticker_summaries", ["这是一张表情包"])
+        sticker_summaries = self.sticker_config.get(
+            "sticker_summaries", ["这是一张表情包"]
+        )
         self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
 
         # 缓存
@@ -161,7 +163,7 @@ class Giftia(Star):
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
         # 实例化
-        self.ltm = LTM(self.embedding_conf, self.rerank_conf)
+        self.ltm = LTM(self.context, self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
         self.data_cache = DataCache(
             db=self.db,
@@ -176,7 +178,9 @@ class Giftia(Star):
         sticker_summaries = self.conf.get("sticker_config", {}).get(
             "sticker_summaries", ["这是一张表情包"]
         )
-        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager, sticker_summaries)
+        self.xml_parse = XmlParse(
+            self.data_cache, self.emoji_manager, sticker_summaries
+        )
         self.call_llm = CallLLM(
             context=self.context,
             xml_parse=self.xml_parse,
@@ -496,18 +500,20 @@ class Giftia(Star):
                     content=[Plain(task)],
                 )
             )
-        nodes.extend([
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
-            ),
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
-            ),
-        ])
+        nodes.extend(
+            [
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
+                ),
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
+                ),
+            ]
+        )
         if index < total_pages:
             nodes.append(
                 Node(
@@ -731,8 +737,8 @@ caption: {media_caption.caption}"""
                 self.debounce_at_map[debounce_key] = is_just_at
 
         if not is_just_at:
-            if not decision_conf.get("enabled", True) or not decision_conf.get(
-                "provider_id"
+            if not decision_conf.get("enabled", True) or not (
+                decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
                 logger.debug("没有at机器人且未开启决策，跳过处理")
                 return
@@ -886,13 +892,20 @@ caption: {media_caption.caption}"""
                         user_relation=user_relation,
                     )
                     decision_conf = bot_conf.get("decision_conf", {})
-                    provider_id = decision_conf.get("provider_id")
-                    if not provider_id:
+                    provider_ids = decision_conf.get("provider_ids")
+                    if not provider_ids:
+                        old_provider_id = decision_conf.get("provider_id")
+                        if old_provider_id:
+                            provider_ids = [old_provider_id] + decision_conf.get(
+                                "fallback_provider_ids", []
+                            )
+                        else:
+                            logger.error(f"{bot_name} 未配置决策模型ID")
+                            return None
+                    provider_ids = [p for p in provider_ids if p]
+                    if not provider_ids:
                         logger.error(f"{bot_name} 未配置决策模型ID")
                         return None
-                    provider_ids = [provider_id] + decision_conf.get(
-                        "fallback_provider_ids", []
-                    )
                     result = await self.call_llm.call_llm_decision(
                         provider_ids=provider_ids,
                         system_prompt=decision_conf.get("decision_prompt"),
@@ -1027,9 +1040,9 @@ caption: {media_caption.caption}"""
             bot_name, group_or_user_id, self.msg_number
         )
         # 先取所有消息的media_id，去重后获取caption xml string
-        hash_vals = list({
-            media_id for msg in recent_messages for media_id in msg.media_id_list
-        })
+        hash_vals = list(
+            {media_id for msg in recent_messages for media_id in msg.media_id_list}
+        )
 
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:
@@ -1095,11 +1108,20 @@ caption: {media_caption.caption}"""
             bot_sticker=bot_sticker_cache,
         )
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
-        provider_id = llm_reply_conf.get("provider_id")
-        if not provider_id:
+        provider_ids = llm_reply_conf.get("provider_ids")
+        if not provider_ids:
+            old_provider_id = llm_reply_conf.get("provider_id")
+            if old_provider_id:
+                provider_ids = [old_provider_id] + llm_reply_conf.get(
+                    "fallback_provider_ids", []
+                )
+            else:
+                logger.error(f"{bot_name} 未配置回复模型ID")
+                return
+        provider_ids = [p for p in provider_ids if p]
+        if not provider_ids:
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
-        provider_ids = [provider_id] + llm_reply_conf.get("fallback_provider_ids", [])
         provider_selection_mode = llm_reply_conf.get(
             "provider_selection_mode", "fallback"
         )
@@ -1342,7 +1364,14 @@ caption: {media_caption.caption}"""
         image_base64 = []
         if len(llm_result.tools_to_call) > 0:
             for tool_name, tool_args in llm_result.tools_to_call:
-                tool = self.context.get_llm_tool_manager().get_func(tool_name)
+                # 兼容处理带命名空间前缀的工具名（例如 default_api:send_meme -> send_meme）
+                clean_tool_name = (
+                    tool_name.split(":")[-1] if ":" in tool_name else tool_name
+                )
+                tool = self.context.get_llm_tool_manager().get_func(clean_tool_name)
+                if tool is None:
+                    tool = self.context.get_llm_tool_manager().get_func(tool_name)
+
                 if tool is None:
                     logger.error(f"{bot_name} 工具 {tool_name} 不存在")
                     result = {
@@ -1356,24 +1385,33 @@ caption: {media_caption.caption}"""
                     context=AstrAgentContext(context=self.context, event=event),
                     tool_call_timeout=self.tools_config.get("timeout", 120),
                 )
-                tool_result = await tool.call(run_context, **tool_args)
-                # 普通字符串返回
+                from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+
                 result = []
-                if isinstance(tool_result, str):
-                    result.append(tool_result)
-                # MCP工具返回结果(看着类型写的，没测试过)
-                elif isinstance(tool_result, mcp.types.CallToolResult):
-                    for content in tool_result.content:
-                        if isinstance(content, mcp.types.TextContent):
-                            result.append(content.text)
-                        elif isinstance(content, mcp.types.ImageContent):
-                            result.append("图片已直接发送给用户")
-                            image_base64.append("base64://" + content.data)
-                result = {
+                try:
+                    async for tool_result in FunctionToolExecutor.execute(
+                        tool, run_context, **tool_args
+                    ):
+                        if isinstance(tool_result, str):
+                            result.append(tool_result)
+                        elif isinstance(tool_result, mcp.types.CallToolResult):
+                            for content in tool_result.content:
+                                if isinstance(content, mcp.types.TextContent):
+                                    result.append(content.text)
+                                elif isinstance(content, mcp.types.ImageContent):
+                                    result.append("图片已直接发送给用户")
+                                    image_base64.append("base64://" + content.data)
+                except Exception as e:
+                    logger.error(
+                        f"Error executing tool {tool_name}: {e}", exc_info=True
+                    )
+                    result.append(f"工具执行失败: {e}")
+
+                result_dict = {
                     "name": tool_name,
                     "results": "\n".join(result),
                 }
-                tool_results.append(result)
+                tool_results.append(result_dict)
                 success_logs.append(
                     f"<tool_call name={tool_name} args={tool_args} status='finished' />"
                 )
