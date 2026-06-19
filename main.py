@@ -1362,24 +1362,33 @@ caption: {media_caption.caption}"""
                     context=AstrAgentContext(context=self.context, event=event),
                     tool_call_timeout=self.tools_config.get("timeout", 120),
                 )
-                tool_result = await tool.call(run_context, **tool_args)
-                # 普通字符串返回
+                from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+
                 result = []
-                if isinstance(tool_result, str):
-                    result.append(tool_result)
-                # MCP工具返回结果(看着类型写的，没测试过)
-                elif isinstance(tool_result, mcp.types.CallToolResult):
-                    for content in tool_result.content:
-                        if isinstance(content, mcp.types.TextContent):
-                            result.append(content.text)
-                        elif isinstance(content, mcp.types.ImageContent):
-                            result.append("图片已直接发送给用户")
-                            image_base64.append("base64://" + content.data)
-                result = {
+                try:
+                    async for tool_result in FunctionToolExecutor.execute(
+                        tool, run_context, **tool_args
+                    ):
+                        if isinstance(tool_result, str):
+                            result.append(tool_result)
+                        elif isinstance(tool_result, mcp.types.CallToolResult):
+                            for content in tool_result.content:
+                                if isinstance(content, mcp.types.TextContent):
+                                    result.append(content.text)
+                                elif isinstance(content, mcp.types.ImageContent):
+                                    result.append("图片已直接发送给用户")
+                                    image_base64.append("base64://" + content.data)
+                except Exception as e:
+                    logger.error(
+                        f"Error executing tool {tool_name}: {e}", exc_info=True
+                    )
+                    result.append(f"工具执行失败: {e}")
+
+                result_dict = {
                     "name": tool_name,
                     "results": "\n".join(result),
                 }
-                tool_results.append(result)
+                tool_results.append(result_dict)
                 success_logs.append(
                     f"<tool_call name={tool_name} args={tool_args} status='finished' />"
                 )
