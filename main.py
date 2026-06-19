@@ -146,7 +146,9 @@ class Giftia(Star):
 
         # 实例化
         self.http_manager = HttpManager(self.conf)
-        sticker_summaries = self.sticker_config.get("sticker_summaries", ["这是一张表情包"])
+        sticker_summaries = self.sticker_config.get(
+            "sticker_summaries", ["这是一张表情包"]
+        )
         self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
 
         # 缓存
@@ -161,7 +163,7 @@ class Giftia(Star):
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
         # 实例化
-        self.ltm = LTM(self.embedding_conf, self.rerank_conf)
+        self.ltm = LTM(self.context, self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
         self.data_cache = DataCache(
             db=self.db,
@@ -176,7 +178,9 @@ class Giftia(Star):
         sticker_summaries = self.conf.get("sticker_config", {}).get(
             "sticker_summaries", ["这是一张表情包"]
         )
-        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager, sticker_summaries)
+        self.xml_parse = XmlParse(
+            self.data_cache, self.emoji_manager, sticker_summaries
+        )
         self.call_llm = CallLLM(
             context=self.context,
             xml_parse=self.xml_parse,
@@ -496,18 +500,20 @@ class Giftia(Star):
                     content=[Plain(task)],
                 )
             )
-        nodes.extend([
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
-            ),
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
-            ),
-        ])
+        nodes.extend(
+            [
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
+                ),
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
+                ),
+            ]
+        )
         if index < total_pages:
             nodes.append(
                 Node(
@@ -1027,9 +1033,9 @@ caption: {media_caption.caption}"""
             bot_name, group_or_user_id, self.msg_number
         )
         # 先取所有消息的media_id，去重后获取caption xml string
-        hash_vals = list({
-            media_id for msg in recent_messages for media_id in msg.media_id_list
-        })
+        hash_vals = list(
+            {media_id for msg in recent_messages for media_id in msg.media_id_list}
+        )
 
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:

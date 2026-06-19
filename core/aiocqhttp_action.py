@@ -235,10 +235,12 @@ class AIoCQHTTPAction:
             # 如果是@，也需要检查前面是不是@
             elif isinstance(component, At):
                 if message_data and message_data[-1].get("type") == "at":
-                    message_data.append({
-                        "type": "text",
-                        "data": {"text": "\u200b \u200b"},
-                    })
+                    message_data.append(
+                        {
+                            "type": "text",
+                            "data": {"text": "\u200b \u200b"},
+                        }
+                    )
                 message_data.append(await component.to_dict())
             elif isinstance(component, Image | Record):
                 # For Image and Record segments, we convert them to base64
@@ -252,10 +254,12 @@ class AIoCQHTTPAction:
                     data_dict["sub_type"] = 1
                     data_dict["subtype"] = 1
                     data_dict["summary"] = random.choice(self.sticker_summaries)
-                message_data.append({
-                    "type": component.type.lower(),
-                    "data": data_dict,
-                })
+                message_data.append(
+                    {
+                        "type": component.type.lower(),
+                        "data": data_dict,
+                    }
+                )
             elif isinstance(component, File):
                 # For File segments, we need to handle the file differently
                 d = await component.to_dict()

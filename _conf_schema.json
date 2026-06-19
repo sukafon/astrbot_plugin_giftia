@@ -373,11 +373,23 @@
                         "default": false,
                         "hint": "只有当启动嵌入模型的时候，才支持写入和查询长期记忆。"
                     },
+                    "use_external_provider": {
+                        "description": "使用 AstrBot 嵌入提供商",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后将使用 AstrBot 中配置的 Embedding 提供商，而不是本地 FastEmbed 模型。"
+                    },
+                    "external_provider_id": {
+                        "description": "外部嵌入提供商 ID",
+                        "type": "string",
+                        "default": "",
+                        "hint": "在使用 AstrBot 提供商时生效。如果不填写，将默认使用 AstrBot 当前激活的第一个嵌入模型。"
+                    },
                     "model": {
-                        "description": "模型名称",
+                        "description": "本地模型名称",
                         "type": "string",
                         "default": "BAAI/bge-small-zh-v1.5",
-                        "hint": "嵌入模型名称。FastEmbed并不官方支持通用模型，且支持的模型名单上并没有BAAI/bge-base-zh-v1.5。如需修改，可用 /打印embedding模型 在控制台查看支持的模型列表。更换模型后需手动删除插件数据目录下的lancedb文件夹。"
+                        "hint": "本地嵌入模型名称（使用本地 FastEmbed 引擎时生效）。更换模型或提供商后需手动删除插件数据目录下的lancedb文件夹。"
                     },
                     "top_k": {
                         "description": "返回记忆数量",

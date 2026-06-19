@@ -8,54 +8,148 @@ from fastembed.rerank.cross_encoder import TextCrossEncoder
 from lancedb.pydantic import LanceModel, Vector
 
 from astrbot.api import logger
-from astrbot.api.star import StarTools
+from astrbot.api.star import Context, StarTools
 
 
-class MemorySchema(LanceModel):
-    id: str
-    bot_name: str
-    group_or_user_id: str
-    text: str
-    vector: Vector(512)  # type: ignore (BAAI/bge-small-zh-v1.5 的向量维度是 512)
-    metadata: str = "{}"
-    created_at: str
-    updated_at: str
+def get_memory_schema(dim: int):
+    class MemorySchema(LanceModel):
+        id: str
+        bot_name: str
+        group_or_user_id: str
+        text: str
+        vector: Vector(dim)  # type: ignore
+        metadata: str = "{}"
+        created_at: str
+        updated_at: str
+
+    return MemorySchema
 
 
 class LTM:
-    def __init__(self, embedding_conf: dict, rerank_conf: dict):
+    def __init__(self, context: Context, embedding_conf: dict, rerank_conf: dict):
+        self.context = context
         self.embedding_conf = embedding_conf
         self.rerank_conf = rerank_conf
         self.db_path = StarTools.get_data_dir("astrbot_plugin_giftia") / "lancedb"
         self.db_path.mkdir(parents=True, exist_ok=True)
         self.table_name = "ltm"
 
-        # 连接数据库 (没有文件夹会自动创建)，这一步仅做本地 I/O，无需特意放入协程
+        # 连接数据库 (没有文件夹会自动创建)
         self.db = lancedb.connect(self.db_path)
-        self.table = self.db.create_table(
-            self.table_name, schema=MemorySchema, exist_ok=True
-        )
-        # 创建索引
-        # self.table.create_index()
-        # 使用 FastEmbed 初始化计算引擎，它底层自带针对 CPU 的 ONNX 优化
-        # 请注意：FastEmbed并不官方支持通用模型，且支持的模型名单上并没有BAAI/bge-base-zh-v1.5
+
+        # 1. 自动识别模型与维度
         if self.embedding_conf.get("enabled", False):
-            self.embed_model = TextEmbedding(
-                model_name=self.embedding_conf.get(
-                    "model_name", "BAAI/bge-small-zh-v1.5"
+            if self.embedding_conf.get("use_external_provider", False):
+                provider_id = self.embedding_conf.get(
+                    "external_provider_id", ""
+                ).strip()
+                emb_providers = self.context.get_all_embedding_providers()
+                resolved_provider = None
+
+                if provider_id:
+                    for prov in emb_providers:
+                        pid = (
+                            prov.provider_config.get("id")
+                            if hasattr(prov, "provider_config")
+                            else None
+                        )
+                        if pid == provider_id or (
+                            hasattr(prov, "meta") and prov.meta().id == provider_id
+                        ):
+                            resolved_provider = prov
+                            break
+
+                if not resolved_provider:
+                    if provider_id:
+                        logger.warning(
+                            f"[Giftia LTM] 未找到 ID 为 '{provider_id}' 的 Embedding 提供商，将尝试使用第一个可用的提供商。"
+                        )
+                    if emb_providers:
+                        resolved_provider = emb_providers[0]
+
+                if not resolved_provider:
+                    raise ValueError(
+                        "[Giftia LTM] 未在 AstrBot 中找到任何已配置的 Embedding 提供商。请先在 WebUI 的“模型提供商”中添加并启用一个嵌入模型。"
+                    )
+
+                self.embed_provider = resolved_provider
+                self.vector_dim = resolved_provider.get_dim()
+                logger.info(
+                    f"LTM当前使用 AstrBot 的外部 Embedding 提供商: {resolved_provider.provider_config.get('id', 'unknown')}，"
+                    f"模型名称: {resolved_provider.get_model()}，维度: {self.vector_dim}"
                 )
+            else:
+                model_name = self.embedding_conf.get(
+                    "model",
+                    self.embedding_conf.get("model_name", "BAAI/bge-small-zh-v1.5"),
+                )
+                self.embed_model = TextEmbedding(model_name=model_name)
+                logger.info(
+                    f"LTM当前运行本地 FastEmbed 模型: {self.embed_model.model_name}"
+                )
+                self.vector_dim = 512
+                for model_info in TextEmbedding.list_supported_models():
+                    if model_info["model"] == self.embed_model.model_name:
+                        self.vector_dim = model_info["dim"]
+                        logger.info(f"模型官方定义维度: {self.vector_dim}")
+                        logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
+                        logger.info(f"模型描述: {model_info['description']}")
+        else:
+            self.vector_dim = 512
+
+        # 2. 动态创建 Pydantic Schema Class
+        self.schema_class = get_memory_schema(self.vector_dim)
+
+        # 3. 创建或打开表
+        try:
+            self.table = self.db.create_table(
+                self.table_name, schema=self.schema_class, exist_ok=True
             )
-            logger.info(
-                f"LTM当前运行的embedding模型名称: {self.embed_model.model_name}"
+        except Exception as e:
+            if (
+                "schema" in str(e).lower()
+                or "match" in str(e).lower()
+                or "dimension" in str(e).lower()
+            ):
+                raise ValueError(
+                    f"[Giftia LTM] 向量数据库维度不匹配或 Schema 不兼容！\n"
+                    f"错误信息: {e}\n"
+                    f"这通常是由于更换了嵌入模型或提供商导致的（不同模型的向量维度不一致，且无法混合使用）。\n"
+                    f"请手动删除或备份该文件夹以重新初始化数据库，或者恢复为原先的嵌入模型配置：\n"
+                    f"数据库文件夹路径: {self.db_path}"
+                ) from e
+            raise
+
+        # 4. 检查已有的向量维度是否匹配 (方案 A)
+        try:
+            import pyarrow as pa
+
+            arrow_schema = self.table.schema
+            vector_field = arrow_schema.field("vector")
+            if isinstance(vector_field.type, pa.FixedSizeListType):
+                existing_dim = vector_field.type.list_size
+                if existing_dim != self.vector_dim:
+                    raise ValueError(
+                        f"[Giftia LTM] 向量数据库维度不匹配！\n"
+                        f"当前配置的模型维度为 {self.vector_dim}，而本地已有数据库维度为 {existing_dim}。\n"
+                        f"不同模型的向量在数学上不兼容，无法混合使用。\n"
+                        f"请手动删除或备份该文件夹以重新初始化数据库，或者恢复为原先的嵌入模型配置：\n"
+                        f"数据库文件夹路径: {self.db_path}"
+                    )
+        except ValueError:
+            # 重新抛出维度不兼容的错误
+            raise
+        except Exception as e:
+            logger.warning(
+                f"[Giftia LTM] 检查数据库维度失败（如为新数据库建表则属正常）: {e}"
             )
-            for model_info in TextEmbedding.list_supported_models():
-                if model_info["model"] == self.embed_model.model_name:
-                    logger.info(f"模型官方定义维度: {model_info['dim']}")
-                    logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
-                    logger.info(f"模型描述: {model_info['description']}")
+
         if self.rerank_conf.get("enabled", False):
             self.reranker = TextCrossEncoder(
-                model_name=self.rerank_conf.get("model_name", "BAAI/bge-reranker-base")
+                model_name=self.rerank_conf.get(
+                    "model",
+                    self.rerank_conf.get("model_name", "BAAI/bge-reranker-base"),
+                )
             )
             logger.info(f"LTM当前运行的rerank模型名称: {self.reranker.model_name}")
             for model_info in TextCrossEncoder.list_supported_models():
@@ -79,16 +173,46 @@ class LTM:
         time: str,
         metadata: str = "{}",
     ) -> tuple[str, bytes] | None:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            self._add_memory_sync,
-            bot_name,
-            group_or_user_id,
-            text,
-            time,
-            metadata,
-        )
+        if self.embedding_conf.get("use_external_provider", False):
+            if not hasattr(self, "embed_provider"):
+                logger.error("Embedding provider not initialized")
+                return None
+            try:
+                vector = await self.embed_provider.get_embedding(text)
+            except Exception as e:
+                logger.error(f"[Giftia LTM] 获取外部 Embedding 失败: {e}")
+                return None
+
+            memory_id = str(uuid.uuid4())
+            self.table.add(
+                [
+                    {
+                        "id": memory_id,
+                        "bot_name": bot_name,
+                        "group_or_user_id": group_or_user_id,
+                        "text": text,
+                        "vector": vector,
+                        "metadata": metadata,
+                        "created_at": time,
+                        "updated_at": time,
+                    }
+                ]
+            )
+            import struct
+
+            vector_bytes = struct.pack(f"{len(vector)}f", *vector)
+            return memory_id, vector_bytes
+        else:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                self._add_memory_sync,
+                bot_name,
+                group_or_user_id,
+                text,
+                time,
+                metadata,
+            )
 
     def _add_memory_sync(
         self, bot_name: str, group_or_user_id: str, text: str, time: str, metadata: str
@@ -102,18 +226,20 @@ class LTM:
         # 使用 TextEmbedding 实例手动计算向量
         vector = list(self.embed_model.embed([text]))[0]
 
-        self.table.add([
-            {
-                "id": memory_id,
-                "bot_name": bot_name,
-                "group_or_user_id": group_or_user_id,
-                "text": text,
-                "vector": vector.tolist() if hasattr(vector, "tolist") else vector,
-                "metadata": metadata,
-                "created_at": time,
-                "updated_at": time,
-            }
-        ])
+        self.table.add(
+            [
+                {
+                    "id": memory_id,
+                    "bot_name": bot_name,
+                    "group_or_user_id": group_or_user_id,
+                    "text": text,
+                    "vector": vector.tolist() if hasattr(vector, "tolist") else vector,
+                    "metadata": metadata,
+                    "created_at": time,
+                    "updated_at": time,
+                }
+            ]
+        )
         return memory_id, vector.tobytes()
 
     async def get_memory(self, memory_ids: list[str]) -> list[dict] | None:
@@ -124,8 +250,7 @@ class LTM:
         """根据ID获取记忆"""
         try:
             results = (
-                self.table
-                .search()
+                self.table.search()
                 .where(f"id IN ({','.join(memory_ids)})")
                 .limit(len(memory_ids))
                 .to_list()
@@ -145,16 +270,43 @@ class LTM:
         limit: int = 5,
         threshold: float = 0.7,
     ) -> list[dict]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            self._search_memory_sync,
-            bot_name,
-            group_or_user_id,
-            query,
-            limit,
-            threshold,
-        )
+        if self.embedding_conf.get("use_external_provider", False):
+            if not hasattr(self, "embed_provider"):
+                logger.error("Embedding provider not initialized")
+                return []
+            try:
+                query_vector = await self.embed_provider.get_embedding(query)
+            except Exception as e:
+                logger.error(f"[Giftia LTM] 外部 Embedding 搜索向量获取失败: {e}")
+                return []
+
+            try:
+                results = (
+                    self.table.search(query_vector)
+                    .where(
+                        f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'",
+                        prefilter=True,
+                    )
+                    .limit(limit)
+                    .to_list()
+                )
+                if threshold is not None:
+                    results = [r for r in results if r.get("_distance", 0) <= threshold]
+                return results
+            except Exception as e:
+                logger.error(f"Search memory failed: {e}")
+                return []
+        else:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                self._search_memory_sync,
+                bot_name,
+                group_or_user_id,
+                query,
+                limit,
+                threshold,
+            )
 
     def _search_memory_sync(
         self,
@@ -175,8 +327,7 @@ class LTM:
                 query_vector = query_vector.tolist()
 
             results = (
-                self.table
-                .search(query_vector)
+                self.table.search(query_vector)
                 .where(
                     f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'",
                     prefilter=True,
@@ -207,8 +358,7 @@ class LTM:
         """获取所有早期记忆"""
         try:
             results = (
-                self.table
-                .search()
+                self.table.search()
                 .where(
                     f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'"
                 )

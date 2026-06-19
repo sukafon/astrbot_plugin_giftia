@@ -25,9 +25,7 @@ class HttpManager:
         """下载媒体文件"""
         for _ in range(3):
             try:
-                headers = {
-                    "Referer": "https://im.qq.com/"
-                }
+                headers = {"Referer": "https://im.qq.com/"}
                 async with self.session.get(url, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.read()
@@ -43,7 +41,9 @@ class HttpManager:
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
-                async with self.session.get(url, ssl=ssl_context, headers=headers) as resp:
+                async with self.session.get(
+                    url, ssl=ssl_context, headers=headers
+                ) as resp:
                     if resp.status == 200:
                         return await resp.read()
                     else:

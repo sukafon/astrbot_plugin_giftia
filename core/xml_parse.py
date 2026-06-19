@@ -164,9 +164,9 @@ class XmlParse:
 
                 elif tag_name == "at":
                     if self._attr_str(child, "user_id", ""):
-                        result.msg_chains.append([
-                            At(qq=self._attr_str(child, "user_id", ""))
-                        ])
+                        result.msg_chains.append(
+                            [At(qq=self._attr_str(child, "user_id", ""))]
+                        )
                         result.msg_logs.append(
                             f"<@{self._attr_str(child, 'user_id', '')}>"
                         )
@@ -195,10 +195,12 @@ class XmlParse:
                     if self._attr_str(child, "message_id", "") and self._attr_str(
                         child, "emoji_id", ""
                     ):
-                        result.emoji_ids.append((
-                            self._attr_str(child, "message_id", ""),
-                            self._attr_str(child, "emoji_id", ""),
-                        ))
+                        result.emoji_ids.append(
+                            (
+                                self._attr_str(child, "message_id", ""),
+                                self._attr_str(child, "emoji_id", ""),
+                            )
+                        )
                     else:
                         logger.error(
                             f"贴表情数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -215,10 +217,12 @@ class XmlParse:
                     if self._attr_str(child, "user_id", "") and self._attr_str(
                         child, "count", ""
                     ):
-                        result.likes.append((
-                            self._attr_str(child, "user_id", ""),
-                            self._attr_str(child, "count", ""),
-                        ))
+                        result.likes.append(
+                            (
+                                self._attr_str(child, "user_id", ""),
+                                self._attr_str(child, "count", ""),
+                            )
+                        )
                     else:
                         logger.error(
                             f"点赞标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -226,10 +230,13 @@ class XmlParse:
 
                 elif tag_name == "poke":
                     if self._attr_str(child, "user_id", ""):
-                        result.poke.append((
-                            self._attr_str(child, "group_id", "") or group_or_user_id,
-                            self._attr_str(child, "user_id", ""),
-                        ))
+                        result.poke.append(
+                            (
+                                self._attr_str(child, "group_id", "")
+                                or group_or_user_id,
+                                self._attr_str(child, "user_id", ""),
+                            )
+                        )
                     else:
                         logger.error(
                             f"戳一戳标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -237,11 +244,14 @@ class XmlParse:
 
                 elif tag_name == "ban":
                     if self._attr_str(child, "user_id", ""):
-                        result.ban.append((
-                            self._attr_str(child, "group_id", "") or group_or_user_id,
-                            self._attr_str(child, "user_id", ""),
-                            self._attr_str(child, "duration", ""),
-                        ))
+                        result.ban.append(
+                            (
+                                self._attr_str(child, "group_id", "")
+                                or group_or_user_id,
+                                self._attr_str(child, "user_id", ""),
+                                self._attr_str(child, "duration", ""),
+                            )
+                        )
                     else:
                         logger.error(
                             f"禁言标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -249,10 +259,13 @@ class XmlParse:
 
                 elif tag_name == "kick":
                     if self._attr_str(child, "user_id", ""):
-                        result.kick.append((
-                            self._attr_str(child, "group_id", "") or group_or_user_id,
-                            self._attr_str(child, "user_id", ""),
-                        ))
+                        result.kick.append(
+                            (
+                                self._attr_str(child, "group_id", "")
+                                or group_or_user_id,
+                                self._attr_str(child, "user_id", ""),
+                            )
+                        )
                     else:
                         logger.error(
                             f"踢人标签数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
@@ -265,11 +278,13 @@ class XmlParse:
                     text = child.get_text(strip=True)
                     user_id = self._attr_str(child, "user_id", "")
                     if text and user_id:
-                        result.summary_user_profiles.append((
-                            group_or_user_id,
-                            user_id,
-                            text,
-                        ))
+                        result.summary_user_profiles.append(
+                            (
+                                group_or_user_id,
+                                user_id,
+                                text,
+                            )
+                        )
 
                 elif tag_name == "summary_group_profile":
                     text = child.get_text(strip=True)
@@ -297,15 +312,17 @@ class XmlParse:
                         limit = int(limit_str)
                     except ValueError:
                         limit = 30
-                    result.search_histories.append({
-                        "group_or_user_id": group_or_user_id,
-                        "keyword": keyword,
-                        "user_id": user_id,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "sort_order": sort_order,
-                        "limit": limit,
-                    })
+                    result.search_histories.append(
+                        {
+                            "group_or_user_id": group_or_user_id,
+                            "keyword": keyword,
+                            "user_id": user_id,
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "sort_order": sort_order,
+                            "limit": limit,
+                        }
+                    )
 
                 elif tag_name == "get_message_context":
                     message_id = self._attr_str(child, "message_id", "")
@@ -315,11 +332,13 @@ class XmlParse:
                     except ValueError:
                         limit = 30
                     if message_id:
-                        result.get_message_contexts.append({
-                            "group_or_user_id": group_or_user_id,
-                            "message_id": message_id,
-                            "limit": limit,
-                        })
+                        result.get_message_contexts.append(
+                            {
+                                "group_or_user_id": group_or_user_id,
+                                "message_id": message_id,
+                                "limit": limit,
+                            }
+                        )
 
                 elif tag_name == "delete_memory":
                     memory_id = self._attr_str(child, "id", "")
@@ -391,11 +410,13 @@ class XmlParse:
                     task_time = self._attr_str(child, "time", "")
                     text = child.get_text(strip=True)
                     if task_time and text:
-                        result.schedule_tasks.append((
-                            group_or_user_id,
-                            task_time,
-                            text,
-                        ))
+                        result.schedule_tasks.append(
+                            (
+                                group_or_user_id,
+                                task_time,
+                                text,
+                            )
+                        )
                     else:
                         logger.error(
                             f"Schedule task数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"

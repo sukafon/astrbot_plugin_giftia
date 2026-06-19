@@ -142,7 +142,9 @@ class CallLLM:
                             llm_resp.completion_text, group_or_user_id
                         )
                         return result
-                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}，provider_id: {provider_id}")
+                    logger.error(
+                        f"LLM回复失败: {str(llm_resp)[:1024]}，provider_id: {provider_id}"
+                    )
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
@@ -246,7 +248,7 @@ class CallLLM:
                             name=result_dict.get("name", "未知表情"),
                             category=result_dict.get("category", "默认分类"),
                             tags=tags,
-                            description=result_dict.get("description", "")
+                            description=result_dict.get("description", ""),
                         )
                         return True, sticker
                 except Exception as e:

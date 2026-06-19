@@ -147,7 +147,9 @@ class MessageParser:
                                 (
                                     hash_val,
                                     media_caption,
-                                ) = await self.data_cache.get_caption_by_filename(file_name)
+                                ) = await self.data_cache.get_caption_by_filename(
+                                    file_name
+                                )
 
                             if not media_caption and quote.url:
                                 hash_val, media_caption = await self._get_image_caption(
@@ -170,9 +172,15 @@ class MessageParser:
                                 (
                                     hash_val,
                                     media_caption,
-                                ) = await self.data_cache.get_caption_by_filename(file_name)
+                                ) = await self.data_cache.get_caption_by_filename(
+                                    file_name
+                                )
 
-                            if not media_caption and quote.url and self.audio_caption_enabled:
+                            if (
+                                not media_caption
+                                and quote.url
+                                and self.audio_caption_enabled
+                            ):
                                 hash_val, media_caption = await self._get_audio_caption(
                                     quote.url, file_name
                                 )
@@ -191,7 +199,9 @@ class MessageParser:
                         elif isinstance(quote, File):
                             quote_parts.append(f"[文件:{quote.name}]")
                     quote_text = " ".join(quote_parts)
-                msg_parts.append(f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>")
+                msg_parts.append(
+                    f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>"
+                )
             elif isinstance(comp, At):
                 msg_parts.append(f"<@{comp.name}({comp.qq})>")
             elif isinstance(comp, Image):
