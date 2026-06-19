@@ -761,8 +761,46 @@ caption: {media_caption.caption}"""
                 proactive_prob > 0 and random.randint(1, 100) <= proactive_prob
             )
 
-            if not is_active_window and not is_proactive_hit:
-                logger.debug("没有at机器人且不满足接话分析窗口或主动概率，跳过处理")
+            # Keyword trigger check
+            is_keyword_hit = False
+            if (
+                decision_conf.get("keyword_trigger_enabled", False)
+                and current_message.content
+            ):
+                content_lower = current_message.content.lower()
+                keyword_rules = decision_conf.get("keyword_rules", [])
+                default_prob = decision_conf.get("keyword_default_probability", 100)
+
+                for rule in keyword_rules:
+                    keywords_str = rule.get("keywords", "")
+                    if not keywords_str:
+                        continue
+                    kw_list = [
+                        k.strip() for k in re.split(r"[,，]", keywords_str) if k.strip()
+                    ]
+                    for kw in kw_list:
+                        if kw.lower() in content_lower:
+                            prob = rule.get("probability")
+                            if prob is None or prob == "":
+                                prob = default_prob
+                            try:
+                                prob_val = int(prob)
+                            except (ValueError, TypeError):
+                                prob_val = default_prob
+
+                            if random.randint(1, 100) <= prob_val:
+                                is_keyword_hit = True
+                                logger.info(
+                                    f"{bot_name} 匹配到兴趣关键词 '{kw}'，触发接话决策"
+                                )
+                            break
+                    if is_keyword_hit:
+                        break
+
+            if not is_active_window and not is_proactive_hit and not is_keyword_hit:
+                logger.debug(
+                    "没有at机器人且不满足接话分析窗口、主动概率或关键词触发，跳过处理"
+                )
                 return
 
             if is_active_window:

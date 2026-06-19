@@ -73,6 +73,43 @@
                                 "description": "主动接话触发概率（%）",
                                 "default": 0,
                                 "hint": "当分析计数为0且没有被@时，群友发来的每条消息按照设定概率（0-100）随机触发一次小模型决策。若决策决定回复，则回复并重置分析计数。"
+                            },
+                            "keyword_trigger_enabled": {
+                                "type": "bool",
+                                "description": "启用关键词监听模式",
+                                "default": false,
+                                "hint": "开启后，当群聊消息中提到设置的兴趣关键词时，将按概率触发小模型分析。"
+                            },
+                            "keyword_rules": {
+                                "type": "template_list",
+                                "description": "兴趣关键词列表",
+                                "hint": "当群聊消息中提到这些关键词时触发分析。可为每个规则设置独立的触发概率。",
+                                "default": [],
+                                "templates": {
+                                    "keyword_template": {
+                                        "name": "关键词规则",
+                                        "items": {
+                                            "keywords": {
+                                                "type": "string",
+                                                "description": "关键词",
+                                                "hint": "多个关键词用逗号分隔，如 原神,星铁",
+                                                "default": ""
+                                            },
+                                            "probability": {
+                                                "type": "int",
+                                                "description": "触发概率(%)",
+                                                "hint": "留空使用默认触发概率",
+                                                "default": null
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "keyword_default_probability": {
+                                "type": "int",
+                                "description": "关键词默认触发概率（%）",
+                                "hint": "当规则中没有指定概率时使用此默认概率",
+                                "default": 100
                             }
                         }
                     },
