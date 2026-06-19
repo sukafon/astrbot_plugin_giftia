@@ -1364,7 +1364,14 @@ caption: {media_caption.caption}"""
         image_base64 = []
         if len(llm_result.tools_to_call) > 0:
             for tool_name, tool_args in llm_result.tools_to_call:
-                tool = self.context.get_llm_tool_manager().get_func(tool_name)
+                # 兼容处理带命名空间前缀的工具名（例如 default_api:send_meme -> send_meme）
+                clean_tool_name = (
+                    tool_name.split(":")[-1] if ":" in tool_name else tool_name
+                )
+                tool = self.context.get_llm_tool_manager().get_func(clean_tool_name)
+                if tool is None:
+                    tool = self.context.get_llm_tool_manager().get_func(tool_name)
+
                 if tool is None:
                     logger.error(f"{bot_name} 工具 {tool_name} 不存在")
                     result = {
