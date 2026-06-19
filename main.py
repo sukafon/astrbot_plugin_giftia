@@ -771,18 +771,21 @@ caption: {media_caption.caption}"""
                 keyword_rules = decision_conf.get("keyword_rules", [])
                 default_prob = decision_conf.get("keyword_default_probability", 100)
 
-                for rule in keyword_rules:
-                    keywords_str = rule.get("keywords", "")
-                    if not keywords_str:
+                for rule_str in keyword_rules:
+                    if not rule_str or not isinstance(rule_str, str):
                         continue
+                    if ":" in rule_str:
+                        keywords_str, prob_str = rule_str.split(":", 1)
+                        prob = prob_str.strip()
+                    else:
+                        keywords_str = rule_str
+                        prob = default_prob
+
                     kw_list = [
                         k.strip() for k in re.split(r"[,，]", keywords_str) if k.strip()
                     ]
                     for kw in kw_list:
                         if kw.lower() in content_lower:
-                            prob = rule.get("probability")
-                            if prob is None or prob == "":
-                                prob = default_prob
                             try:
                                 prob_val = int(prob)
                             except (ValueError, TypeError):

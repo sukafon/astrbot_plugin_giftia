@@ -81,29 +81,10 @@
                                 "hint": "开启后，当群聊消息中提到设置的兴趣关键词时，将按概率触发小模型分析。"
                             },
                             "keyword_rules": {
-                                "type": "template_list",
+                                "type": "list",
                                 "description": "兴趣关键词列表",
-                                "hint": "当群聊消息中提到这些关键词时触发分析。可为每个规则设置独立的触发概率。",
-                                "default": [],
-                                "templates": {
-                                    "keyword_template": {
-                                        "name": "关键词规则",
-                                        "items": {
-                                            "keywords": {
-                                                "type": "string",
-                                                "description": "关键词",
-                                                "hint": "多个关键词用逗号分隔，如 原神,星铁",
-                                                "default": ""
-                                            },
-                                            "probability": {
-                                                "type": "int",
-                                                "description": "触发概率(%)",
-                                                "hint": "留空使用默认触发概率",
-                                                "default": null
-                                            }
-                                        }
-                                    }
-                                }
+                                "hint": "当群聊消息中提到这些关键词时触发分析。支持直接输入关键词，或使用『关键词:概率』格式（例如『原神:50』）指定独立触发概率，多个可用英文逗号分隔。",
+                                "default": []
                             },
                             "keyword_default_probability": {
                                 "type": "int",
