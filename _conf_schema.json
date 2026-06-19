@@ -41,18 +41,12 @@
                                 "default": true,
                                 "hint": "启用小模型判断功能，如果关闭，将不会触发主动回复功能。"
                             },
-                            "provider_id": {
-                                "type": "string",
-                                "description": "小模型提供商",
-                                "_special": "select_provider",
-                                "default": "",
-                                "hint": "留空将跳过使用小模型判断功能。如果使用谷歌API，建议关闭原生搜索功能，否则很容易429"
-                            },
-                            "fallback_provider_ids": {
-                                "description": "回退提供商",
-                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                            "provider_ids": {
                                 "type": "list",
-                                "default": []
+                                "description": "小模型提供商（按优先级多选）",
+                                "_special": "select_providers",
+                                "default": [],
+                                "hint": "选择用于小模型判断的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空将跳过使用小模型判断功能。如果使用谷歌API，建议关闭原生搜索功能，否则很容易429"
                             },
                             "group_whitelist": {
                                 "description": "白名单群组",
@@ -80,18 +74,12 @@
                                 "default": false,
                                 "hint": "启用大模型回复功能"
                             },
-                            "provider_id": {
-                                "type": "string",
-                                "description": "大模型回复提供商",
-                                "_special": "select_provider",
-                                "default": "",
-                                "hint": "留空将跳过使用大模型回复功能"
-                            },
-                            "fallback_provider_ids": {
-                                "description": "回退提供商",
-                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                            "provider_ids": {
                                 "type": "list",
-                                "default": []
+                                "description": "大模型回复提供商（按优先级多选）",
+                                "_special": "select_providers",
+                                "default": [],
+                                "hint": "选择用于大模型回复的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空将跳过使用大模型回复功能。"
                             },
                             "provider_selection_mode": {
                                 "type": "string",
@@ -141,18 +129,12 @@
                 "default": true,
                 "hint": "即使关闭图片转述，当前消息的图片仍然会与提示词一起发送给LLM。"
             },
-            "image_caption_provider_id": {
-                "type": "string",
-                "description": "图片转述提供商",
-                "_special": "select_provider",
-                "default": "",
-                "hint": "若不填写则不启用。"
-            },
-            "image_caption_fallback_provider_ids": {
-                "description": "回退提供商",
-                "hint": "当主图片转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+            "image_caption_provider_ids": {
                 "type": "list",
-                "default": []
+                "description": "图片转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "选择用于图片转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
             "image_caption_system_prompt": {
                 "type": "text",
@@ -168,18 +150,12 @@
                 "default": true,
                 "hint": "即使关闭音频转述，当前消息的音频仍然会与提示词一起发送给LLM。"
             },
-            "audio_caption_provider_id": {
-                "type": "string",
-                "description": "音频转述提供商",
-                "_special": "select_provider",
-                "default": "",
-                "hint": "若不填写则不启用。"
-            },
-            "audio_caption_fallback_provider_ids": {
-                "description": "回退提供商",
-                "hint": "当主音频转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+            "audio_caption_provider_ids": {
                 "type": "list",
-                "default": []
+                "description": "音频转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "选择用于音频转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
             "audio_caption_system_prompt": {
                 "type": "text",

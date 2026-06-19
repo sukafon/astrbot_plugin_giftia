@@ -25,16 +25,30 @@ class CallLLM:
         self.network_conf = network_config
         self.sticker_analysis_prompt = sticker_analysis_prompt
         # 图片转述配置
-        self.image_caption_provider_ids = [
-            caption_config.get("image_caption_provider_id", "")
-        ] + caption_config.get("image_caption_fallback_provider_ids", [])
+        image_caption_provider_ids = caption_config.get("image_caption_provider_ids")
+        if not image_caption_provider_ids:
+            old_image_provider_id = caption_config.get("image_caption_provider_id")
+            if old_image_provider_id:
+                image_caption_provider_ids = [
+                    old_image_provider_id
+                ] + caption_config.get("image_caption_fallback_provider_ids", [])
+            else:
+                image_caption_provider_ids = []
+        self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
         self.image_caption_prompt = caption_config.get(
             "image_caption_system_prompt", ""
         )
         # 音频转述配置
-        self.audio_caption_provider_ids = [
-            caption_config.get("audio_caption_provider_id", "")
-        ] + caption_config.get("audio_caption_fallback_provider_ids", [])
+        audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids")
+        if not audio_caption_provider_ids:
+            old_audio_provider_id = caption_config.get("audio_caption_provider_id")
+            if old_audio_provider_id:
+                audio_caption_provider_ids = [
+                    old_audio_provider_id
+                ] + caption_config.get("audio_caption_fallback_provider_ids", [])
+            else:
+                audio_caption_provider_ids = []
+        self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
         self.audio_caption_prompt = caption_config.get(
             "audio_caption_system_prompt", ""
         )

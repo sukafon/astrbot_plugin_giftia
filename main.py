@@ -737,8 +737,8 @@ caption: {media_caption.caption}"""
                 self.debounce_at_map[debounce_key] = is_just_at
 
         if not is_just_at:
-            if not decision_conf.get("enabled", True) or not decision_conf.get(
-                "provider_id"
+            if not decision_conf.get("enabled", True) or not (
+                decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
                 logger.debug("没有at机器人且未开启决策，跳过处理")
                 return
@@ -892,13 +892,20 @@ caption: {media_caption.caption}"""
                         user_relation=user_relation,
                     )
                     decision_conf = bot_conf.get("decision_conf", {})
-                    provider_id = decision_conf.get("provider_id")
-                    if not provider_id:
+                    provider_ids = decision_conf.get("provider_ids")
+                    if not provider_ids:
+                        old_provider_id = decision_conf.get("provider_id")
+                        if old_provider_id:
+                            provider_ids = [old_provider_id] + decision_conf.get(
+                                "fallback_provider_ids", []
+                            )
+                        else:
+                            logger.error(f"{bot_name} 未配置决策模型ID")
+                            return None
+                    provider_ids = [p for p in provider_ids if p]
+                    if not provider_ids:
                         logger.error(f"{bot_name} 未配置决策模型ID")
                         return None
-                    provider_ids = [provider_id] + decision_conf.get(
-                        "fallback_provider_ids", []
-                    )
                     result = await self.call_llm.call_llm_decision(
                         provider_ids=provider_ids,
                         system_prompt=decision_conf.get("decision_prompt"),
@@ -1101,11 +1108,20 @@ caption: {media_caption.caption}"""
             bot_sticker=bot_sticker_cache,
         )
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
-        provider_id = llm_reply_conf.get("provider_id")
-        if not provider_id:
+        provider_ids = llm_reply_conf.get("provider_ids")
+        if not provider_ids:
+            old_provider_id = llm_reply_conf.get("provider_id")
+            if old_provider_id:
+                provider_ids = [old_provider_id] + llm_reply_conf.get(
+                    "fallback_provider_ids", []
+                )
+            else:
+                logger.error(f"{bot_name} 未配置回复模型ID")
+                return
+        provider_ids = [p for p in provider_ids if p]
+        if not provider_ids:
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
-        provider_ids = [provider_id] + llm_reply_conf.get("fallback_provider_ids", [])
         provider_selection_mode = llm_reply_conf.get(
             "provider_selection_mode", "fallback"
         )
