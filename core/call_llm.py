@@ -157,10 +157,16 @@ class CallLLM:
                             llm_resp.completion_text, group_or_user_id
                         )
                         return result
+                    elif llm_resp.reasoning_content:
+                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
+                        logger.warning(
+                            f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
+                        )
+                        continue
                     else:
-                        # LLM succeeded but completion text is empty; treat as no reply needed.
+                        # Succeeded but both completion and reasoning are empty.
                         logger.info(
-                            f"LLM returned empty completion, treating as no reply. provider_id: {provider_id}"
+                            f"LLM returned completely empty response, treating as no reply. provider_id: {provider_id}"
                         )
                         return XmlLlmResult()
                 except EmptyModelOutputError:
