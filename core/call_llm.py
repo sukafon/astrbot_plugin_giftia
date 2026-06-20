@@ -156,7 +156,12 @@ class CallLLM:
                         result = await self.xml_parse.decode_llm_xml(
                             llm_resp.completion_text, group_or_user_id
                         )
-                        return result
+                        if result is not None:
+                            return result
+                        logger.warning(
+                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
+                        )
+                        continue
                     elif llm_resp.reasoning_content:
                         # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
                         logger.warning(
