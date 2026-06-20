@@ -1,5 +1,6 @@
 import asyncio
 import gc
+import threading
 import uuid
 
 import lancedb
@@ -36,126 +37,140 @@ class LTM:
 
         # 连接数据库 (没有文件夹会自动创建)
         self.db = lancedb.connect(self.db_path)
+        self._lazy_initialized = False
+        self._lock = threading.Lock()
 
-        # 1. 自动识别模型与维度
-        if self.embedding_conf.get("enabled", False):
-            if self.embedding_conf.get("use_external_provider", False):
-                provider_id = self.embedding_conf.get(
-                    "external_provider_id", ""
-                ).strip()
-                emb_providers = self.context.get_all_embedding_providers()
-                resolved_provider = None
+    def _lazy_init(self) -> None:
+        """延迟初始化 Embedding 提供商、模型、表结构和重排模型。"""
+        if self._lazy_initialized:
+            return
+        with self._lock:
+            if self._lazy_initialized:
+                return
 
-                if provider_id:
-                    for prov in emb_providers:
-                        pid = (
-                            prov.provider_config.get("id")
-                            if hasattr(prov, "provider_config")
-                            else None
-                        )
-                        if pid == provider_id or (
-                            hasattr(prov, "meta") and prov.meta().id == provider_id
-                        ):
-                            resolved_provider = prov
-                            break
+            # 1. 自动识别模型与维度
+            if self.embedding_conf.get("enabled", False):
+                if self.embedding_conf.get("use_external_provider", False):
+                    provider_id = self.embedding_conf.get(
+                        "external_provider_id", ""
+                    ).strip()
+                    emb_providers = self.context.get_all_embedding_providers()
+                    resolved_provider = None
 
-                if not resolved_provider:
                     if provider_id:
-                        logger.warning(
-                            f"[Giftia LTM] 未找到 ID 为 '{provider_id}' 的 Embedding 提供商，将尝试使用第一个可用的提供商。"
+                        for prov in emb_providers:
+                            pid = (
+                                prov.provider_config.get("id")
+                                if hasattr(prov, "provider_config")
+                                else None
+                            )
+                            if pid == provider_id or (
+                                hasattr(prov, "meta") and prov.meta().id == provider_id
+                            ):
+                                resolved_provider = prov
+                                break
+
+                    if not resolved_provider:
+                        if provider_id:
+                            logger.warning(
+                                f"[Giftia LTM] 未找到 ID 为 '{provider_id}' 的 Embedding 提供商，将尝试使用第一个可用的提供商。"
+                            )
+                        if emb_providers:
+                            resolved_provider = emb_providers[0]
+
+                    if not resolved_provider:
+                        raise ValueError(
+                            "[Giftia LTM] 未在 AstrBot 中找到任何已配置的 Embedding 提供商。请先在 WebUI 的“模型提供商”中添加并启用一个嵌入模型。"
                         )
-                    if emb_providers:
-                        resolved_provider = emb_providers[0]
 
-                if not resolved_provider:
-                    raise ValueError(
-                        "[Giftia LTM] 未在 AstrBot 中找到任何已配置的 Embedding 提供商。请先在 WebUI 的“模型提供商”中添加并启用一个嵌入模型。"
+                    self.embed_provider = resolved_provider
+                    self.vector_dim = resolved_provider.get_dim()
+                    logger.info(
+                        f"LTM当前使用 AstrBot 的外部 Embedding 提供商: {resolved_provider.provider_config.get('id', 'unknown')}，"
+                        f"模型名称: {resolved_provider.get_model()}，维度: {self.vector_dim}"
                     )
-
-                self.embed_provider = resolved_provider
-                self.vector_dim = resolved_provider.get_dim()
-                logger.info(
-                    f"LTM当前使用 AstrBot 的外部 Embedding 提供商: {resolved_provider.provider_config.get('id', 'unknown')}，"
-                    f"模型名称: {resolved_provider.get_model()}，维度: {self.vector_dim}"
-                )
+                else:
+                    model_name = self.embedding_conf.get(
+                        "model",
+                        self.embedding_conf.get("model_name", "BAAI/bge-small-zh-v1.5"),
+                    )
+                    self.embed_model = TextEmbedding(model_name=model_name)
+                    logger.info(
+                        f"LTM当前运行本地 FastEmbed 模型: {self.embed_model.model_name}"
+                    )
+                    self.vector_dim = 512
+                    for model_info in TextEmbedding.list_supported_models():
+                        if model_info["model"] == self.embed_model.model_name:
+                            self.vector_dim = model_info["dim"]
+                            logger.info(f"模型官方定义维度: {self.vector_dim}")
+                            logger.info(
+                                f"模型硬盘空间占用: {model_info['size_in_GB']} GB"
+                            )
+                            logger.info(f"模型描述: {model_info['description']}")
             else:
-                model_name = self.embedding_conf.get(
-                    "model",
-                    self.embedding_conf.get("model_name", "BAAI/bge-small-zh-v1.5"),
-                )
-                self.embed_model = TextEmbedding(model_name=model_name)
-                logger.info(
-                    f"LTM当前运行本地 FastEmbed 模型: {self.embed_model.model_name}"
-                )
                 self.vector_dim = 512
-                for model_info in TextEmbedding.list_supported_models():
-                    if model_info["model"] == self.embed_model.model_name:
-                        self.vector_dim = model_info["dim"]
-                        logger.info(f"模型官方定义维度: {self.vector_dim}")
-                        logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
-                        logger.info(f"模型描述: {model_info['description']}")
-        else:
-            self.vector_dim = 512
 
-        # 2. 动态创建 Pydantic Schema Class
-        self.schema_class = get_memory_schema(self.vector_dim)
+            # 2. 动态创建 Pydantic Schema Class
+            self.schema_class = get_memory_schema(self.vector_dim)
 
-        # 3. 创建或打开表
-        try:
-            self.table = self.db.create_table(
-                self.table_name, schema=self.schema_class, exist_ok=True
-            )
-        except Exception as e:
-            if (
-                "schema" in str(e).lower()
-                or "match" in str(e).lower()
-                or "dimension" in str(e).lower()
-            ):
-                raise ValueError(
-                    f"[Giftia LTM] 向量数据库维度不匹配或 Schema 不兼容！\n"
-                    f"错误信息: {e}\n"
-                    f"这通常是由于更换了嵌入模型或提供商导致的（不同模型的向量维度不一致，且无法混合使用）。\n"
-                    f"请手动删除或备份该文件夹以重新初始化数据库，或者恢复为原先的嵌入模型配置：\n"
-                    f"数据库文件夹路径: {self.db_path}"
-                ) from e
-            raise
-
-        # 4. 检查已有的向量维度是否匹配 (方案 A)
-        try:
-            import pyarrow as pa
-
-            arrow_schema = self.table.schema
-            vector_field = arrow_schema.field("vector")
-            if isinstance(vector_field.type, pa.FixedSizeListType):
-                existing_dim = vector_field.type.list_size
-                if existing_dim != self.vector_dim:
+            # 3. 创建或打开表
+            try:
+                self.table = self.db.create_table(
+                    self.table_name, schema=self.schema_class, exist_ok=True
+                )
+            except Exception as e:
+                if (
+                    "schema" in str(e).lower()
+                    or "match" in str(e).lower()
+                    or "dimension" in str(e).lower()
+                ):
                     raise ValueError(
-                        f"[Giftia LTM] 向量数据库维度不匹配！\n"
-                        f"当前配置的模型维度为 {self.vector_dim}，而本地已有数据库维度为 {existing_dim}。\n"
-                        f"不同模型的向量在数学上不兼容，无法混合使用。\n"
+                        f"[Giftia LTM] 向量数据库维度不匹配或 Schema 不兼容！\n"
+                        f"错误信息: {e}\n"
+                        f"这通常是由于更换了嵌入模型或提供商导致的（不同模型的向量维度不一致，且无法混合使用）。\n"
                         f"请手动删除或备份该文件夹以重新初始化数据库，或者恢复为原先的嵌入模型配置：\n"
                         f"数据库文件夹路径: {self.db_path}"
-                    )
-        except ValueError:
-            # 重新抛出维度不兼容的错误
-            raise
-        except Exception as e:
-            logger.warning(
-                f"[Giftia LTM] 检查数据库维度失败（如为新数据库建表则属正常）: {e}"
-            )
+                    ) from e
+                raise
 
-        if self.rerank_conf.get("enabled", False):
-            self.reranker = TextCrossEncoder(
-                model_name=self.rerank_conf.get(
-                    "model",
-                    self.rerank_conf.get("model_name", "BAAI/bge-reranker-base"),
+            # 4. 检查已有的向量维度是否匹配 (方案 A)
+            try:
+                import pyarrow as pa
+
+                arrow_schema = self.table.schema
+                vector_field = arrow_schema.field("vector")
+                if isinstance(vector_field.type, pa.FixedSizeListType):
+                    existing_dim = vector_field.type.list_size
+                    if existing_dim != self.vector_dim:
+                        raise ValueError(
+                            f"[Giftia LTM] 向量数据库维度不匹配！\n"
+                            f"当前配置的模型维度为 {self.vector_dim}，而本地已有数据库维度为 {existing_dim}。\n"
+                            f"不同模型的向量在数学上不兼容，无法混合使用。\n"
+                            f"请手动删除或备份该文件夹以重新初始化数据库，或者恢复为原先的嵌入模型配置：\n"
+                            f"数据库文件夹路径: {self.db_path}"
+                        )
+            except ValueError:
+                # 重新抛出维度不兼容的错误
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"[Giftia LTM] 检查数据库维度失败（如为新数据库建表则属正常）: {e}"
                 )
-            )
-            logger.info(f"LTM当前运行的rerank模型名称: {self.reranker.model_name}")
-            for model_info in TextCrossEncoder.list_supported_models():
-                if model_info["model"] == self.reranker.model_name:
-                    logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
-                    logger.info(f"模型描述: {model_info['description']}")
+
+            if self.rerank_conf.get("enabled", False):
+                self.reranker = TextCrossEncoder(
+                    model_name=self.rerank_conf.get(
+                        "model",
+                        self.rerank_conf.get("model_name", "BAAI/bge-reranker-base"),
+                    )
+                )
+                logger.info(f"LTM当前运行的rerank模型名称: {self.reranker.model_name}")
+                for model_info in TextCrossEncoder.list_supported_models():
+                    if model_info["model"] == self.reranker.model_name:
+                        logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
+                        logger.info(f"模型描述: {model_info['description']}")
+
+            self._lazy_initialized = True
 
     def get_all_models(self) -> list[dict]:
         """获取所有支持的模型信息"""
@@ -173,6 +188,7 @@ class LTM:
         time: str,
         metadata: str = "{}",
     ) -> tuple[str, bytes] | None:
+        self._lazy_init()
         if self.embedding_conf.get("use_external_provider", False):
             if not hasattr(self, "embed_provider"):
                 logger.error("Embedding provider not initialized")
@@ -218,6 +234,7 @@ class LTM:
         self, bot_name: str, group_or_user_id: str, text: str, time: str, metadata: str
     ) -> tuple[str, bytes] | None:
         """添加一条记忆"""
+        self._lazy_init()
         if not hasattr(self, "embed_model"):
             logger.error("Embedding model not initialized")
             return None
@@ -243,11 +260,13 @@ class LTM:
         return memory_id, vector.tobytes()
 
     async def get_memory(self, memory_ids: list[str]) -> list[dict] | None:
+        self._lazy_init()
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._get_memory_sync, memory_ids)
 
     def _get_memory_sync(self, memory_ids: list[str]) -> list[dict] | None:
         """根据ID获取记忆"""
+        self._lazy_init()
         try:
             results = (
                 self.table.search()
@@ -270,6 +289,7 @@ class LTM:
         limit: int = 5,
         threshold: float = 0.7,
     ) -> list[dict]:
+        self._lazy_init()
         if self.embedding_conf.get("use_external_provider", False):
             if not hasattr(self, "embed_provider"):
                 logger.error("Embedding provider not initialized")
@@ -317,6 +337,7 @@ class LTM:
         threshold: float,
     ) -> list[dict]:
         """语义搜索相关记忆"""
+        self._lazy_init()
         try:
             if not hasattr(self, "embed_model"):
                 logger.error("Embedding model not initialized")
@@ -347,6 +368,7 @@ class LTM:
     async def get_all_memories(
         self, bot_name: str, group_or_user_id: str, limit: int = 100
     ) -> list[dict]:
+        self._lazy_init()
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._get_all_memories_sync, bot_name, group_or_user_id, limit
@@ -356,6 +378,7 @@ class LTM:
         self, bot_name: str, group_or_user_id: str, limit: int
     ) -> list[dict]:
         """获取所有早期记忆"""
+        self._lazy_init()
         try:
             results = (
                 self.table.search()
@@ -404,11 +427,13 @@ class LTM:
     #         return False
 
     async def delete_memory(self, memory_id: str) -> bool:
+        self._lazy_init()
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._delete_memory_sync, memory_id)
 
     def _delete_memory_sync(self, memory_id: str) -> bool:
         """删除一条记忆"""
+        self._lazy_init()
         try:
             self.table.delete(f"id = '{memory_id}'")
             return True
@@ -418,6 +443,7 @@ class LTM:
 
     async def delete_all_memories(self, bot_name: str, group_or_user_id: str) -> bool:
         """删除全部记忆"""
+        self._lazy_init()
         try:
             self.table.delete(
                 f"bot_name = '{bot_name}' AND group_or_user_id = '{group_or_user_id}'"
@@ -437,6 +463,7 @@ class LTM:
         :param top_k: 返回前 k 个最相关的记忆
         :return: 按相关性排序后的记忆列表
         """
+        self._lazy_init()
         try:
             if not hasattr(self, "reranker"):
                 logger.error("Reranker not initialized")
