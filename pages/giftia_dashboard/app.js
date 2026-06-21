@@ -855,6 +855,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             const titleHtml = item.title ? `<span class="badge badge-info">${escapeHtml(item.title)}</span>` : `<span style="color: var(--font-secondary);">-</span>`;
 
+            const encodedTitle = encodeURIComponent(item.title || "");
+
             return `
                 <tr>
                     <td style="font-weight: 600;">${item.bot_name}</td>
@@ -867,7 +869,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     </td>
                     <td>${formatDate(item.updated_at || item.created_at)}</td>
                     <td class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
                     </td>
                 </tr>
@@ -933,11 +935,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Modal Actions for Profiles
-    window.openEditUserProfileModal = function(bot, group, user, profileEncoded) {
+    window.openEditUserProfileModal = function(bot, group, user, profileEncoded, relation, titleEncoded) {
         const profile = decodeURIComponent(profileEncoded);
+        const title = decodeURIComponent(titleEncoded || "");
         document.getElementById("edit-user-prof-bot").value = bot;
         document.getElementById("edit-user-prof-group").value = group;
         document.getElementById("edit-user-prof-user").value = user;
+        document.getElementById("edit-user-prof-relation").value = relation !== undefined ? relation : 0;
+        document.getElementById("edit-user-prof-title").value = title;
         document.getElementById("edit-user-prof-text").value = profile;
         openModal("edit-user-profile-modal");
     };
@@ -946,6 +951,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const bot = document.getElementById("edit-user-prof-bot").value;
         const group = document.getElementById("edit-user-prof-group").value;
         const user = document.getElementById("edit-user-prof-user").value;
+        const relationVal = document.getElementById("edit-user-prof-relation").value;
+        const title = document.getElementById("edit-user-prof-title").value.trim();
         const profile = document.getElementById("edit-user-prof-text").value.trim();
 
         if (!profile) {
@@ -953,12 +960,16 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        const relation = relationVal !== "" ? parseInt(relationVal) : 0;
+
         try {
             const res = await apiPost("/profiles/user/update", {
                 bot_name: bot,
                 group_or_user_id: group,
                 user_id: user,
-                profile: profile
+                profile: profile,
+                relation: relation,
+                title: title
             });
             if (res.status === "success") {
                 showToast("保存成功！");

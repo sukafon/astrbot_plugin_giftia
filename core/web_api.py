@@ -573,6 +573,8 @@ class GiftiaWebApi:
             group_or_user_id = body.get("group_or_user_id")
             user_id = body.get("user_id")
             profile = body.get("profile")
+            relation = body.get("relation")
+            title = body.get("title")
 
             if not bot_name or not group_or_user_id or not user_id or profile is None:
                 return error_response(
@@ -585,6 +587,34 @@ class GiftiaWebApi:
                 user_id=user_id,
                 profile=profile,
             )
+
+            if relation is not None or title is not None:
+                fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+                current_relation, current_title = await self.giftia.data_cache.get_user_relation(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                )
+                new_rel = int(relation) if relation is not None else current_relation
+                new_title = str(title) if title is not None else current_title
+
+                if relation is not None:
+                    await self.giftia.db.upsert_relation(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        user_id=user_id,
+                        relation=new_rel,
+                    )
+                if title is not None:
+                    await self.giftia.db.upsert_relation_title(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        user_id=user_id,
+                        title=new_title,
+                    )
+
+                self.giftia.data_cache.relations[fmt_key] = (new_rel, new_title)
+
             return json_response({"status": "success", "message": "更新用户画像成功"})
         except Exception as e:
             logger.error(f"[Giftia API] update_user_profile error: {e}")
