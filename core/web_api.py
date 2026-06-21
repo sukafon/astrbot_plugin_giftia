@@ -440,8 +440,8 @@ class GiftiaWebApi:
             if not status:
                 status = await self.giftia.db.get_bot_status(group_or_user_id, bot_name)
 
-            status.energy = 100.0
-            status.energy_recovery_time = time.time()
+            status.energy = "100.0"
+            status.timestamp = time.time()
             self.giftia.data_cache.bot_status[fmt_key] = status
 
             # Persist to database
