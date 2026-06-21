@@ -804,7 +804,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     async function loadUserProfiles() {
         const listContainer = document.getElementById("user-profile-list");
-        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="8" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
 
         const params = {
             page: pagination.userProfiles.page,
@@ -825,7 +825,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="8" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
         }
     }
 
@@ -837,19 +837,33 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderUserProfiles(items) {
         const container = document.getElementById("user-profile-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关用户画像记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="8" class="no-data-row">暂无相关用户画像记录</td></tr>`;
             return;
         }
 
         container.innerHTML = items.map(item => {
             const encodedProfile = encodeURIComponent(item.profile || "");
+            
+            let relationBadge = "";
+            const rel = parseInt(item.relation) || 0;
+            if (rel > 0) {
+                relationBadge = `<span class="badge badge-success">+${rel}</span>`;
+            } else if (rel < 0) {
+                relationBadge = `<span class="badge badge-danger">${rel}</span>`;
+            } else {
+                relationBadge = `<span class="badge badge-secondary">0</span>`;
+            }
+            const titleHtml = item.title ? `<span class="badge badge-info">${escapeHtml(item.title)}</span>` : `<span style="color: var(--font-secondary);">-</span>`;
+
             return `
                 <tr>
                     <td style="font-weight: 600;">${item.bot_name}</td>
                     <td>${item.group_or_user_id}</td>
                     <td>${item.user_id}</td>
+                    <td>${relationBadge}</td>
+                    <td>${titleHtml}</td>
                     <td>
-                        <div style="max-width: 550px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
+                        <div style="max-width: 500px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
                     </td>
                     <td>${formatDate(item.updated_at || item.created_at)}</td>
                     <td class="text-right">

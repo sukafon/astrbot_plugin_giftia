@@ -499,16 +499,16 @@ class GiftiaWebApi:
             params = []
 
             if bot_name:
-                conditions.append("bot_name = ?")
+                conditions.append("up.bot_name = ?")
                 params.append(bot_name)
             if group_or_user_id:
-                conditions.append("group_or_user_id = ?")
+                conditions.append("up.group_or_user_id = ?")
                 params.append(group_or_user_id)
             if user_id:
-                conditions.append("user_id = ?")
+                conditions.append("up.user_id = ?")
                 params.append(user_id)
             if search:
-                conditions.append("profile LIKE ?")
+                conditions.append("up.profile LIKE ?")
                 params.append(f"%{search}%")
 
             where_clause = ""
@@ -516,17 +516,19 @@ class GiftiaWebApi:
                 where_clause = "WHERE " + " AND ".join(conditions)
 
             # Query count
-            count_sql = f"SELECT COUNT(*) as total FROM user_profiles {where_clause}"
+            count_sql = f"SELECT COUNT(*) as total FROM user_profiles up {where_clause}"
             async with self.giftia.db.conn.execute(count_sql, params) as cursor:
                 row = await cursor.fetchone()
                 total = row["total"] if row else 0
 
             # Query data
             data_sql = f"""
-                SELECT id, bot_name, group_or_user_id, user_id, profile, created_at, updated_at
-                FROM user_profiles
+                SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id, up.profile, up.created_at, up.updated_at,
+                       r.relation, r.title
+                FROM user_profiles up
+                LEFT JOIN relations r ON up.bot_name = r.bot_name AND up.group_or_user_id = r.group_or_user_id AND up.user_id = r.user_id
                 {where_clause}
-                ORDER BY updated_at DESC
+                ORDER BY up.updated_at DESC
                 LIMIT ? OFFSET ?
             """
             data_params = params + [limit, offset]
@@ -541,6 +543,8 @@ class GiftiaWebApi:
                             "group_or_user_id": r["group_or_user_id"],
                             "user_id": r["user_id"],
                             "profile": r["profile"],
+                            "relation": r["relation"] if r["relation"] is not None else 0,
+                            "title": r["title"] if r["title"] is not None else "",
                             "created_at": r["created_at"],
                             "updated_at": r["updated_at"],
                         }
