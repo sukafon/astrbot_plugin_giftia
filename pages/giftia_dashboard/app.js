@@ -3,12 +3,15 @@
 document.addEventListener("DOMContentLoaded", () => {
     // Current state variables
     let activeTab = "chat-history";
+    let activeSubTab = "user-profiles";
     
     // Pagination states
     const pagination = {
         history: { page: 1, limit: 15, total: 0 },
         memories: { page: 1, limit: 15, total: 0 },
-        media: { page: 1, limit: 12, total: 0 }
+        media: { page: 1, limit: 12, total: 0 },
+        userProfiles: { page: 1, limit: 15, total: 0 },
+        groupProfiles: { page: 1, limit: 15, total: 0 }
     };
 
     // Initialize AstrBot Bridge SDK
@@ -67,6 +70,28 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    // Sub-tab Navigation setup (Profiles)
+    const subTabButtons = document.querySelectorAll(".sub-nav-tab");
+    const subPanels = document.querySelectorAll(".subpanel");
+
+    subTabButtons.forEach(button => {
+        button.addEventListener("click", () => {
+            const targetSubTab = button.getAttribute("data-subtab");
+            
+            subTabButtons.forEach(btn => btn.classList.remove("active"));
+            subPanels.forEach(panel => panel.classList.remove("active"));
+            
+            button.classList.add("active");
+            const targetSubPanel = document.getElementById(`subpanel-${targetSubTab}`);
+            if (targetSubPanel) {
+                targetSubPanel.classList.add("active");
+            }
+            
+            activeSubTab = targetSubTab;
+            loadProfilesData();
+        });
+    });
+
     // Helper: Load data based on active tab
     function loadActiveTabData() {
         if (activeTab === "chat-history") {
@@ -77,6 +102,8 @@ document.addEventListener("DOMContentLoaded", () => {
             loadBotStatus();
         } else if (activeTab === "media-captions") {
             loadMedia();
+        } else if (activeTab === "profiles") {
+            loadProfilesData();
         }
     }
 
@@ -135,7 +162,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const filterInputIds = [
         "history-bot-name", "history-group-id", "history-decision", "history-rag", "history-search",
         "memory-bot-name", "memory-group-id", "memory-search",
-        "media-type", "media-search"
+        "media-type", "media-search",
+        "user-profile-bot-name", "user-profile-group-id", "user-profile-user-id", "user-profile-search",
+        "group-profile-bot-name", "group-profile-group-id", "group-profile-search"
     ];
 
     filterInputIds.forEach(id => {
@@ -155,6 +184,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     } else if (activeTab === "media-captions") {
                         pagination.media.page = 1;
                         loadMedia();
+                    } else if (activeTab === "profiles") {
+                        if (activeSubTab === "user-profiles") {
+                            pagination.userProfiles.page = 1;
+                            loadUserProfiles();
+                        } else {
+                            pagination.groupProfiles.page = 1;
+                            loadGroupProfiles();
+                        }
                     }
                 }, 300);
             });
@@ -773,4 +810,250 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         });
     }
+
+    // ----------------------------------------------------
+    // TAB 5: Profiles (User and Group)
+    // ----------------------------------------------------
+    function loadProfilesData() {
+        if (activeSubTab === "user-profiles") {
+            loadUserProfiles();
+        } else if (activeSubTab === "group-profiles") {
+            loadGroupProfiles();
+        }
+    }
+
+    async function loadUserProfiles() {
+        const listContainer = document.getElementById("user-profile-list");
+        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+
+        const params = {
+            page: pagination.userProfiles.page,
+            limit: pagination.userProfiles.limit,
+            bot_name: document.getElementById("user-profile-bot-name").value,
+            group_or_user_id: document.getElementById("user-profile-group-id").value,
+            user_id: document.getElementById("user-profile-user-id").value,
+            search: document.getElementById("user-profile-search").value
+        };
+
+        try {
+            const res = await apiGet("/profiles/user", params);
+            if (res.status === "success" && res.data) {
+                pagination.userProfiles.total = res.data.total;
+                renderUserProfiles(res.data.items);
+                renderPagination("user-profile-pagination", pagination.userProfiles, loadUserProfilesPage);
+            } else {
+                throw new Error(res.message || "请求失败");
+            }
+        } catch (e) {
+            console.error("[Giftia Debug] loadUserProfiles error:", e);
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+        }
+    }
+
+    function loadUserProfilesPage(page) {
+        pagination.userProfiles.page = page;
+        loadUserProfiles();
+    }
+
+    function renderUserProfiles(items) {
+        const container = document.getElementById("user-profile-list");
+        if (!items || items.length === 0) {
+            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关用户画像记录</td></tr>`;
+            return;
+        }
+
+        container.innerHTML = items.map(item => {
+            const encodedProfile = encodeURIComponent(item.profile || "");
+            return `
+                <tr>
+                    <td style="font-weight: 600;">${item.bot_name}</td>
+                    <td>${item.group_or_user_id}</td>
+                    <td>${item.user_id}</td>
+                    <td>
+                        <div style="max-width: 550px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
+                    </td>
+                    <td>${formatDate(item.updated_at || item.created_at)}</td>
+                    <td class="text-right">
+                        <button class="btn btn-secondary btn-small" onclick="openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}')">编辑</button>
+                        <button class="btn btn-danger btn-small" onclick="deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    async function loadGroupProfiles() {
+        const listContainer = document.getElementById("group-profile-list");
+        listContainer.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+
+        const params = {
+            page: pagination.groupProfiles.page,
+            limit: pagination.groupProfiles.limit,
+            bot_name: document.getElementById("group-profile-bot-name").value,
+            group_or_user_id: document.getElementById("group-profile-group-id").value,
+            search: document.getElementById("group-profile-search").value
+        };
+
+        try {
+            const res = await apiGet("/profiles/group", params);
+            if (res.status === "success" && res.data) {
+                pagination.groupProfiles.total = res.data.total;
+                renderGroupProfiles(res.data.items);
+                renderPagination("group-profile-pagination", pagination.groupProfiles, loadGroupProfilesPage);
+            } else {
+                throw new Error(res.message || "请求失败");
+            }
+        } catch (e) {
+            console.error("[Giftia Debug] loadGroupProfiles error:", e);
+            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+        }
+    }
+
+    function loadGroupProfilesPage(page) {
+        pagination.groupProfiles.page = page;
+        loadGroupProfiles();
+    }
+
+    function renderGroupProfiles(items) {
+        const container = document.getElementById("group-profile-list");
+        if (!items || items.length === 0) {
+            container.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无相关群聊画像记录</td></tr>`;
+            return;
+        }
+
+        container.innerHTML = items.map(item => {
+            const encodedProfile = encodeURIComponent(item.profile || "");
+            return `
+                <tr>
+                    <td style="font-weight: 600;">${item.bot_name}</td>
+                    <td>${item.group_or_user_id}</td>
+                    <td>
+                        <div style="max-width: 600px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
+                    </td>
+                    <td>${formatDate(item.updated_at || item.created_at)}</td>
+                    <td class="text-right">
+                        <button class="btn btn-secondary btn-small" onclick="openEditGroupProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${encodedProfile}')">编辑</button>
+                        <button class="btn btn-danger btn-small" onclick="deleteGroupProfile('${item.bot_name}', '${item.group_or_user_id}')">删除</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    // Modal Actions for Profiles
+    window.openEditUserProfileModal = function(bot, group, user, profileEncoded) {
+        const profile = decodeURIComponent(profileEncoded);
+        document.getElementById("edit-user-prof-bot").value = bot;
+        document.getElementById("edit-user-prof-group").value = group;
+        document.getElementById("edit-user-prof-user").value = user;
+        document.getElementById("edit-user-prof-text").value = profile;
+        openModal("edit-user-profile-modal");
+    };
+
+    window.submitEditUserProfile = async function() {
+        const bot = document.getElementById("edit-user-prof-bot").value;
+        const group = document.getElementById("edit-user-prof-group").value;
+        const user = document.getElementById("edit-user-prof-user").value;
+        const profile = document.getElementById("edit-user-prof-text").value.trim();
+
+        if (!profile) {
+            showToast("画像内容不能为空！");
+            return;
+        }
+
+        try {
+            const res = await apiPost("/profiles/user/update", {
+                bot_name: bot,
+                group_or_user_id: group,
+                user_id: user,
+                profile: profile
+            });
+            if (res.status === "success") {
+                showToast("保存成功！");
+                closeModal("edit-user-profile-modal");
+                loadUserProfiles();
+            } else {
+                showToast(`更新失败: ${res.message}`);
+            }
+        } catch (e) {
+            showToast(`发生错误: ${e.message}`);
+        }
+    };
+
+    window.deleteUserProfile = async function(bot, group, user) {
+        if (!confirm("确定要删除该用户的画像总结吗？此操作不可逆。")) {
+            return;
+        }
+        try {
+            const res = await apiPost("/profiles/user/delete", {
+                bot_name: bot,
+                group_or_user_id: group,
+                user_id: user
+            });
+            if (res.status === "success") {
+                showToast("删除画像成功");
+                loadUserProfiles();
+            } else {
+                showToast(`删除失败: ${res.message}`);
+            }
+        } catch (e) {
+            showToast(`发生错误: ${e.message}`);
+        }
+    };
+
+    window.openEditGroupProfileModal = function(bot, group, profileEncoded) {
+        const profile = decodeURIComponent(profileEncoded);
+        document.getElementById("edit-group-prof-bot").value = bot;
+        document.getElementById("edit-group-prof-group").value = group;
+        document.getElementById("edit-group-prof-text").value = profile;
+        openModal("edit-group-profile-modal");
+    };
+
+    window.submitEditGroupProfile = async function() {
+        const bot = document.getElementById("edit-group-prof-bot").value;
+        const group = document.getElementById("edit-group-prof-group").value;
+        const profile = document.getElementById("edit-group-prof-text").value.trim();
+
+        if (!profile) {
+            showToast("画像内容不能为空！");
+            return;
+        }
+
+        try {
+            const res = await apiPost("/profiles/group/update", {
+                bot_name: bot,
+                group_or_user_id: group,
+                profile: profile
+            });
+            if (res.status === "success") {
+                showToast("保存成功！");
+                closeModal("edit-group-profile-modal");
+                loadGroupProfiles();
+            } else {
+                showToast(`更新失败: ${res.message}`);
+            }
+        } catch (e) {
+            showToast(`发生错误: ${e.message}`);
+        }
+    };
+
+    window.deleteGroupProfile = async function(bot, group) {
+        if (!confirm("确定要删除该群聊的画像总结吗？此操作不可逆。")) {
+            return;
+        }
+        try {
+            const res = await apiPost("/profiles/group/delete", {
+                bot_name: bot,
+                group_or_user_id: group
+            });
+            if (res.status === "success") {
+                showToast("删除画像成功");
+                loadGroupProfiles();
+            } else {
+                showToast(`删除失败: ${res.message}`);
+            }
+        } catch (e) {
+            showToast(`发生错误: ${e.message}`);
+        }
+    };
 });

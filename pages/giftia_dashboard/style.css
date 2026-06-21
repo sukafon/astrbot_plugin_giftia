@@ -735,3 +735,48 @@ html[data-theme="dark"] .media-preview-container {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+/* Sub-tab Navigation and Panels for Profiles */
+.sub-tab-navigation {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.sub-nav-tab {
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    background-color: var(--card-bg);
+    color: var(--font-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.sub-nav-tab:hover {
+    background-color: var(--primary-light);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+.sub-nav-tab.active {
+    background-color: var(--primary);
+    color: #ffffff;
+    border-color: var(--primary);
+}
+
+/* Dark mode adjustments for active subtab text color */
+html[data-theme="dark"] .sub-nav-tab.active {
+    color: #ffffff;
+}
+
+.subpanel {
+    display: none;
+}
+
+.subpanel.active {
+    display: block;
+}
+

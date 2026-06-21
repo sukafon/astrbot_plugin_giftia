@@ -42,6 +42,10 @@
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                     媒体转述
                 </button>
+                <button class="nav-tab" data-tab="profiles">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                    画像管理
+                </button>
             </nav>
         </header>
 
@@ -186,6 +190,103 @@
                     <!-- Pagination -->
                 </div>
             </section>
+
+            <!-- TAB 5: Profiles -->
+            <section id="tab-profiles" class="tab-panel">
+                <div class="sub-tab-navigation" style="margin-bottom: 16px; display: flex; gap: 8px;">
+                    <button class="sub-nav-tab active" data-subtab="user-profiles">用户画像</button>
+                    <button class="sub-nav-tab" data-subtab="group-profiles">群聊画像</button>
+                </div>
+
+                <!-- User Profiles Panel -->
+                <div id="subpanel-user-profiles" class="subpanel active">
+                    <div class="filter-card card">
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Bot名称</label>
+                                <input type="text" id="user-profile-bot-name" placeholder="筛选机器人">
+                            </div>
+                            <div class="filter-group">
+                                <label>群聊/用户ID</label>
+                                <input type="text" id="user-profile-group-id" placeholder="筛选会话">
+                            </div>
+                            <div class="filter-group">
+                                <label>用户ID</label>
+                                <input type="text" id="user-profile-user-id" placeholder="筛选用户">
+                            </div>
+                            <div class="filter-group flex-grow">
+                                <label>搜索画像内容</label>
+                                <input type="text" id="user-profile-search" placeholder="输入关键字搜索...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="data-card card">
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Bot</th>
+                                        <th>群聊/会话ID</th>
+                                        <th>用户ID</th>
+                                        <th>画像总结内容 (Profile)</th>
+                                        <th>更新时间</th>
+                                        <th class="text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="user-profile-list">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-container" id="user-profile-pagination">
+                            <!-- Pagination -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Group Profiles Panel -->
+                <div id="subpanel-group-profiles" class="subpanel">
+                    <div class="filter-card card">
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Bot名称</label>
+                                <input type="text" id="group-profile-bot-name" placeholder="筛选机器人">
+                            </div>
+                            <div class="filter-group">
+                                <label>群聊/用户ID</label>
+                                <input type="text" id="group-profile-group-id" placeholder="筛选会话">
+                            </div>
+                            <div class="filter-group flex-grow">
+                                <label>搜索画像内容</label>
+                                <input type="text" id="group-profile-search" placeholder="输入关键字搜索...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="data-card card">
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Bot</th>
+                                        <th>群聊/会话ID</th>
+                                        <th>群聊画像总结内容 (Profile)</th>
+                                        <th>更新时间</th>
+                                        <th class="text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="group-profile-list">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-container" id="group-profile-pagination">
+                            <!-- Pagination -->
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -296,6 +397,51 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('edit-status-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditStatus()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit User Profile -->
+    <div id="edit-user-profile-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>修改用户画像</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-user-profile-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-user-prof-bot">
+                <input type="hidden" id="edit-user-prof-group">
+                <input type="hidden" id="edit-user-prof-user">
+                <div class="form-group">
+                    <label>画像总结内容 <span class="required">*</span></label>
+                    <textarea id="edit-user-prof-text" rows="8" placeholder="输入用户性格特点、偏好、昵称关系等描述..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-user-profile-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditUserProfile()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit Group Profile -->
+    <div id="edit-group-profile-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>修改群聊画像</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-group-profile-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-group-prof-bot">
+                <input type="hidden" id="edit-group-prof-group">
+                <div class="form-group">
+                    <label>画像总结内容 <span class="required">*</span></label>
+                    <textarea id="edit-group-prof-text" rows="8" placeholder="输入本群聊天主题风格、氛围、群友共同偏好描述..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-group-profile-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditGroupProfile()">确认保存</button>
             </div>
         </div>
     </div>

@@ -483,3 +483,242 @@ class GiftiaWebApi:
         except Exception as e:
             logger.error(f"[Giftia API] update_bot_status error: {e}")
             return error_response(f"更新 Bot 状态失败: {str(e)}")
+
+    async def get_user_profiles(self):
+        """Get user profiles with pagination and filters."""
+        try:
+            page = int(request.query.get("page", 1))
+            limit = int(request.query.get("limit", 20))
+            bot_name = request.query.get("bot_name")
+            group_or_user_id = request.query.get("group_or_user_id")
+            user_id = request.query.get("user_id")
+            search = request.query.get("search")
+
+            offset = (page - 1) * limit
+            conditions = []
+            params = []
+
+            if bot_name:
+                conditions.append("bot_name = ?")
+                params.append(bot_name)
+            if group_or_user_id:
+                conditions.append("group_or_user_id = ?")
+                params.append(group_or_user_id)
+            if user_id:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+            if search:
+                conditions.append("profile LIKE ?")
+                params.append(f"%{search}%")
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            # Query count
+            count_sql = f"SELECT COUNT(*) as total FROM user_profiles {where_clause}"
+            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+                row = await cursor.fetchone()
+                total = row["total"] if row else 0
+
+            # Query data
+            data_sql = f"""
+                SELECT id, bot_name, group_or_user_id, user_id, profile, created_at, updated_at
+                FROM user_profiles
+                {where_clause}
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+            data_params = params + [limit, offset]
+            items = []
+            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    items.append(
+                        {
+                            "id": r["id"],
+                            "bot_name": r["bot_name"],
+                            "group_or_user_id": r["group_or_user_id"],
+                            "user_id": r["user_id"],
+                            "profile": r["profile"],
+                            "created_at": r["created_at"],
+                            "updated_at": r["updated_at"],
+                        }
+                    )
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "limit": limit,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_user_profiles error: {e}")
+            return error_response(f"获取用户画像列表失败: {str(e)}")
+
+    async def update_user_profile(self):
+        """Update/Upsert user profile."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            user_id = body.get("user_id")
+            profile = body.get("profile")
+
+            if not bot_name or not group_or_user_id or not user_id or profile is None:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id, profile)"
+                )
+
+            await self.giftia.db.upsert_user_profile(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                profile=profile,
+            )
+            return json_response({"status": "success", "message": "更新用户画像成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] update_user_profile error: {e}")
+            return error_response(f"更新用户画像失败: {str(e)}")
+
+    async def delete_user_profile(self):
+        """Delete user profile."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            user_id = body.get("user_id")
+
+            if not bot_name or not group_or_user_id or not user_id:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+
+            await self.giftia.db.delete_user_profile(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+            )
+            return json_response({"status": "success", "message": "删除用户画像成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] delete_user_profile error: {e}")
+            return error_response(f"删除用户画像失败: {str(e)}")
+
+    async def get_group_profiles(self):
+        """Get group profiles with pagination and filters."""
+        try:
+            page = int(request.query.get("page", 1))
+            limit = int(request.query.get("limit", 20))
+            bot_name = request.query.get("bot_name")
+            group_or_user_id = request.query.get("group_or_user_id")
+            search = request.query.get("search")
+
+            offset = (page - 1) * limit
+            conditions = []
+            params = []
+
+            if bot_name:
+                conditions.append("bot_name = ?")
+                params.append(bot_name)
+            if group_or_user_id:
+                conditions.append("group_or_user_id = ?")
+                params.append(group_or_user_id)
+            if search:
+                conditions.append("profile LIKE ?")
+                params.append(f"%{search}%")
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            # Query count
+            count_sql = f"SELECT COUNT(*) as total FROM group_profiles {where_clause}"
+            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
+                row = await cursor.fetchone()
+                total = row["total"] if row else 0
+
+            # Query data
+            data_sql = f"""
+                SELECT id, bot_name, group_or_user_id, profile, created_at, updated_at
+                FROM group_profiles
+                {where_clause}
+                ORDER BY updated_at DESC
+                LIMIT ? OFFSET ?
+            """
+            data_params = params + [limit, offset]
+            items = []
+            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    items.append(
+                        {
+                            "id": r["id"],
+                            "bot_name": r["bot_name"],
+                            "group_or_user_id": r["group_or_user_id"],
+                            "profile": r["profile"],
+                            "created_at": r["created_at"],
+                            "updated_at": r["updated_at"],
+                        }
+                    )
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "items": items,
+                        "total": total,
+                        "page": page,
+                        "limit": limit,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_group_profiles error: {e}")
+            return error_response(f"获取群聊画像列表失败: {str(e)}")
+
+    async def update_group_profile(self):
+        """Update/Upsert group profile."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            profile = body.get("profile")
+
+            if not bot_name or not group_or_user_id or profile is None:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, profile)"
+                )
+
+            await self.giftia.db.upsert_group_profile(
+                group_or_user_id=group_or_user_id,
+                bot_name=bot_name,
+                profile=profile,
+            )
+            return json_response({"status": "success", "message": "更新群聊画像成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] update_group_profile error: {e}")
+            return error_response(f"更新群聊画像失败: {str(e)}")
+
+    async def delete_group_profile(self):
+        """Delete group profile."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+
+            if not bot_name or not group_or_user_id:
+                return error_response("缺少必要参数 (bot_name, group_or_user_id)")
+
+            await self.giftia.db.delete_group_profile(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+            )
+            return json_response({"status": "success", "message": "删除群聊画像成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] delete_group_profile error: {e}")
+            return error_response(f"删除群聊画像失败: {str(e)}")

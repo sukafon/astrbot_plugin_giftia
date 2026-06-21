@@ -287,6 +287,42 @@ class Giftia(Star):
             methods=["GET"],
             desc="Get chat history list",
         )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user",
+            view_handler=self.web_api.get_user_profiles,
+            methods=["GET"],
+            desc="Get user profiles list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/update",
+            view_handler=self.web_api.update_user_profile,
+            methods=["POST"],
+            desc="Update user profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/delete",
+            view_handler=self.web_api.delete_user_profile,
+            methods=["POST"],
+            desc="Delete user profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group",
+            view_handler=self.web_api.get_group_profiles,
+            methods=["GET"],
+            desc="Get group profiles list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/update",
+            view_handler=self.web_api.update_group_profile,
+            methods=["POST"],
+            desc="Update group profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/delete",
+            view_handler=self.web_api.delete_group_profile,
+            methods=["POST"],
+            desc="Delete group profile",
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("工具列表")
