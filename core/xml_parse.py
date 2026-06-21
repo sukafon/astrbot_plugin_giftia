@@ -396,7 +396,9 @@ class XmlParse:
 
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
-                    text = child.get_text(strip=True)
+                    text = self._attr_str(child, "arguments", "") or child.get_text(
+                        strip=True
+                    )
                     arg_dict = None
                     if tool_name and text:
                         arg_dict = self.parse_str_json(text)
