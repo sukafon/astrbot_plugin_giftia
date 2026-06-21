@@ -396,15 +396,20 @@ class XmlParse:
 
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
-                    text = child.get_text(strip=True)
+                    text = self._attr_str(child, "arguments", "") or child.get_text(
+                        strip=True
+                    )
+                    arg_dict = None
                     if tool_name and text:
                         arg_dict = self.parse_str_json(text)
-                        if arg_dict is not None:
-                            result.tools_to_call.append((tool_name, arg_dict))
+
+                    if tool_name and arg_dict is not None:
+                        result.tools_to_call.append((tool_name, arg_dict))
                     else:
                         logger.error(
-                            f"Tool call数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                            f"Tool call数据不完整或解析失败: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
+                        raise ValueError(f"Malformed tool call in XML: {text}")
 
                 elif tag_name == "schedule_task":
                     task_time = self._attr_str(child, "time", "")
@@ -532,6 +537,81 @@ class XmlParse:
                 logger.error(f"解析JSON失败: {e}, clean_text: {clean_text[:1000]}")
                 return None
 
+    def close_xml_tags(self, xml_str: str) -> str:
+        """Automatically close unclosed sibling XML tags.
+
+        Args:
+            xml_str: The raw XML string from the LLM.
+
+        Returns:
+            The processed XML string with properly closed tags.
+        """
+        flat_tags = [
+            "status",
+            "message",
+            "delete",
+            "like",
+            "poke",
+            "ban",
+            "kick",
+            "leave",
+            "summary_user_profile",
+            "summary_group_profile",
+            "save_memory",
+            "search_memory",
+            "search_chat_history",
+            "get_message_context",
+            "delete_memory",
+            "update_memory",
+            "update_relation",
+            "set_relation_title",
+            "tool_call",
+            "schedule_task",
+            "delete_task",
+            "all_task",
+            "add_sticker",
+            "decision",
+            "caption",
+        ]
+        pattern = r"<\s*(/?)\s*(" + "|".join(flat_tags) + r")\b([^>]*?)(/?)\s*>"
+
+        result = []
+        open_tag = None
+        last_end = 0
+
+        for match in re.finditer(pattern, xml_str):
+            is_close = bool(match.group(1))
+            tag_name = match.group(2)
+            is_self_closing = bool(match.group(4))
+            start, end = match.span()
+
+            result.append(xml_str[last_end:start])
+
+            if is_close:
+                if open_tag == tag_name:
+                    result.append(match.group(0))
+                    open_tag = None
+                else:
+                    result.append(match.group(0))
+            elif is_self_closing:
+                if open_tag is not None:
+                    result.append(f"</{open_tag}>")
+                    open_tag = None
+                result.append(match.group(0))
+            else:
+                if open_tag is not None:
+                    result.append(f"</{open_tag}>")
+                result.append(match.group(0))
+                open_tag = tag_name
+
+            last_end = end
+
+        result.append(xml_str[last_end:])
+        if open_tag is not None:
+            result.append(f"</{open_tag}>")
+
+        return "".join(result)
+
     def preprocess_xml(self, xml_raw: str) -> str:
         """全能型 XML 预处理：融合了 escape 的终极安全版本"""
         if not xml_raw:
@@ -541,6 +621,9 @@ class XmlParse:
         clean_str = re.sub(
             r"```[a-zA-Z]*\s*|\s*```", "", xml_raw, flags=re.IGNORECASE
         ).strip()
+
+        # 自动闭合未闭合的同级标签
+        clean_str = self.close_xml_tags(clean_str)
 
         # 处理 <think>...</think> 标签内部的xml，进行转义
         pattern_think = re.compile(

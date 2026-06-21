@@ -1,6 +1,7 @@
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
+from astrbot.core.exceptions import EmptyModelOutputError
 
 from .schemas import (
     Decision,
@@ -80,9 +81,15 @@ class CallLLM:
                         logger.info(
                             f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
                         )
-                        return self.xml_parse.decode_decision_xml(
+                        result = self.xml_parse.decode_decision_xml(
                             llm_resp.completion_text
                         )
+                        if result is not None:
+                            return result
+                        logger.warning(
+                            f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
+                        )
+                        continue
                     logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
                     continue
                 except Exception as e:
@@ -155,11 +162,30 @@ class CallLLM:
                         result = await self.xml_parse.decode_llm_xml(
                             llm_resp.completion_text, group_or_user_id
                         )
-                        return result
-                    logger.error(
-                        f"LLM回复失败: {str(llm_resp)[:1024]}，provider_id: {provider_id}"
+                        if result is not None:
+                            return result
+                        logger.warning(
+                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
+                        )
+                        continue
+                    elif llm_resp.reasoning_content:
+                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
+                        logger.warning(
+                            f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
+                        )
+                        continue
+                    else:
+                        # Succeeded but both completion and reasoning are empty.
+                        logger.info(
+                            f"LLM returned completely empty response, treating as no reply. provider_id: {provider_id}"
+                        )
+                        return XmlLlmResult()
+                except EmptyModelOutputError:
+                    # Gemini empty output error; treat as no reply needed.
+                    logger.info(
+                        f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
                     )
-                    continue
+                    return XmlLlmResult()
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
                     continue
