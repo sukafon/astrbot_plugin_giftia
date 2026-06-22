@@ -85,10 +85,15 @@ class HttpManager:
                 is_animated = getattr(img, "is_animated", False)
                 if is_animated:
                     total_frames = getattr(img, "n_frames", 1)
-                    # 决定取哪些帧（这里仍按顺序，但加入了边界保护）
-                    num_to_extract = min(total_frames, max_frames)
-                    for i in range(num_to_extract):
-                        img.seek(i)
+                    if total_frames <= max_frames:
+                        frame_indices = list(range(total_frames))
+                    else:
+                        frame_indices = [
+                            int(i * (total_frames - 1) / (max_frames - 1))
+                            for i in range(max_frames)
+                        ]
+                    for idx in frame_indices:
+                        img.seek(idx)
                         # 使用副本进行转换，不破坏原 img 对象的帧索引
                         frame = img.convert("RGB")
                         buf = BytesIO()

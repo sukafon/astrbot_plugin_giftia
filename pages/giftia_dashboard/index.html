@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giftia Dashboard</title>
+    <!-- Modern Font Family -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Local stylesheet -->
+    <link rel="stylesheet" href="style.css">
+    <!-- AstrBot Bridge SDK -->
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Header Navigation -->
+        <header class="app-header">
+            <div class="logo-area">
+                <div class="logo-text">
+                    <h1>Giftia 管理面板</h1>
+                    <p>管理您的会话记忆、媒体转述与决策审计数据</p>
+                </div>
+            </div>
+            <nav class="tab-navigation">
+                <button class="nav-tab active" data-tab="chat-history">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    决策审计
+                </button>
+                <button class="nav-tab" data-tab="memories">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path><path d="M12 6v6l4 2"></path></svg>
+                    长期记忆
+                </button>
+                <button class="nav-tab" data-tab="bot-status">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                    会话状态
+                </button>
+                <button class="nav-tab" data-tab="media-captions">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                    媒体转述
+                </button>
+                <button class="nav-tab" data-tab="profiles">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                    画像管理
+                </button>
+            </nav>
+        </header>
+
+        <!-- Main Body -->
+        <main class="main-content">
+            <!-- TAB 1: Chat History -->
+            <section id="tab-chat-history" class="tab-panel active">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Bot名称</label>
+                            <input type="text" id="history-bot-name" placeholder="所有机器人">
+                        </div>
+                        <div class="filter-group">
+                            <label>群聊/用户ID</label>
+                            <input type="text" id="history-group-id" placeholder="所有会话">
+                        </div>
+                        <div class="filter-group">
+                            <label>接话决策</label>
+                            <select id="history-decision">
+                                <option value="">全部</option>
+                                <option value="1">决策通过(已回复)</option>
+                                <option value="0">决策拒绝(忽略)</option>
+                                <option value="3">强制/唤醒直接回复</option>
+                                <option value="2">未审查</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>触发RAG</label>
+                            <select id="history-rag">
+                                <option value="">全部</option>
+                                <option value="1">是</option>
+                                <option value="0">否</option>
+                            </select>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label>文本搜索</label>
+                            <input type="text" id="history-search" placeholder="输入搜索词...">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="data-card card">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>机器人</th>
+                                    <th>发送人/会话</th>
+                                    <th>消息内容</th>
+                                    <th>判定结果</th>
+                                    <th>RAG状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-list">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination-container" id="history-pagination">
+                        <!-- Pagination controls -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: Memories -->
+            <section id="tab-memories" class="tab-panel">
+                <div class="filter-card card flex-between">
+                    <div class="filter-row flex-grow">
+                        <div class="filter-group">
+                            <label>Bot名称</label>
+                            <input type="text" id="memory-bot-name" placeholder="筛选机器人">
+                        </div>
+                        <div class="filter-group">
+                            <label>群聊/用户ID</label>
+                            <input type="text" id="memory-group-id" placeholder="筛选会话">
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label>搜索记忆内容</label>
+                            <input type="text" id="memory-search" placeholder="搜索关键词...">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="openAddMemoryModal()">
+                        <span class="btn-icon">+</span> 新增记忆
+                    </button>
+                </div>
+
+                <div class="data-card card">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Bot</th>
+                                    <th>群聊/用户ID</th>
+                                    <th>记忆内容 (Text)</th>
+                                    <th>创建时间</th>
+                                    <th class="text-right">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="memory-list">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination-container" id="memory-pagination">
+                        <!-- Pagination -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: Bot Status -->
+            <section id="tab-bot-status" class="tab-panel">
+                <div class="grid-layout" id="status-grid">
+                    <!-- Dynamic status cards -->
+                </div>
+            </section>
+
+            <!-- TAB 4: Media Captions -->
+            <section id="tab-media-captions" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>媒体类型</label>
+                            <select id="media-type">
+                                <option value="">全部</option>
+                                <option value="image">图片</option>
+                                <option value="audio">音频</option>
+                            </select>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label>搜索描述内容</label>
+                            <input type="text" id="media-search" placeholder="输入关键字搜索...">
+                        </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button class="btn btn-danger" onclick="openCleanCacheModal()">清理缓存</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="media-grid" id="media-list">
+                    <!-- Dynamic media caption cards -->
+                </div>
+                <div class="pagination-container card" id="media-pagination">
+                    <!-- Pagination -->
+                </div>
+            </section>
+
+            <!-- TAB 5: Profiles -->
+            <section id="tab-profiles" class="tab-panel">
+                <div class="sub-tab-navigation">
+                    <button class="sub-nav-tab active" data-subtab="user-profiles">用户画像</button>
+                    <button class="sub-nav-tab" data-subtab="group-profiles">群聊画像</button>
+                </div>
+
+                <!-- User Profiles Panel -->
+                <div id="subpanel-user-profiles" class="subpanel active">
+                    <div class="filter-card card">
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Bot名称</label>
+                                <input type="text" id="user-profile-bot-name" placeholder="筛选机器人">
+                            </div>
+                            <div class="filter-group">
+                                <label>群聊/用户ID</label>
+                                <input type="text" id="user-profile-group-id" placeholder="筛选会话">
+                            </div>
+                            <div class="filter-group">
+                                <label>用户ID</label>
+                                <input type="text" id="user-profile-user-id" placeholder="筛选用户">
+                            </div>
+                            <div class="filter-group flex-grow">
+                                <label>搜索画像内容</label>
+                                <input type="text" id="user-profile-search" placeholder="输入关键字搜索...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="data-card card">
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Bot</th>
+                                        <th>群聊/会话ID</th>
+                                        <th>用户ID</th>
+                                        <th>好感度</th>
+                                        <th>关系头衔</th>
+                                        <th>画像总结内容 (Profile)</th>
+                                        <th>更新时间</th>
+                                        <th class="text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="user-profile-list">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-container" id="user-profile-pagination">
+                            <!-- Pagination -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Group Profiles Panel -->
+                <div id="subpanel-group-profiles" class="subpanel">
+                    <div class="filter-card card">
+                        <div class="filter-row">
+                            <div class="filter-group">
+                                <label>Bot名称</label>
+                                <input type="text" id="group-profile-bot-name" placeholder="筛选机器人">
+                            </div>
+                            <div class="filter-group">
+                                <label>群聊/用户ID</label>
+                                <input type="text" id="group-profile-group-id" placeholder="筛选会话">
+                            </div>
+                            <div class="filter-group flex-grow">
+                                <label>搜索画像内容</label>
+                                <input type="text" id="group-profile-search" placeholder="输入关键字搜索...">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="data-card card">
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Bot</th>
+                                        <th>群聊/会话ID</th>
+                                        <th>群聊画像总结内容 (Profile)</th>
+                                        <th>更新时间</th>
+                                        <th class="text-right">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="group-profile-list">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-container" id="group-profile-pagination">
+                            <!-- Pagination -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODAL: Add Memory -->
+    <div id="add-memory-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>新增长期记忆</h2>
+                <button class="modal-close-btn" onclick="closeModal('add-memory-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Bot名称 <span class="required">*</span></label>
+                    <input type="text" id="add-mem-bot" placeholder="例如: Arisu">
+                </div>
+                <div class="form-group">
+                    <label>群聊/用户ID <span class="required">*</span></label>
+                    <input type="text" id="add-mem-group" placeholder="例如: 123456789">
+                </div>
+                <div class="form-group">
+                    <label>记忆文本 <span class="required">*</span></label>
+                    <textarea id="add-mem-text" rows="5" placeholder="例如: 老师最喜欢的食物是草莓蛋糕。"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('add-memory-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitAddMemory()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit Memory -->
+    <div id="edit-memory-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>编辑长期记忆</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-memory-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-mem-id">
+                <div class="form-group">
+                    <label>Bot名称</label>
+                    <input type="text" id="edit-mem-bot" readonly class="readonly-input">
+                </div>
+                <div class="form-group">
+                    <label>群聊/用户ID</label>
+                    <input type="text" id="edit-mem-group" readonly class="readonly-input">
+                </div>
+                <div class="form-group">
+                    <label>记忆文本 <span class="required">*</span></label>
+                    <textarea id="edit-mem-text" rows="5"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-memory-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditMemory()">保存修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit Media Caption -->
+    <div id="edit-media-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>修改媒体转述描述</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-media-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-media-hash">
+                <div class="media-preview-container" id="edit-media-preview">
+                    <!-- Image or audio element -->
+                </div>
+                <div class="form-group">
+                    <label>哈希值 (Hash)</label>
+                    <input type="text" id="edit-media-hash-display" readonly class="readonly-input">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>风格类型</label>
+                        <input type="text" id="edit-media-genre" placeholder="例如：q版, 动漫插画">
+                    </div>
+                    <div class="form-group">
+                        <label>涉及人物</label>
+                        <input type="text" id="edit-media-character" placeholder="例如：天童爱丽丝">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>来源作品</label>
+                        <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
+                    </div>
+                    <div class="form-group">
+                        <label>画面文字 (OCR)</label>
+                        <input type="text" id="edit-media-text" placeholder="识别出或图片里的文字">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>详细描述内容 <span class="required">*</span></label>
+                    <textarea id="edit-media-caption" rows="4"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-media-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditMedia()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Update Bot Status -->
+    <div id="edit-status-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>更新 Bot 状态</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-status-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-status-bot">
+                <input type="hidden" id="edit-status-group">
+                <div class="form-group">
+                    <label>当前心情</label>
+                    <input type="text" id="edit-status-mood" placeholder="例如: 傲娇, 开心, 难过">
+                </div>
+                <div class="form-group">
+                    <label>当前动作/状态</label>
+                    <input type="text" id="edit-status-state" placeholder="例如: 听音乐, 玩游戏">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-status-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditStatus()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit User Profile -->
+    <div id="edit-user-profile-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>修改用户画像</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-user-profile-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-user-prof-bot">
+                <input type="hidden" id="edit-user-prof-group">
+                <input type="hidden" id="edit-user-prof-user">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>好感度</label>
+                        <input type="number" id="edit-user-prof-relation" placeholder="好感度数值">
+                    </div>
+                    <div class="form-group flex-2">
+                        <label>关系头衔</label>
+                        <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>画像总结内容 <span class="required">*</span></label>
+                    <textarea id="edit-user-prof-text" rows="8" placeholder="输入用户性格特点、偏好、昵称关系等描述..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-user-profile-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditUserProfile()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Edit Group Profile -->
+    <div id="edit-group-profile-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>修改群聊画像</h2>
+                <button class="modal-close-btn" onclick="closeModal('edit-group-profile-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-group-prof-bot">
+                <input type="hidden" id="edit-group-prof-group">
+                <div class="form-group">
+                    <label>画像总结内容 <span class="required">*</span></label>
+                    <textarea id="edit-group-prof-text" rows="8" placeholder="输入本群聊天主题风格、氛围、群友共同偏好描述..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('edit-group-profile-modal')">取消</button>
+                <button class="btn btn-primary" onclick="submitEditGroupProfile()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Clean Media Cache -->
+    <div id="clean-cache-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>清理媒体文件缓存</h2>
+                <button class="modal-close-btn" onclick="closeModal('clean-cache-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-row">
+                    <div class="form-group flex-grow">
+                        <label for="clean-media-type">媒体类型</label>
+                        <select id="clean-media-type">
+                            <option value="all">全部</option>
+                            <option value="image">仅图片</option>
+                            <option value="audio">仅音频</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group flex-grow" style="display: flex; flex-direction: column;">
+                        <label>风格类型</label>
+                        <div class="selection-helper-buttons" style="margin-bottom: 6px; display: flex; gap: 8px;">
+                            <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(true)">全选</button>
+                            <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(false)">全不选</button>
+                            <button type="button" class="btn btn-secondary btn-small" onclick="invertCleanGenres()">反选</button>
+                        </div>
+                        <div id="clean-media-genre-container" style="max-height: 120px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 6px; background-color: var(--bg-secondary);">
+                            <!-- Dynamically generated checkbox list of genres -->
+                        </div>
+                        <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--font-secondary);">
+                            <input type="checkbox" id="clean-genre-exclude" style="width: auto; margin: 0; cursor: pointer;">
+                            <label for="clean-genre-exclude" style="margin: 0; cursor: pointer; color: var(--font-secondary); font-weight: normal;">排除模式（仅清理未勾选的风格类型）</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group flex-grow">
+                        <label for="clean-max-query-times">使用次数限制 (≤ N 次)</label>
+                        <input type="number" id="clean-max-query-times" value="0" min="0" placeholder="默认 0，表示只清理从未被重复使用的缓存">
+                    </div>
+                </div>
+                <div id="clean-cache-preview-info" style="margin-top: 16px; padding: 12px; border-radius: 6px; background-color: var(--bg-secondary); border-left: 4px solid var(--border-color); font-size: 13px; line-height: 1.5;">
+                    点击下方“计算清理空间”进行预估...
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('clean-cache-modal')">取消</button>
+                <button class="btn btn-secondary" onclick="calculateCleanSpace()">计算清理空间</button>
+                <button class="btn btn-danger" onclick="submitCleanCache()">确认清理</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Custom Confirm Dialog -->
+    <div id="confirm-modal" class="modal-overlay">
+        <div class="modal-card card confirm-modal-card">
+            <div class="modal-header">
+                <h2 id="confirm-title">确认操作</h2>
+                <button class="modal-close-btn" onclick="closeConfirmModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message" class="confirm-text">确定要执行此操作吗？</p>
+            </div>
+            <div class="modal-footer confirm-modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfirmModal()">取消</button>
+                <button class="btn btn-danger" id="confirm-btn-ok">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback Message Toast -->
+    <div id="toast-message" class="toast">提示信息</div>
+</body>
+</html>

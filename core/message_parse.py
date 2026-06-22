@@ -5,6 +5,7 @@ from datetime import datetime
 
 from xxhash import xxh3_64_hexdigest
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import (
     At,
@@ -277,11 +278,37 @@ class MessageParser:
 
             # 尝试从 url 或 file_name 提取 32位 MD5 作为稳定的 hash_val
             stable_hash = None
-            if file_name:
+
+            def is_temp_or_local_path(s: str | None) -> bool:
+                if not s:
+                    return False
+                if s.startswith(("http://", "https://")):
+                    return False
+                if s.startswith("file://") or any(
+                    marker in s
+                    for marker in [
+                        "media_image_",
+                        "media_audio_",
+                        "media_file_",
+                        "io_temp_img_",
+                        "compressed_",
+                    ]
+                ):
+                    return True
+                import os
+
+                try:
+                    if os.path.isabs(s) or os.path.exists(s):
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            if file_name and not is_temp_or_local_path(file_name):
                 match = re.search(r"([a-fA-F0-9]{32})", file_name)
                 if match:
                     stable_hash = match.group(1).lower()
-            if not stable_hash and url:
+            if not stable_hash and url and not is_temp_or_local_path(url):
                 match = re.search(r"([a-fA-F0-9]{32})", url)
                 if match:
                     stable_hash = match.group(1).lower()
@@ -301,6 +328,20 @@ class MessageParser:
                 return None, None
             # 生成hash
             hash_val = stable_hash or xxh3_64_hexdigest(image_bytes)
+
+            # 保存到本地持久缓存目录，以便网页端可以永久预览
+            try:
+                from astrbot.core.star.star_tools import StarTools
+
+                cache_dir = (
+                    StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+                )
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / hash_val
+                if not cache_file.exists():
+                    cache_file.write_bytes(image_bytes)
+            except Exception as e:
+                logger.error(f"[Giftia] 保存媒体缓存失败: {e}")
 
         async with self.hash_locks[hash_val]:
             # 检查缓存
@@ -363,6 +404,23 @@ class MessageParser:
                 return None, None
             # 语音的hash_val用url生成
             hash_val = xxh3_64_hexdigest(url.encode())
+
+            # 下载并保存语音文件，以便永久播放
+            try:
+                audio_bytes = await self.http_manager.download_media(url)
+                if audio_bytes:
+                    from astrbot.core.star.star_tools import StarTools
+
+                    cache_dir = (
+                        StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+                    )
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    cache_file = cache_dir / hash_val
+                    if not cache_file.exists():
+                        cache_file.write_bytes(audio_bytes)
+            except Exception as e:
+                logger.error(f"[Giftia] 保存音频缓存失败: {e}")
+
             media_caption.hash_val = hash_val
             media_caption.url = url
             if file_name:
