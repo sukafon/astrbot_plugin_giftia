@@ -681,26 +681,41 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("edit-media-text").value = text;
         
         const previewContainer = document.getElementById("edit-media-preview");
-        if (type === "image" && url) {
-            const uniqueId = `edit-media-preview-img-${hash}`;
-            previewContainer.innerHTML = `<img id="${uniqueId}" src="placeholder.png" alt="加载中...">`;
-            loadMediaFileB64(hash, uniqueId, url, type, false);
-            
-            // Also trigger original image load on the main list preview card
-            const gridImgId = `media-preview-${hash}`;
-            const gridImg = document.getElementById(gridImgId);
-            if (gridImg && window.loadedOriginalMediaG) {
-                if (!window.loadedOriginalMediaG.has(hash)) {
-                    loadMediaFileB64(hash, gridImgId, url, type, false);
-                    window.loadedOriginalMediaG.add(hash);
-                }
+        const gridElId = `media-preview-${hash}`;
+        const gridEl = document.getElementById(gridElId);
+        const isOriginalLoaded = (type === "image" && window.loadedOriginalMediaG && window.loadedOriginalMediaG.has(hash)) || 
+                                 (type !== "image" && gridEl && gridEl.src && gridEl.src.startsWith("data:"));
+
+        if (isOriginalLoaded && gridEl && gridEl.src && gridEl.src.startsWith("data:")) {
+            if (type === "image" && url) {
+                const uniqueId = `edit-media-preview-img-${hash}`;
+                previewContainer.innerHTML = `<img id="${uniqueId}" src="${gridEl.src}">`;
+            } else if ((type === "audio" || type === "voice") && url) {
+                const uniqueId = `edit-media-preview-audio-${hash}`;
+                previewContainer.innerHTML = `<audio id="${uniqueId}" src="${gridEl.src}" controls></audio>`;
+            } else {
+                previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
             }
-        } else if ((type === "audio" || type === "voice") && url) {
-            const uniqueId = `edit-media-preview-audio-${hash}`;
-            previewContainer.innerHTML = `<audio id="${uniqueId}" controls></audio>`;
-            loadMediaFileB64(hash, uniqueId, url, type);
         } else {
-            previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
+            if (type === "image" && url) {
+                const uniqueId = `edit-media-preview-img-${hash}`;
+                previewContainer.innerHTML = `<img id="${uniqueId}" src="placeholder.png" alt="加载中...">`;
+                loadMediaFileB64(hash, uniqueId, url, type, false);
+                
+                // Also trigger original image load on the main list preview card
+                if (gridEl && window.loadedOriginalMediaG) {
+                    if (!window.loadedOriginalMediaG.has(hash)) {
+                        loadMediaFileB64(hash, gridElId, url, type, false);
+                        window.loadedOriginalMediaG.add(hash);
+                    }
+                }
+            } else if ((type === "audio" || type === "voice") && url) {
+                const uniqueId = `edit-media-preview-audio-${hash}`;
+                previewContainer.innerHTML = `<audio id="${uniqueId}" controls></audio>`;
+                loadMediaFileB64(hash, uniqueId, url, type);
+            } else {
+                previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
+            }
         }
         
         openModal("edit-media-modal");
