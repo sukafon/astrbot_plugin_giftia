@@ -233,7 +233,7 @@ class CallLLM:
                         audio_urls=audio_urls,
                     )
                     if llm_resp.completion_text:
-                        return self.xml_parse.decode_media_caption_xml(
+                        return self.xml_parse.decode_media_audio_xml(
                             llm_resp.completion_text
                         )
                     logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
