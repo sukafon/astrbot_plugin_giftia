@@ -293,7 +293,7 @@ html[data-theme="dark"] .media-preview-box {
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
-    height: 74px;
+    height: 68px;
     box-sizing: border-box;
 }
 
