@@ -134,7 +134,7 @@ class GiftiaWebApi:
 
             # Query data
             data_sql = f"""
-                SELECT id, hash_val, file_name, url, media_type, text, caption, query_times, created_at
+                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times, created_at
                 FROM media_caption
                 {where_clause}
                 ORDER BY created_at DESC
@@ -152,6 +152,9 @@ class GiftiaWebApi:
                             "file_name": r["file_name"],
                             "url": r["url"],
                             "media_type": r["media_type"],
+                            "genre": r["genre"],
+                            "character": r["character"],
+                            "source": r["source"],
                             "text": r["text"],
                             "caption": r["caption"],
                             "query_times": r["query_times"],
@@ -180,6 +183,10 @@ class GiftiaWebApi:
             body = await request.json()
             hash_val = body.get("hash_val")
             caption = body.get("caption")
+            text = body.get("text")
+            genre = body.get("genre")
+            character = body.get("character")
+            source = body.get("source")
 
             if not hash_val:
                 return error_response("缺少 hash_val 参数")
@@ -190,11 +197,31 @@ class GiftiaWebApi:
                 return error_response("媒体记录不存在")
 
             media_caption.caption = caption
+            if text is not None:
+                media_caption.text = text
+            if genre is not None:
+                media_caption.genre = genre
+            if character is not None:
+                media_caption.character = character
+            if source is not None:
+                media_caption.source = source
 
             # Update DB
             await self.giftia.db.conn.execute(
-                "UPDATE media_caption SET caption = ?, updated_at = ? WHERE hash_val = ?",
-                (caption, datetime.now().isoformat(), hash_val),
+                """
+                UPDATE media_caption 
+                SET caption = ?, text = ?, genre = ?, character = ?, source = ?, updated_at = ? 
+                WHERE hash_val = ?
+                """,
+                (
+                    caption,
+                    media_caption.text,
+                    media_caption.genre,
+                    media_caption.character,
+                    media_caption.source,
+                    datetime.now().isoformat(),
+                    hash_val,
+                ),
             )
             await self.giftia.db.conn.commit()
 

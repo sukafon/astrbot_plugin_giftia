@@ -445,6 +445,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const encodedCaption = encodeURIComponent(item.caption || "");
             const encodedUrl = encodeURIComponent(item.url || "");
+            const encodedGenre = encodeURIComponent(item.genre || "");
+            const encodedCharacter = encodeURIComponent(item.character || "");
+            const encodedSource = encodeURIComponent(item.source || "");
+            const encodedText = encodeURIComponent(item.text || "");
 
             return `
                 <div class="media-card card">
@@ -464,7 +468,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         </div>
                     </div>
                     <div class="media-actions">
-                        <button class="btn btn-secondary btn-small" onclick="openEditMediaModal('${item.hash_val}', '${encodedUrl}', '${item.media_type}', '${encodedCaption}')">修改描述</button>
+                        <button class="btn btn-secondary btn-small" onclick="openEditMediaModal('${item.hash_val}', '${encodedUrl}', '${item.media_type}', '${encodedCaption}', '${encodedGenre}', '${encodedCharacter}', '${encodedSource}', '${encodedText}')">修改描述</button>
                         <button class="btn btn-danger btn-small" onclick="deleteMedia('${item.hash_val}')">删除缓存</button>
                     </div>
                 </div>
@@ -585,13 +589,21 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // 4. Edit Media Caption
-    window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded) {
+    window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, genreEncoded, characterEncoded, sourceEncoded, textEncoded) {
         const url = decodeURIComponent(urlEncoded);
         const caption = decodeURIComponent(captionEncoded);
+        const genre = decodeURIComponent(genreEncoded || "");
+        const character = decodeURIComponent(characterEncoded || "");
+        const source = decodeURIComponent(sourceEncoded || "");
+        const text = decodeURIComponent(textEncoded || "");
         
         document.getElementById("edit-media-hash").value = hash;
         document.getElementById("edit-media-hash-display").value = hash;
         document.getElementById("edit-media-caption").value = caption;
+        document.getElementById("edit-media-genre").value = genre;
+        document.getElementById("edit-media-character").value = character;
+        document.getElementById("edit-media-source").value = source;
+        document.getElementById("edit-media-text").value = text;
         
         const previewContainer = document.getElementById("edit-media-preview");
         if (type === "image" && url) {
@@ -608,6 +620,10 @@ document.addEventListener("DOMContentLoaded", () => {
     window.submitEditMedia = async function() {
         const hash = document.getElementById("edit-media-hash").value;
         const caption = document.getElementById("edit-media-caption").value.trim();
+        const genre = document.getElementById("edit-media-genre").value.trim();
+        const character = document.getElementById("edit-media-character").value.trim();
+        const source = document.getElementById("edit-media-source").value.trim();
+        const text = document.getElementById("edit-media-text").value.trim();
 
         if (!caption) {
             showToast("描述内容不能为空！");
@@ -617,7 +633,11 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const res = await apiPost("/media/update", {
                 hash_val: hash,
-                caption: caption
+                caption: caption,
+                genre: genre,
+                character: character,
+                source: source,
+                text: text
             });
             if (res.status === "success") {
                 showToast("更新成功！");
