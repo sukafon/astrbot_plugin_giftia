@@ -207,6 +207,8 @@ class DataCache:
     async def get_caption_by_filename(
         self, filename: str
     ) -> tuple[str | None, MediaCaption | None]:
+        if not filename or is_temp_or_local_path(filename):
+            return None, None
         hash_val = self.filename_to_hash.get(filename)
         if hash_val and self.caption.get(hash_val):
             return hash_val, self.caption[hash_val]
