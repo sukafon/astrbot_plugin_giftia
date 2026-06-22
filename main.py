@@ -252,6 +252,18 @@ class Giftia(Star):
             desc="Get cached media file as base64 by hash",
         )
         self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/genres",
+            view_handler=self.web_api.get_media_genres,
+            methods=["GET"],
+            desc="Get all distinct media genres",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/clean",
+            view_handler=self.web_api.clean_media_cache,
+            methods=["POST"],
+            desc="Clean media files cache by criteria",
+        )
+        self.context.register_web_api(
             route="/astrbot_plugin_giftia/memories",
             view_handler=self.web_api.get_memories,
             methods=["GET"],

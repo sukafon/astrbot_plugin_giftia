@@ -1125,6 +1125,103 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 
+    // Cache Cleanup Modal & Logic
+    window.openCleanCacheModal = async function() {
+        const genreSelect = document.getElementById("clean-media-genre");
+        // Reset options to default
+        genreSelect.innerHTML = '<option value="all">全部</option>';
+        document.getElementById("clean-media-type").value = "all";
+        document.getElementById("clean-max-query-times").value = "0";
+        document.getElementById("clean-cache-preview-info").innerHTML = '点击下方“计算清理空间”进行预估...';
+        document.getElementById("clean-cache-preview-info").style.borderLeftColor = "var(--border-color)";
+
+        // Fetch dynamic genres from backend
+        try {
+            const res = await apiGet("/media/genres");
+            if (res && res.status === "success" && res.genres) {
+                res.genres.forEach(genre => {
+                    const option = document.createElement("option");
+                    option.value = genre;
+                    option.textContent = genre;
+                    genreSelect.appendChild(option);
+                });
+            }
+        } catch (e) {
+            console.error("Failed to load genres for cleanup modal:", e);
+        }
+
+        openModal("clean-cache-modal");
+    };
+
+    function formatBytes(bytes) {
+        if (bytes === 0) return "0 字节";
+        const k = 1024;
+        const sizes = ["字节", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+    }
+
+    window.calculateCleanSpace = async function() {
+        const mediaType = document.getElementById("clean-media-type").value;
+        const genre = document.getElementById("clean-media-genre").value;
+        const maxQueryTimesVal = document.getElementById("clean-max-query-times").value.trim();
+        const maxQueryTimes = maxQueryTimesVal !== "" ? parseInt(maxQueryTimesVal, 10) : null;
+
+        const infoBox = document.getElementById("clean-cache-preview-info");
+        infoBox.innerHTML = '正在计算，请稍候...';
+        infoBox.style.borderLeftColor = "var(--primary-color)";
+
+        try {
+            const res = await apiPost("/media/cache/clean", {
+                media_type: mediaType,
+                genre: genre,
+                max_query_times: maxQueryTimes,
+                dry_run: true
+            });
+            if (res && res.status === "success") {
+                const formattedSize = formatBytes(res.size_bytes);
+                infoBox.innerHTML = `<strong>预估结果：</strong><br>匹配的缓存文件数: <strong>${res.count}</strong> 个<br>预计可释放空间: <strong>${formattedSize}</strong>`;
+                infoBox.style.borderLeftColor = "var(--success-color, #4caf50)";
+            } else {
+                infoBox.innerHTML = `计算失败: ${res.message || "请求出错"}`;
+                infoBox.style.borderLeftColor = "var(--danger-color, #f44336)";
+            }
+        } catch (e) {
+            infoBox.innerHTML = `计算出错: ${e.message}`;
+            infoBox.style.borderLeftColor = "var(--danger-color, #f44336)";
+        }
+    };
+
+    window.submitCleanCache = async function() {
+        const mediaType = document.getElementById("clean-media-type").value;
+        const genre = document.getElementById("clean-media-genre").value;
+        const maxQueryTimesVal = document.getElementById("clean-max-query-times").value.trim();
+        const maxQueryTimes = maxQueryTimesVal !== "" ? parseInt(maxQueryTimesVal, 10) : null;
+
+        showConfirm("确认清理缓存", "确定要清理符合条件的媒体文件缓存吗？此操作将物理删除本地缓存文件（保留转述文字描述），不可逆。", async () => {
+            try {
+                const res = await apiPost("/media/cache/clean", {
+                    media_type: mediaType,
+                    genre: genre,
+                    max_query_times: maxQueryTimes,
+                    dry_run: false
+                });
+                if (res && res.status === "success") {
+                    const formattedSize = formatBytes(res.size_bytes);
+                    showToast(`清理成功！共清理 ${res.count} 个文件，释放空间 ${formattedSize}`);
+                    closeModal("clean-cache-modal");
+                    // Reload media list
+                    pagination.media.page = 1;
+                    loadMedia();
+                } else {
+                    showToast(`清理失败: ${res.message || "请求出错"}`);
+                }
+            } catch (e) {
+                showToast(`发生错误: ${e.message}`);
+            }
+        });
+    };
+
     // Custom Confirm Modal Logic
     let confirmCallback = null;
 

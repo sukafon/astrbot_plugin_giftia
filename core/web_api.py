@@ -929,3 +929,101 @@ class GiftiaWebApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_media_file_b64 error: {e}")
             return error_response(f"获取媒体 Base64 失败: {str(e)}")
+
+    async def get_media_genres(self) -> dict:
+        """Get distinct genres list from media_caption table.
+
+        Returns:
+            A dict containing the response status and the list of genres.
+        """
+        try:
+            genres = []
+            async with self.giftia.db.conn.execute(
+                "SELECT DISTINCT genre FROM media_caption WHERE genre IS NOT NULL AND genre != ''"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                genres = [r["genre"] for r in rows if r["genre"]]
+            return json_response({"status": "success", "genres": genres})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_media_genres error: {e}")
+            return error_response(f"获取风格列表失败: {str(e)}")
+
+    async def clean_media_cache(self) -> dict:
+        """Clean media file cache by criteria (dry_run or actual).
+
+        Returns:
+            A dict containing the status, matching file count, total size freed in bytes,
+            dry_run flag, and a message.
+        """
+        try:
+            body = await request.json()
+            media_type = body.get("media_type", "all")
+            genre = body.get("genre", "all")
+            max_query_times = body.get("max_query_times")
+            dry_run = body.get("dry_run", False)
+
+            conditions = []
+            params = []
+
+            if media_type == "image":
+                conditions.append("media_type = 'image'")
+            elif media_type == "audio":
+                conditions.append("media_type IN ('audio', 'voice')")
+
+            if genre and genre != "all":
+                conditions.append("genre = ?")
+                params.append(genre)
+
+            if max_query_times is not None:
+                try:
+                    max_query_times = int(max_query_times)
+                    conditions.append("query_times <= ?")
+                    params.append(max_query_times)
+                except ValueError:
+                    pass
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            sql = f"SELECT hash_val FROM media_caption {where_clause}"
+
+            matching_hashes = []
+            async with self.giftia.db.conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                matching_hashes = [r["hash_val"] for r in rows if r["hash_val"]]
+
+            from astrbot.core.star.star_tools import StarTools
+
+            cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+
+            cleaned_count = 0
+            freed_bytes = 0
+
+            for hash_val in matching_hashes:
+                cache_file = cache_dir / hash_val
+                if cache_file.exists():
+                    file_size = cache_file.stat().st_size
+                    cleaned_count += 1
+                    freed_bytes += file_size
+                    if not dry_run:
+                        try:
+                            cache_file.unlink()
+                        except Exception as file_err:
+                            logger.error(
+                                f"[Giftia API] Failed to delete cache file {hash_val}: {file_err}"
+                            )
+
+            action_msg = "预估" if dry_run else "成功"
+            return json_response(
+                {
+                    "status": "success",
+                    "count": cleaned_count,
+                    "size_bytes": freed_bytes,
+                    "dry_run": dry_run,
+                    "message": f"{action_msg}清理了 {cleaned_count} 个媒体文件，释放空间 {freed_bytes} 字节",
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] clean_media_cache error: {e}")
+            return error_response(f"清理媒体文件缓存失败: {str(e)}")
