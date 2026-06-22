@@ -281,6 +281,7 @@ html[data-theme="dark"] .media-preview-box {
 
 .media-caption-text {
     font-size: 14px;
+    line-height: 1.4;
     font-weight: 500;
     color: var(--font-color);
     background-color: rgba(0, 0, 0, 0.02);
@@ -292,7 +293,7 @@ html[data-theme="dark"] .media-preview-box {
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
-    height: 79px;
+    height: 74px;
     box-sizing: border-box;
 }
 
