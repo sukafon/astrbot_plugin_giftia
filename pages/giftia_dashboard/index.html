@@ -351,11 +351,10 @@
         </div>
     </div>
 
-    <!-- MODAL: Edit Media Caption -->
     <div id="edit-media-modal" class="modal-overlay">
         <div class="modal-card card edit-media-modal-card">
             <div class="modal-header">
-                <h2>修改媒体转述描述</h2>
+                <h2 id="edit-media-title">修改媒体转述描述</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-media-modal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -367,10 +366,6 @@
                     </div>
                     <div class="edit-media-right">
                         <input type="hidden" id="edit-media-hash">
-                        <div class="form-group">
-                            <label>哈希值 (Hash)</label>
-                            <input type="text" id="edit-media-hash-display" readonly class="readonly-input">
-                        </div>
                         <div class="form-row">
                             <div class="form-group">
                                 <label>风格类型</label>
@@ -381,19 +376,23 @@
                                 <input type="text" id="edit-media-character" placeholder="例如：天童爱丽丝">
                             </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>来源作品</label>
-                                <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
-                            </div>
-                            <div class="form-group">
-                                <label>画面文字 (OCR)</label>
-                                <input type="text" id="edit-media-text" placeholder="识别出或图片里的文字">
-                            </div>
-                        </div>
                         <div class="form-group">
-                            <label>详细描述内容 <span class="required">*</span></label>
-                            <textarea id="edit-media-caption" rows="4"></textarea>
+                            <label>来源作品</label>
+                            <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
+                        </div>
+                        <div class="edit-media-tabs">
+                            <div class="edit-media-tab-header">
+                                <button type="button" class="media-tab-btn active" data-mediatab="ocr">画面文字 (OCR)</button>
+                                <button type="button" class="media-tab-btn" data-mediatab="caption">详细描述内容</button>
+                            </div>
+                            <div class="edit-media-tab-content">
+                                <div id="mediatab-ocr" class="media-tab-panel active">
+                                    <textarea id="edit-media-text" placeholder="此处展示或编辑识别到的画面文字..."></textarea>
+                                </div>
+                                <div id="mediatab-caption" class="media-tab-panel">
+                                    <textarea id="edit-media-caption" placeholder="请输入详细的媒体转述描述内容..."></textarea>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -92,6 +92,25 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    // Tab switching for Edit Media Modal
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest(".media-tab-btn");
+        if (btn) {
+            const tabName = btn.getAttribute("data-mediatab");
+            const parent = btn.closest(".edit-media-tabs");
+            if (parent) {
+                parent.querySelectorAll(".media-tab-btn").forEach(b => b.classList.remove("active"));
+                parent.querySelectorAll(".media-tab-panel").forEach(p => p.classList.remove("active"));
+                
+                btn.classList.add("active");
+                const targetPanel = parent.querySelector(`#mediatab-${tabName}`);
+                if (targetPanel) {
+                    targetPanel.classList.add("active");
+                }
+            }
+        }
+    });
+
     // Helper: Load data based on active tab
     function loadActiveTabData() {
         if (activeTab === "chat-history") {
@@ -673,12 +692,36 @@ document.addEventListener("DOMContentLoaded", () => {
         const text = decodeURIComponent(textEncoded || "");
         
         document.getElementById("edit-media-hash").value = hash;
-        document.getElementById("edit-media-hash-display").value = hash;
         document.getElementById("edit-media-caption").value = caption;
         document.getElementById("edit-media-genre").value = genre;
         document.getElementById("edit-media-character").value = character;
         document.getElementById("edit-media-source").value = source;
         document.getElementById("edit-media-text").value = text;
+
+        // Set title hash
+        const titleEl = document.getElementById("edit-media-title");
+        if (titleEl) {
+            titleEl.textContent = `修改媒体转述描述 (${hash})`;
+        }
+
+        // Reset tabs to OCR
+        const tabsContainer = document.querySelector(".edit-media-tabs");
+        if (tabsContainer) {
+            tabsContainer.querySelectorAll(".media-tab-btn").forEach(b => {
+                if (b.getAttribute("data-mediatab") === "ocr") {
+                    b.classList.add("active");
+                } else {
+                    b.classList.remove("active");
+                }
+            });
+            tabsContainer.querySelectorAll(".media-tab-panel").forEach(p => {
+                if (p.id === "mediatab-ocr") {
+                    p.classList.add("active");
+                } else {
+                    p.classList.remove("active");
+                }
+            });
+        }
         
         const previewContainer = document.getElementById("edit-media-preview");
         const gridElId = `media-preview-${hash}`;

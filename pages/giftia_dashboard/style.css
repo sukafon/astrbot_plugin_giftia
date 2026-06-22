@@ -498,6 +498,8 @@ html[data-theme="dark"] tr:hover td {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    height: 390px;
+    box-sizing: border-box;
 }
 
 .media-card:hover {
@@ -547,7 +549,13 @@ html[data-theme="dark"] .media-preview-box {
     padding: 8px;
     border-radius: 6px;
     border-left: 3px solid var(--primary);
-    min-height: 48px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    height: 58px;
+    box-sizing: border-box;
 }
 
 html[data-theme="dark"] .media-caption-text {
@@ -1049,8 +1057,8 @@ html[data-theme="dark"] .sub-nav-tab.active {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    overflow-y: auto;
-    padding-right: 8px;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .edit-media-left .media-preview-container {
@@ -1064,6 +1072,87 @@ html[data-theme="dark"] .sub-nav-tab.active {
     max-height: 100%;
     max-width: 100%;
     object-fit: contain;
+}
+
+/* Tab layout for Edit Media Modal */
+.edit-media-tabs {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: var(--bg-secondary);
+}
+
+.edit-media-tab-header {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="dark"] .edit-media-tab-header {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.media-tab-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--font-secondary);
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.media-tab-btn:hover {
+    color: var(--font-color);
+}
+
+.media-tab-btn.active {
+    color: var(--primary);
+    background-color: var(--bg-color);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.edit-media-tab-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-tab-panel {
+    display: none;
+    height: 100%;
+    flex: 1;
+    flex-direction: column;
+    padding: 12px;
+}
+
+.media-tab-panel.active {
+    display: flex;
+}
+
+.media-tab-panel textarea {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: none;
+    background: transparent;
+    outline: none;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--font-color);
+    font-family: inherit;
 }
 
 @media (max-width: 768px) {
@@ -1084,6 +1173,10 @@ html[data-theme="dark"] .sub-nav-tab.active {
     .edit-media-right {
         overflow-y: visible;
         padding-right: 0;
+    }
+    .edit-media-tabs {
+        min-height: 300px;
+        height: 300px;
     }
 }
 
