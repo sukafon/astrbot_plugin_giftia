@@ -848,17 +848,22 @@ class GiftiaWebApi:
                 # fallback: check magic bytes
                 try:
                     with open(cache_file, "rb") as f:
-                        header = f.read(4)
+                        header = f.read(12)
                     if header.startswith(b"\x89PNG"):
                         content_type = "image/png"
                     elif header.startswith(b"\xff\xd8"):
                         content_type = "image/jpeg"
                     elif header.startswith(b"GIF8"):
                         content_type = "image/gif"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+                        content_type = "image/webp"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+                        content_type = "audio/wav"
                     elif (
-                        header.startswith(b"RIFF")
-                        or header.startswith(b"ID3")
+                        header.startswith(b"ID3")
                         or header.startswith(b"\xff\xfb")
+                        or header.startswith(b"\xff\xf3")
+                        or header.startswith(b"\xff\xf2")
                     ):
                         content_type = "audio/mpeg"
                 except Exception:
@@ -907,17 +912,22 @@ class GiftiaWebApi:
             if not content_type:
                 try:
                     with open(cache_file, "rb") as f:
-                        header = f.read(4)
+                        header = f.read(12)
                     if header.startswith(b"\x89PNG"):
                         content_type = "image/png"
                     elif header.startswith(b"\xff\xd8"):
                         content_type = "image/jpeg"
                     elif header.startswith(b"GIF8"):
                         content_type = "image/gif"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+                        content_type = "image/webp"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+                        content_type = "audio/wav"
                     elif (
-                        header.startswith(b"RIFF")
-                        or header.startswith(b"ID3")
+                        header.startswith(b"ID3")
                         or header.startswith(b"\xff\xfb")
+                        or header.startswith(b"\xff\xf3")
+                        or header.startswith(b"\xff\xf2")
                     ):
                         content_type = "audio/mpeg"
                 except Exception:
@@ -981,17 +991,22 @@ class GiftiaWebApi:
             if not content_type:
                 try:
                     with open(cache_file, "rb") as f:
-                        header = f.read(4)
+                        header = f.read(12)
                     if header.startswith(b"\x89PNG"):
                         content_type = "image/png"
                     elif header.startswith(b"\xff\xd8"):
                         content_type = "image/jpeg"
                     elif header.startswith(b"GIF8"):
                         content_type = "image/gif"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+                        content_type = "image/webp"
+                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+                        content_type = "audio/wav"
                     elif (
-                        header.startswith(b"RIFF")
-                        or header.startswith(b"ID3")
+                        header.startswith(b"ID3")
                         or header.startswith(b"\xff\xfb")
+                        or header.startswith(b"\xff\xf3")
+                        or header.startswith(b"\xff\xf2")
                     ):
                         content_type = "audio/mpeg"
                 except Exception:
