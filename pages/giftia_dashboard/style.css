@@ -1016,7 +1016,8 @@ html[data-theme="dark"] .sub-nav-tab.active {
 .edit-media-modal-card {
     max-width: 900px !important;
     width: 95% !important;
-    max-height: 80vh;
+    height: 650px;
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
 }
