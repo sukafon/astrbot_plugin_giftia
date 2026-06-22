@@ -354,6 +354,14 @@ class MessageParser:
                     media_caption.file_name = file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
+            # Log key identifiers so we can detect if two different URLs produce the
+            # same image content (which would indicate a stale-temp-file read).
+            logger.info(
+                f"[Giftia] 调用LLM转述图片: hash={hash_val} "
+                f"size={len(image_bytes)}B "
+                f"head={image_bytes[:8].hex()} "
+                f"url={url!r}"
+            )
             # 调用LLM生成图片描述
             media_caption = await self.call_llm.call_llm_image_caption(base64s)
             if not media_caption:
