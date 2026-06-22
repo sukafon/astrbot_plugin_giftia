@@ -251,6 +251,15 @@ class GiftiaWebApi:
             # Remove from cache
             self.giftia.data_cache.caption.pop(hash_val, None)
 
+            # Remove from local persistent disk cache
+            try:
+                from astrbot.core.star.star_tools import StarTools
+                cache_file = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache" / hash_val
+                if cache_file.exists():
+                    cache_file.unlink()
+            except Exception as e:
+                logger.error(f"[Giftia API] delete_media file error: {e}")
+
             return json_response({"status": "success", "message": "删除媒体描述成功"})
         except Exception as e:
             logger.error(f"[Giftia API] delete_media error: {e}")
@@ -783,3 +792,18 @@ class GiftiaWebApi:
         except Exception as e:
             logger.error(f"[Giftia API] delete_group_profile error: {e}")
             return error_response(f"删除群聊画像失败: {str(e)}")
+
+    async def get_media_file(self, hash_val: str):
+        """Get cached media file by hash value."""
+        try:
+            from astrbot.core.star.star_tools import StarTools
+            from astrbot.api.web import file_response
+            
+            cache_file = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache" / hash_val
+            if not cache_file.exists():
+                return error_response("文件不存在或已被删除", status_code=404)
+            
+            return file_response(cache_file)
+        except Exception as e:
+            logger.error(f"[Giftia API] get_media_file error: {e}")
+            return error_response(f"获取媒体文件失败: {str(e)}")

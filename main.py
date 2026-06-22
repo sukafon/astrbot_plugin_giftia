@@ -240,6 +240,12 @@ class Giftia(Star):
             desc="Delete media caption",
         )
         self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/<hash_val>",
+            view_handler=self.web_api.get_media_file,
+            methods=["GET"],
+            desc="Get cached media file by hash",
+        )
+        self.context.register_web_api(
             route="/astrbot_plugin_giftia/memories",
             view_handler=self.web_api.get_memories,
             methods=["GET"],

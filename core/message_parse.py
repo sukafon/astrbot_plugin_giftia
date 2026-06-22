@@ -328,6 +328,17 @@ class MessageParser:
             # 生成hash
             hash_val = stable_hash or xxh3_64_hexdigest(image_bytes)
 
+            # 保存到本地持久缓存目录，以便网页端可以永久预览
+            try:
+                from astrbot.core.star.star_tools import StarTools
+                cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / hash_val
+                if not cache_file.exists():
+                    cache_file.write_bytes(image_bytes)
+            except Exception as e:
+                logger.error(f"[Giftia] 保存媒体缓存失败: {e}")
+
         async with self.hash_locks[hash_val]:
             # 检查缓存
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
@@ -389,6 +400,20 @@ class MessageParser:
                 return None, None
             # 语音的hash_val用url生成
             hash_val = xxh3_64_hexdigest(url.encode())
+
+            # 下载并保存语音文件，以便永久播放
+            try:
+                audio_bytes = await self.http_manager.download_media(url)
+                if audio_bytes:
+                    from astrbot.core.star.star_tools import StarTools
+                    cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    cache_file = cache_dir / hash_val
+                    if not cache_file.exists():
+                        cache_file.write_bytes(audio_bytes)
+            except Exception as e:
+                logger.error(f"[Giftia] 保存音频缓存失败: {e}")
+
             media_caption.hash_val = hash_val
             media_caption.url = url
             if file_name:

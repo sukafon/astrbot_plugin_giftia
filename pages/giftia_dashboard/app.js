@@ -309,13 +309,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const encodedText = encodeURIComponent(item.text);
             return `
                 <tr>
-                    <td style="font-weight: 600;">${item.bot_name}</td>
-                    <td>${item.group_or_user_id}</td>
-                    <td>
+                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
+                    <td data-label="群聊/用户ID">${item.group_or_user_id}</td>
+                    <td data-label="记忆内容 (Text)">
                         <div style="max-width: 550px; word-break: break-all;">${escapeHtml(item.text)}</div>
                     </td>
-                    <td>${formatDate(item.created_at)}</td>
-                    <td class="text-right">
+                    <td data-label="创建时间">${formatDate(item.created_at)}</td>
+                    <td data-label="操作" class="text-right">
                         <button class="btn btn-secondary btn-small" onclick="openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="deleteMemory('${item.memory_id}')">删除</button>
                     </td>
@@ -435,10 +435,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         container.innerHTML = items.map(item => {
             let preview = "";
+            const mediaUrl = `/api/plug/astrbot_plugin_giftia/media/file/${item.hash_val}`;
             if (item.media_type === "image" && item.url) {
-                preview = `<img src="${item.url}" alt="预览图片" onerror="this.onerror=null; this.src='placeholder.png';">`;
+                preview = `<img src="${mediaUrl}" alt="预览图片" onerror="this.onerror=function(){this.onerror=null;this.src='placeholder.png';};this.src='${item.url}';">`;
             } else if (item.media_type === "voice" && item.url) {
-                preview = `<audio class="media-audio-player" controls src="${item.url}"></audio>`;
+                preview = `<audio class="media-audio-player" controls src="${mediaUrl}" onerror="this.onerror=null;this.src='${item.url}';"></audio>`;
             } else {
                 preview = `<div style="font-size: 32px;">📄</div>`;
             }
@@ -606,10 +607,11 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("edit-media-text").value = text;
         
         const previewContainer = document.getElementById("edit-media-preview");
+        const mediaUrl = `/api/plug/astrbot_plugin_giftia/media/file/${hash}`;
         if (type === "image" && url) {
-            previewContainer.innerHTML = `<img src="${url}" alt="预览">`;
+            previewContainer.innerHTML = `<img src="${mediaUrl}" alt="预览" onerror="this.onerror=function(){this.onerror=null;this.src='placeholder.png';};this.src='${url}';">`;
         } else if (type === "voice" && url) {
-            previewContainer.innerHTML = `<audio controls src="${url}"></audio>`;
+            previewContainer.innerHTML = `<audio controls src="${mediaUrl}" onerror="this.onerror=null;this.src='${url}';"></audio>`;
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }
@@ -879,16 +881,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
             return `
                 <tr>
-                    <td style="font-weight: 600;">${item.bot_name}</td>
-                    <td>${item.group_or_user_id}</td>
-                    <td>${item.user_id}</td>
-                    <td>${relationBadge}</td>
-                    <td>${titleHtml}</td>
-                    <td>
+                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
+                    <td data-label="群聊/会话ID">${item.group_or_user_id}</td>
+                    <td data-label="用户ID">${item.user_id}</td>
+                    <td data-label="好感度">${relationBadge}</td>
+                    <td data-label="关系头衔">${titleHtml}</td>
+                    <td data-label="画像总结内容 (Profile)">
                         <div style="max-width: 500px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
                     </td>
-                    <td>${formatDate(item.updated_at || item.created_at)}</td>
-                    <td class="text-right">
+                    <td data-label="更新时间">${formatDate(item.updated_at || item.created_at)}</td>
+                    <td data-label="操作" class="text-right">
                         <button class="btn btn-secondary btn-small" onclick="openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
                     </td>
@@ -939,13 +941,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const encodedProfile = encodeURIComponent(item.profile || "");
             return `
                 <tr>
-                    <td style="font-weight: 600;">${item.bot_name}</td>
-                    <td>${item.group_or_user_id}</td>
-                    <td>
+                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
+                    <td data-label="群聊/会话ID">${item.group_or_user_id}</td>
+                    <td data-label="群聊画像总结内容 (Profile)">
                         <div style="max-width: 600px; word-break: break-all; white-space: pre-wrap;">${escapeHtml(item.profile || "")}</div>
                     </td>
-                    <td>${formatDate(item.updated_at || item.created_at)}</td>
-                    <td class="text-right">
+                    <td data-label="更新时间">${formatDate(item.updated_at || item.created_at)}</td>
+                    <td data-label="操作" class="text-right">
                         <button class="btn btn-secondary btn-small" onclick="openEditGroupProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${encodedProfile}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="deleteGroupProfile('${item.bot_name}', '${item.group_or_user_id}')">删除</button>
                     </td>

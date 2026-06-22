@@ -936,23 +936,39 @@ html[data-theme="dark"] .sub-nav-tab.active {
         width: 100%;
     }
 
-    /* Responsive Table for Decision Audit on mobile */
+    /* Responsive Tables on mobile */
     #tab-chat-history table,
     #tab-chat-history thead,
     #tab-chat-history tbody,
     #tab-chat-history th,
     #tab-chat-history td,
-    #tab-chat-history tr {
+    #tab-chat-history tr,
+    #tab-memories table,
+    #tab-memories thead,
+    #tab-memories tbody,
+    #tab-memories th,
+    #tab-memories td,
+    #tab-memories tr,
+    #tab-profiles table,
+    #tab-profiles thead,
+    #tab-profiles tbody,
+    #tab-profiles th,
+    #tab-profiles td,
+    #tab-profiles tr {
         display: block;
     }
 
-    #tab-chat-history thead tr {
+    #tab-chat-history thead tr,
+    #tab-memories thead tr,
+    #tab-profiles thead tr {
         position: absolute;
         top: -9999px;
         left: -9999px;
     }
 
-    #tab-chat-history tr {
+    #tab-chat-history tr,
+    #tab-memories tr,
+    #tab-profiles tr {
         border: 1px solid var(--border-color);
         border-radius: 8px;
         margin-bottom: 12px;
@@ -961,7 +977,9 @@ html[data-theme="dark"] .sub-nav-tab.active {
         box-shadow: var(--shadow);
     }
 
-    #tab-chat-history td {
+    #tab-chat-history td,
+    #tab-memories td,
+    #tab-profiles td {
         border: none;
         border-bottom: 1px solid var(--border-color);
         position: relative;
@@ -974,11 +992,15 @@ html[data-theme="dark"] .sub-nav-tab.active {
         padding-bottom: 8px;
     }
 
-    #tab-chat-history td:last-child {
+    #tab-chat-history td:last-child,
+    #tab-memories td:last-child,
+    #tab-profiles td:last-child {
         border-bottom: none;
     }
 
-    #tab-chat-history td::before {
+    #tab-chat-history td::before,
+    #tab-memories td::before,
+    #tab-profiles td::before {
         content: attr(data-label);
         position: absolute;
         top: 8px;
