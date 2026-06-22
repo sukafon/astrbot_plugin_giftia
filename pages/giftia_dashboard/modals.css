@@ -1,0 +1,309 @@
+/* Modal Overlays & Cards */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay.show {
+    display: flex;
+    opacity: 1;
+}
+
+.modal-card {
+    width: 90%;
+    max-width: 500px;
+    padding: 24px;
+    transform: scale(0.9);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-overlay.show .modal-card {
+    transform: scale(1);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.modal-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.modal-close-btn {
+    font-size: 24px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--font-secondary);
+}
+
+.modal-close-btn:hover {
+    color: var(--font-color);
+}
+
+.modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.form-row .form-group.flex-2 {
+    flex: 2;
+}
+
+.form-group label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--font-secondary);
+}
+
+.required {
+    color: var(--danger);
+}
+
+.readonly-input {
+    background-color: var(--border-color) !important;
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+/* Custom Confirm Dialog */
+.confirm-modal-card {
+    max-width: 400px;
+}
+
+.confirm-text {
+    font-size: 15px;
+    color: var(--font-secondary);
+    margin-bottom: 8px;
+}
+
+.confirm-modal-footer {
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Media Preview inside Modals */
+.media-preview-container {
+    width: 100%;
+    height: 120px;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+html[data-theme="dark"] .media-preview-container {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.media-preview-container img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+/* Detailed Edit Media Modal Layout */
+.edit-media-modal-card {
+    max-width: 900px !important;
+    width: 95% !important;
+    height: 650px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.edit-media-modal-card .modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+}
+
+.edit-media-modal-body {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.edit-media-left {
+    flex: 1.2;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.edit-media-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.edit-media-left .media-preview-container {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+    margin-bottom: 0;
+}
+
+.edit-media-left .media-preview-container img {
+    max-height: 100%;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+/* Tab Layout inside Edit Media Modal */
+.edit-media-tabs {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: var(--bg-secondary);
+}
+
+.edit-media-tab-header {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="dark"] .edit-media-tab-header {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.media-tab-btn {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--font-secondary);
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.media-tab-btn:hover {
+    color: var(--font-color);
+}
+
+.media-tab-btn.active {
+    color: var(--primary);
+    background-color: var(--bg-color);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.edit-media-tab-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-tab-panel {
+    display: none;
+    height: 100%;
+    flex: 1;
+    flex-direction: column;
+    padding: 12px;
+}
+
+.media-tab-panel.active {
+    display: flex;
+}
+
+.media-tab-panel textarea {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: none;
+    background: transparent;
+    outline: none;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--font-color);
+    font-family: inherit;
+}
+
+@media (max-width: 768px) {
+    .edit-media-modal-card {
+        max-height: none;
+    }
+    .edit-media-modal-card .modal-body {
+        overflow: visible;
+    }
+    .edit-media-modal-body {
+        flex-direction: column;
+        height: auto;
+    }
+    .edit-media-left .media-preview-container {
+        min-height: 200px;
+        height: 200px;
+    }
+    .edit-media-right {
+        overflow-y: visible;
+        padding-right: 0;
+    }
+    .edit-media-tabs {
+        min-height: 300px;
+        height: 300px;
+    }
+}
