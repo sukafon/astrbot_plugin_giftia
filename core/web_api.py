@@ -798,12 +798,48 @@ class GiftiaWebApi:
         try:
             from astrbot.core.star.star_tools import StarTools
             from astrbot.api.web import file_response
+            import mimetypes
             
             cache_file = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache" / hash_val
             if not cache_file.exists():
                 return error_response("文件不存在或已被删除", status_code=404)
             
-            return file_response(cache_file)
+            content_type = None
+            try:
+                # Query db to get content_type based on original file name or url
+                media_caption = await self.giftia.db.get_media_caption_by_hash(hash_val)
+                if media_caption:
+                    file_name = media_caption.file_name or media_caption.url
+                    if file_name:
+                        content_type, _ = mimetypes.guess_type(file_name)
+                    if not content_type:
+                        if media_caption.media_type == "image":
+                            content_type = "image/jpeg"
+                        elif media_caption.media_type in ("audio", "voice"):
+                            content_type = "audio/mpeg"
+            except Exception as e:
+                logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
+                
+            if not content_type:
+                # fallback: check magic bytes
+                try:
+                    with open(cache_file, "rb") as f:
+                        header = f.read(4)
+                    if header.startswith(b"\x89PNG"):
+                        content_type = "image/png"
+                    elif header.startswith(b"\xff\xd8"):
+                        content_type = "image/jpeg"
+                    elif header.startswith(b"GIF8"):
+                        content_type = "image/gif"
+                    elif header.startswith(b"RIFF") or header.startswith(b"ID3") or header.startswith(b"\xff\xfb"):
+                        content_type = "audio/mpeg"
+                except Exception:
+                    pass
+                    
+            if not content_type:
+                content_type = "application/octet-stream"
+            
+            return file_response(cache_file, content_type=content_type)
         except Exception as e:
             logger.error(f"[Giftia API] get_media_file error: {e}")
             return error_response(f"获取媒体文件失败: {str(e)}")
