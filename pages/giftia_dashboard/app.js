@@ -527,9 +527,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 if (isImg) {
                     const imgEl = document.getElementById(uniqueId);
-                    const card = imgEl ? imgEl.closest(".media-card") : null;
-                    if (card) {
-                        card.addEventListener("mouseenter", () => {
+                    const previewBox = imgEl ? imgEl.closest(".media-preview-box") : null;
+                    if (previewBox) {
+                        previewBox.addEventListener("mouseenter", () => {
                             if (window.loadedOriginalMediaG.has(item.hash_val)) return;
 
                             const timer = setTimeout(() => {
@@ -539,7 +539,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             hoverTimers.set(item.hash_val, timer);
                         });
 
-                        card.addEventListener("mouseleave", () => {
+                        previewBox.addEventListener("mouseleave", () => {
                             if (hoverTimers.has(item.hash_val)) {
                                 clearTimeout(hoverTimers.get(item.hash_val));
                                 hoverTimers.delete(item.hash_val);
