@@ -1,3 +1,5 @@
+from xxhash import xxh3_64_hexdigest
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
@@ -201,6 +203,19 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
                 try:
+                    # Log a short hash of the actual base64 content being sent, so
+                    # we can confirm distinct images produce distinct hashes here.
+                    # We take the first 128 chars of the payload (after prefix) — enough
+                    # to distinguish different images without hashing the full string.
+                    def _b64_sig(u: str) -> str:
+                        payload = u.removeprefix("base64://")
+                        return xxh3_64_hexdigest(payload[:128].encode())
+
+                    b64_hashes = [_b64_sig(u) for u in image_urls]
+                    logger.info(
+                        f"[Giftia] 发送给LLM的图片内容hash: {b64_hashes} "
+                        f"provider={provider_id}"
+                    )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=self.image_caption_prompt,
