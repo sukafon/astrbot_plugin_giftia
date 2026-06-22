@@ -262,6 +262,15 @@ class GiftiaWebApi:
                 )
                 if cache_file.exists():
                     cache_file.unlink()
+                # Also delete thumbnail if exists
+                thumb_file = (
+                    StarTools.get_data_dir("astrbot_plugin_giftia")
+                    / "media_cache"
+                    / "thumbnails"
+                    / hash_val
+                )
+                if thumb_file.exists():
+                    thumb_file.unlink()
             except Exception as e:
                 logger.error(f"[Giftia API] delete_media file error: {e}")
 
@@ -930,6 +939,143 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] get_media_file_b64 error: {e}")
             return error_response(f"获取媒体 Base64 失败: {str(e)}")
 
+    async def get_media_file_thumbnail_b64(self, hash_val: str):
+        """Get cached media thumbnail as base64 string (JSON response).
+
+        Args:
+            hash_val: The hash of the media file.
+
+        Returns:
+            A dict containing the response status, base64 string, and content type.
+        """
+        try:
+            import base64
+            import mimetypes
+
+            from astrbot.core.star.star_tools import StarTools
+
+            cache_file = (
+                StarTools.get_data_dir("astrbot_plugin_giftia")
+                / "media_cache"
+                / hash_val
+            )
+            if not cache_file.exists():
+                return error_response("文件不存在或已被删除", status_code=404)
+
+            # Determine content type of original file
+            content_type = None
+            try:
+                media_caption = await self.giftia.db.get_media_caption_by_hash(hash_val)
+                if media_caption:
+                    file_name = media_caption.file_name or media_caption.url
+                    if file_name:
+                        content_type, _ = mimetypes.guess_type(file_name)
+                    if not content_type:
+                        if media_caption.media_type == "image":
+                            content_type = "image/jpeg"
+                        elif media_caption.media_type in ("audio", "voice"):
+                            content_type = "audio/mpeg"
+            except Exception as e:
+                logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
+
+            if not content_type:
+                try:
+                    with open(cache_file, "rb") as f:
+                        header = f.read(4)
+                    if header.startswith(b"\x89PNG"):
+                        content_type = "image/png"
+                    elif header.startswith(b"\xff\xd8"):
+                        content_type = "image/jpeg"
+                    elif header.startswith(b"GIF8"):
+                        content_type = "image/gif"
+                    elif (
+                        header.startswith(b"RIFF")
+                        or header.startswith(b"ID3")
+                        or header.startswith(b"\xff\xfb")
+                    ):
+                        content_type = "audio/mpeg"
+                except Exception:
+                    pass
+
+            if not content_type:
+                content_type = "image/jpeg"
+
+            target_file = cache_file
+
+            # If it's an image, try to load/generate thumbnail
+            if content_type and content_type.startswith("image/"):
+                thumb_dir = cache_file.parent / "thumbnails"
+                thumb_file = thumb_dir / hash_val
+                use_thumbnail = False
+
+                try:
+                    thumb_dir.mkdir(parents=True, exist_ok=True)
+                    need_generate = True
+                    if thumb_file.exists():
+                        try:
+                            if cache_file.stat().st_mtime <= thumb_file.stat().st_mtime:
+                                need_generate = False
+                                use_thumbnail = True
+                                # Read magic bytes from cached thumbnail to determine correct content type
+                                with open(thumb_file, "rb") as f:
+                                    header = f.read(12)
+                                if b"WEBP" in header:
+                                    content_type = "image/webp"
+                                elif header.startswith(b"\xff\xd8"):
+                                    content_type = "image/jpeg"
+                                elif header.startswith(b"\x89PNG"):
+                                    content_type = "image/png"
+                        except Exception as mtime_err:
+                            logger.warning(
+                                f"[Giftia API] Error checking cached thumbnail {hash_val}: {mtime_err}"
+                            )
+
+                    if need_generate:
+                        from PIL import Image as PILImage
+
+                        with PILImage.open(cache_file) as img:
+                            orig_format = img.format
+                            # If GIF, extract first frame
+                            if orig_format == "GIF":
+                                img.seek(0)
+                                img = img.copy()
+
+                            img.thumbnail((150, 150))
+
+                            temp_thumb_path = thumb_file.with_name(
+                                thumb_file.name + ".tmp"
+                            )
+                            try:
+                                img.save(temp_thumb_path, format="WEBP")
+                                content_type = "image/webp"
+                            except Exception:
+                                img.save(temp_thumb_path, format="JPEG")
+                                content_type = "image/jpeg"
+
+                            import os
+
+                            os.replace(temp_thumb_path, thumb_file)
+                            use_thumbnail = True
+                except Exception as img_err:
+                    logger.warning(
+                        f"[Giftia API] Failed to generate/load thumbnail for {hash_val}, falling back to original: {img_err}"
+                    )
+
+                target_file = thumb_file if use_thumbnail else cache_file
+
+            # Read target file bytes and encode to base64
+            with open(target_file, "rb") as f:
+                file_bytes = f.read()
+
+            b64_str = base64.b64encode(file_bytes).decode("utf-8")
+
+            return json_response(
+                {"status": "success", "base64": b64_str, "content_type": content_type}
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_media_file_thumbnail_b64 error: {e}")
+            return error_response(f"获取媒体缩略图 Base64 失败: {str(e)}")
+
     async def get_media_genres(self) -> dict:
         """Get distinct genres list from media_caption table.
 
@@ -1044,6 +1190,15 @@ class GiftiaWebApi:
                         except Exception as file_err:
                             logger.error(
                                 f"[Giftia API] Failed to delete cache file {hash_val}: {file_err}"
+                            )
+                        # Also delete thumbnail if exists
+                        try:
+                            thumb_file = cache_dir / "thumbnails" / hash_val
+                            if thumb_file.exists():
+                                thumb_file.unlink()
+                        except Exception as thumb_err:
+                            logger.error(
+                                f"[Giftia API] Failed to delete thumbnail file {hash_val}: {thumb_err}"
                             )
 
             action_msg = "预估" if dry_run else "成功"

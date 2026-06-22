@@ -258,6 +258,12 @@ class Giftia(Star):
             desc="Get cached media file as base64 by hash",
         )
         self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/thumbnail/b64/<hash_val>",
+            view_handler=self.web_api.get_media_file_thumbnail_b64,
+            methods=["GET"],
+            desc="Get cached media thumbnail as base64 by hash",
+        )
+        self.context.register_web_api(
             route="/astrbot_plugin_giftia/media/genres",
             view_handler=self.web_api.get_media_genres,
             methods=["GET"],

@@ -426,12 +426,13 @@ document.addEventListener("DOMContentLoaded", () => {
         loadMedia();
     }
 
-    async function loadMediaFileB64(hash, elementId, fallbackUrl, type) {
+    async function loadMediaFileB64(hash, elementId, fallbackUrl, type, isThumbnail = false) {
         const el = document.getElementById(elementId);
         if (!el) return;
 
         try {
-            const res = await apiGet(`/media/file/b64/${hash}`);
+            const endpoint = isThumbnail ? `/media/file/thumbnail/b64/${hash}` : `/media/file/b64/${hash}`;
+            const res = await apiGet(endpoint);
             if (res && res.status === "success" && res.base64) {
                 const mimeType = res.content_type || (type === "image" ? "image/jpeg" : "audio/mpeg");
                 el.src = `data:${mimeType};base64,${res.base64}`;
@@ -510,11 +511,42 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
         }).join("");
 
-        // Asynchronously load media data as base64
+        if (!window.loadedOriginalMediaG) {
+            window.loadedOriginalMediaG = new Set();
+        }
+        const hoverTimers = new Map();
+
+        // Asynchronously load media data as base64 and attach hover events
         items.forEach(item => {
             if (item.url && (item.media_type === "image" || item.media_type === "audio" || item.media_type === "voice")) {
                 const uniqueId = `media-preview-${item.hash_val}`;
-                loadMediaFileB64(item.hash_val, uniqueId, item.url, item.media_type);
+                const isImg = item.media_type === "image";
+                const shouldLoadThumb = isImg && !window.loadedOriginalMediaG.has(item.hash_val);
+
+                loadMediaFileB64(item.hash_val, uniqueId, item.url, item.media_type, shouldLoadThumb);
+
+                if (isImg) {
+                    const imgEl = document.getElementById(uniqueId);
+                    const card = imgEl ? imgEl.closest(".media-card") : null;
+                    if (card) {
+                        card.addEventListener("mouseenter", () => {
+                            if (window.loadedOriginalMediaG.has(item.hash_val)) return;
+
+                            const timer = setTimeout(() => {
+                                loadMediaFileB64(item.hash_val, uniqueId, item.url, item.media_type, false);
+                                window.loadedOriginalMediaG.add(item.hash_val);
+                            }, 500);
+                            hoverTimers.set(item.hash_val, timer);
+                        });
+
+                        card.addEventListener("mouseleave", () => {
+                            if (hoverTimers.has(item.hash_val)) {
+                                clearTimeout(hoverTimers.get(item.hash_val));
+                                hoverTimers.delete(item.hash_val);
+                            }
+                        });
+                    }
+                }
             }
         });
     }
@@ -652,7 +684,17 @@ document.addEventListener("DOMContentLoaded", () => {
         if (type === "image" && url) {
             const uniqueId = `edit-media-preview-img-${hash}`;
             previewContainer.innerHTML = `<img id="${uniqueId}" src="placeholder.png" alt="加载中...">`;
-            loadMediaFileB64(hash, uniqueId, url, type);
+            loadMediaFileB64(hash, uniqueId, url, type, false);
+            
+            // Also trigger original image load on the main list preview card
+            const gridImgId = `media-preview-${hash}`;
+            const gridImg = document.getElementById(gridImgId);
+            if (gridImg && window.loadedOriginalMediaG) {
+                if (!window.loadedOriginalMediaG.has(hash)) {
+                    loadMediaFileB64(hash, gridImgId, url, type, false);
+                    window.loadedOriginalMediaG.add(hash);
+                }
+            }
         } else if ((type === "audio" || type === "voice") && url) {
             const uniqueId = `edit-media-preview-audio-${hash}`;
             previewContainer.innerHTML = `<audio id="${uniqueId}" controls></audio>`;
