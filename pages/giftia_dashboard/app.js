@@ -1149,7 +1149,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 unspecifiedDiv.style.gap = "6px";
                 unspecifiedDiv.style.margin = "4px 0";
                 unspecifiedDiv.innerHTML = `
-                    <input type="checkbox" id="clean-genre-unspecified" value="" checked>
+                    <input type="checkbox" id="clean-genre-unspecified" value="" style="width: auto; margin: 0; cursor: pointer;" checked>
                     <label for="clean-genre-unspecified" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">[未指定风格]</label>
                 `;
                 container.appendChild(unspecifiedDiv);
@@ -1161,7 +1161,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     genreDiv.style.gap = "6px";
                     genreDiv.style.margin = "4px 0";
                     genreDiv.innerHTML = `
-                        <input type="checkbox" name="clean-genre-checkbox" id="clean-genre-chk-${idx}" value="${escapeHtml(genre)}" checked>
+                        <input type="checkbox" name="clean-genre-checkbox" id="clean-genre-chk-${idx}" value="${escapeHtml(genre)}" style="width: auto; margin: 0; cursor: pointer;" checked>
                         <label for="clean-genre-chk-${idx}" style="margin: 0; cursor: pointer; font-weight: normal; color: var(--font-primary);">${escapeHtml(genre)}</label>
                     `;
                     container.appendChild(genreDiv);
