@@ -8,10 +8,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Local stylesheet -->
-    <link rel="stylesheet" href="style.css">
+    <!-- Local stylesheets -->
+    <link rel="stylesheet" href="variables.css">
+    <link rel="stylesheet" href="base.css">
+    <link rel="stylesheet" href="components.css">
+    <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="modals.css">
     <!-- AstrBot Bridge SDK -->
     <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script src="utils.js" defer></script>
+    <script src="api.js" defer></script>
+    <script src="modals.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
@@ -351,45 +358,50 @@
         </div>
     </div>
 
-    <!-- MODAL: Edit Media Caption -->
     <div id="edit-media-modal" class="modal-overlay">
-        <div class="modal-card card">
+        <div class="modal-card card edit-media-modal-card">
             <div class="modal-header">
-                <h2>修改媒体转述描述</h2>
+                <h2 id="edit-media-title">修改媒体转述描述</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-media-modal')">&times;</button>
             </div>
             <div class="modal-body">
-                <input type="hidden" id="edit-media-hash">
-                <div class="media-preview-container" id="edit-media-preview">
-                    <!-- Image or audio element -->
-                </div>
-                <div class="form-group">
-                    <label>哈希值 (Hash)</label>
-                    <input type="text" id="edit-media-hash-display" readonly class="readonly-input">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>风格类型</label>
-                        <input type="text" id="edit-media-genre" placeholder="例如：q版, 动漫插画">
+                <div class="edit-media-modal-body">
+                    <div class="edit-media-left">
+                        <div class="media-preview-container" id="edit-media-preview">
+                            <!-- Image or audio element -->
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>涉及人物</label>
-                        <input type="text" id="edit-media-character" placeholder="例如：天童爱丽丝">
+                    <div class="edit-media-right">
+                        <input type="hidden" id="edit-media-hash">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>风格类型</label>
+                                <input type="text" id="edit-media-genre" placeholder="例如：q版, 动漫插画">
+                            </div>
+                            <div class="form-group">
+                                <label>涉及人物</label>
+                                <input type="text" id="edit-media-character" placeholder="例如：天童爱丽丝">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>来源作品</label>
+                            <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
+                        </div>
+                        <div class="edit-media-tabs">
+                            <div class="edit-media-tab-header">
+                                <button type="button" class="media-tab-btn active" data-mediatab="caption">详细描述内容</button>
+                                <button type="button" class="media-tab-btn" data-mediatab="ocr">画面文字 (OCR)</button>
+                            </div>
+                            <div class="edit-media-tab-content">
+                                <div id="mediatab-caption" class="media-tab-panel active">
+                                    <textarea id="edit-media-caption" placeholder="请输入详细的媒体转述描述内容..."></textarea>
+                                </div>
+                                <div id="mediatab-ocr" class="media-tab-panel">
+                                    <textarea id="edit-media-text" placeholder="此处展示或编辑识别到的画面文字..."></textarea>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>来源作品</label>
-                        <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
-                    </div>
-                    <div class="form-group">
-                        <label>画面文字 (OCR)</label>
-                        <input type="text" id="edit-media-text" placeholder="识别出或图片里的文字">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>详细描述内容 <span class="required">*</span></label>
-                    <textarea id="edit-media-caption" rows="4"></textarea>
                 </div>
             </div>
             <div class="modal-footer">

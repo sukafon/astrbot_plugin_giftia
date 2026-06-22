@@ -207,6 +207,8 @@ class DataCache:
     async def get_caption_by_filename(
         self, filename: str
     ) -> tuple[str | None, MediaCaption | None]:
+        if not filename or is_temp_or_local_path(filename):
+            return None, None
         hash_val = self.filename_to_hash.get(filename)
         if hash_val and self.caption.get(hash_val):
             return hash_val, self.caption[hash_val]
@@ -219,7 +221,7 @@ class DataCache:
 
     async def set_caption(self, caption: MediaCaption, is_new: bool = True) -> None:
         self.caption[caption.hash_val] = caption
-        if caption.file_name:
+        if caption.file_name and not is_temp_or_local_path(caption.file_name):
             self.filename_to_hash[caption.file_name] = caption.hash_val
         if is_new:
             await self.db.insert_media_caption(media_caption=caption)
@@ -444,3 +446,38 @@ class DataCache:
             ),
             return_exceptions=True,
         )
+
+
+def is_temp_or_local_path(s: str | None) -> bool:
+    """Determines whether a file path or filename is temporary or local.
+
+    Args:
+        s: The file path or filename to check.
+
+    Returns:
+        True if the path or filename points to a local file or temporary pattern,
+        False otherwise.
+    """
+    if not s:
+        return False
+    if s.startswith(("http://", "https://")):
+        return False
+    if s.startswith("file://") or any(
+        marker in s
+        for marker in [
+            "media_image_",
+            "media_audio_",
+            "media_file_",
+            "io_temp_img_",
+            "compressed_",
+        ]
+    ):
+        return True
+    import os
+
+    try:
+        if os.path.isabs(s) or os.path.exists(s):
+            return True
+    except Exception:
+        pass
+    return False

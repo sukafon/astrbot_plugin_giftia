@@ -96,6 +96,12 @@ class Giftia(Star):
         self.private_chat_bypass = self.whitelist_config.get(
             "private_chat_bypass_decision_and_whitelist", True
         )
+        self.private_user_whitelist_enabled = self.whitelist_config.get(
+            "private_user_whitelist_enabled", False
+        )
+        self.private_user_whitelist = self.whitelist_config.get(
+            "private_user_whitelist", []
+        )
 
         # 并发策略
         self.concurrent_config = self.conf.get("concurrent_config", {})
@@ -250,6 +256,12 @@ class Giftia(Star):
             view_handler=self.web_api.get_media_file_b64,
             methods=["GET"],
             desc="Get cached media file as base64 by hash",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/thumbnail/b64/<hash_val>",
+            view_handler=self.web_api.get_media_file_thumbnail_b64,
+            methods=["GET"],
+            desc="Get cached media thumbnail as base64 by hash",
         )
         self.context.register_web_api(
             route="/astrbot_plugin_giftia/media/genres",
@@ -785,6 +797,15 @@ caption: {media_caption.caption}"""
             and event.get_sender_id() not in self.user_whitelist
         ):
             logger.debug(f"用户 {event.get_sender_id()} 不在白名单内，跳过处理")
+            return
+
+        # 私聊用户白名单判断
+        if (
+            is_private
+            and self.private_user_whitelist_enabled
+            and event.get_sender_id() not in self.private_user_whitelist
+        ):
+            logger.debug(f"私聊用户 {event.get_sender_id()} 不在私聊白名单内，跳过处理")
             return
 
         # 判断是否为本插件管理的机器人收到的消息
