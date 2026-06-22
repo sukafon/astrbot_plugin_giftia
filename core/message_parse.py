@@ -284,17 +284,18 @@ class MessageParser:
                 if hash_val and media_caption:
                     return hash_val, media_caption
 
-            # 尝试从 url 或 file_name 提取 32位 MD5 作为稳定的 hash_val
+            # Try to extract a stable MD5 hash from file_name as the stable identifier.
+            # Only file_name is used — URLs are intentionally excluded because they often
+            # contain shared parameters (e.g. rkey, session tokens) that look like 32-char
+            # hex strings but are identical across different images, causing false cache hits.
             stable_hash = None
 
             if file_name and not is_temp_or_local_path(file_name):
-                match = re.search(r"([a-fA-F0-9]{32})", file_name)
-                if match:
-                    stable_hash = match.group(1).lower()
-            if not stable_hash and url and not is_temp_or_local_path(url):
-                match = re.search(r"([a-fA-F0-9]{32})", url)
-                if match:
-                    stable_hash = match.group(1).lower()
+                # Require the 32-char hex to be the entire stem of the filename (e.g.
+                # "ABCDEF...1234.image" -> stem "ABCDEF...1234"), not a partial match.
+                stem = re.sub(r"\.[^.]+$", "", file_name)  # strip extension
+                if re.fullmatch(r"[a-fA-F0-9]{32}", stem):
+                    stable_hash = stem.lower()
 
             if stable_hash:
                 media_caption = await self.data_cache.get_caption_by_hash(stable_hash)
