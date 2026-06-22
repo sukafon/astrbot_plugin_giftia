@@ -97,22 +97,6 @@ body {
     gap: 12px;
 }
 
-.logo-icon-container {
-    width: 44px;
-    height: 44px;
-    background-color: var(--primary-light);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--primary);
-    flex-shrink: 0;
-}
-
-.logo-svg {
-    width: 24px;
-    height: 24px;
-}
 
 .logo-text h1 {
     font-size: 20px;
@@ -950,6 +934,59 @@ html[data-theme="dark"] .sub-nav-tab.active {
 
     .form-row .form-group {
         width: 100%;
+    }
+
+    /* Responsive Table for Decision Audit on mobile */
+    #tab-chat-history table,
+    #tab-chat-history thead,
+    #tab-chat-history tbody,
+    #tab-chat-history th,
+    #tab-chat-history td,
+    #tab-chat-history tr {
+        display: block;
+    }
+
+    #tab-chat-history thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+    }
+
+    #tab-chat-history tr {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        padding: 8px;
+        background-color: var(--card-bg);
+        box-shadow: var(--shadow);
+    }
+
+    #tab-chat-history td {
+        border: none;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        padding-left: 35% !important;
+        text-align: left;
+        white-space: normal !important;
+        min-height: 38px;
+        display: block;
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    #tab-chat-history td:last-child {
+        border-bottom: none;
+    }
+
+    #tab-chat-history td::before {
+        content: attr(data-label);
+        position: absolute;
+        top: 8px;
+        left: 12px;
+        width: 30%;
+        font-weight: 600;
+        color: var(--font-secondary);
+        font-size: 13px;
     }
 }
 

@@ -248,17 +248,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
             return `
                 <tr>
-                    <td style="white-space: nowrap;">${formatDate(item.created_at)}</td>
-                    <td style="font-weight: 600;">${item.bot_name}</td>
-                    <td>
+                    <td data-label="时间" style="white-space: nowrap;">${formatDate(item.created_at)}</td>
+                    <td data-label="机器人" style="font-weight: 600;">${item.bot_name}</td>
+                    <td data-label="发送人/会话">
                         <div style="font-size: 13px;">${senderDisp}</div>
                         <div style="font-size: 11px; color: var(--font-secondary);">群组: ${item.group_or_user_id}</div>
                     </td>
-                    <td>
+                    <td data-label="消息内容">
                         <div style="max-width: 480px; word-break: break-all;">${escapeHtml(item.content)}</div>
                     </td>
-                    <td>${decisionBadge}</td>
-                    <td>${ragBadge}</td>
+                    <td data-label="判定结果">${decisionBadge}</td>
+                    <td data-label="RAG状态">${ragBadge}</td>
                 </tr>
             `;
         }).join("");
