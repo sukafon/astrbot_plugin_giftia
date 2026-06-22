@@ -97,14 +97,21 @@ body {
     gap: 12px;
 }
 
-.logo-icon {
-    font-size: 32px;
+.logo-icon-container {
+    width: 44px;
+    height: 44px;
     background-color: var(--primary-light);
-    padding: 8px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+.logo-svg {
+    width: 24px;
+    height: 24px;
 }
 
 .logo-text h1 {
@@ -642,6 +649,21 @@ html[data-theme="dark"] .media-caption-text {
     gap: 6px;
 }
 
+.form-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.form-row .form-group.flex-2 {
+    flex: 2;
+}
+
 .form-group label {
     font-size: 13px;
     font-weight: 600;
@@ -662,6 +684,24 @@ html[data-theme="dark"] .media-caption-text {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
+}
+
+.confirm-modal-card {
+    max-width: 400px;
+}
+
+.confirm-text {
+    font-size: 15px;
+    color: var(--font-secondary);
+    margin-bottom: 8px;
+}
+
+.confirm-modal-footer {
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 .media-preview-container {
@@ -779,4 +819,138 @@ html[data-theme="dark"] .sub-nav-tab.active {
 .subpanel.active {
     display: block;
 }
+
+/* Media Queries for Mobile Devices */
+@media (max-width: 768px) {
+    .app-container {
+        padding: 12px;
+    }
+
+    .app-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .logo-area {
+        margin-bottom: 4px;
+    }
+
+    .tab-navigation {
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        padding: 4px;
+        -webkit-overflow-scrolling: touch;
+        display: flex;
+        scrollbar-width: none; /* Firefox */
+    }
+
+    .tab-navigation::-webkit-scrollbar {
+        display: none; /* Safari and Chrome */
+    }
+
+    .nav-tab {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    .filter-card {
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+
+    .filter-row {
+        gap: 12px;
+    }
+
+    .filter-group {
+        min-width: 100%; /* Stack filters on mobile */
+    }
+
+    /* Make buttons and inputs fit mobile nicely */
+    .btn {
+        width: 100%;
+        padding: 10px 16px;
+    }
+
+    /* Adjust flex layouts for buttons in cards */
+    .filter-card.flex-between {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .filter-card.flex-between .btn {
+        margin-top: 4px;
+    }
+
+    .data-card {
+        padding: 4px;
+    }
+
+    /* Table text alignment or font size on mobile */
+    th, td {
+        padding: 8px 10px;
+        font-size: 13px;
+    }
+
+    /* Pagination responsiveness */
+    .pagination-container {
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+        text-align: center;
+        padding: 12px;
+    }
+
+    /* Sub panels navigation */
+    .sub-tab-navigation {
+        overflow-x: auto;
+        white-space: nowrap;
+        width: 100%;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+    }
+
+    .sub-tab-navigation::-webkit-scrollbar {
+        display: none;
+    }
+
+    .sub-nav-tab {
+        flex-shrink: 0;
+        padding: 6px 12px;
+        font-size: 13px;
+    }
+
+    /* Grid layout adjustments */
+    .grid-layout {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .media-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    /* Modal tweaks */
+    .modal-card {
+        width: 95%;
+        padding: 16px;
+        margin: 10px;
+    }
+
+    /* Stack side-by-side inputs on mobile */
+    .form-row {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .form-row .form-group {
+        width: 100%;
+    }
+}
+
 

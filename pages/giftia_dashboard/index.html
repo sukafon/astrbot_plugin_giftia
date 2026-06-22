@@ -19,7 +19,20 @@
         <!-- Top Header Navigation -->
         <header class="app-header">
             <div class="logo-area">
-                <span class="logo-icon">🤖</span>
+                <div class="logo-icon-container">
+                    <svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+                        <rect x="9" y="9" width="6" height="6"></rect>
+                        <line x1="9" y1="1" x2="9" y2="4"></line>
+                        <line x1="15" y1="1" x2="15" y2="4"></line>
+                        <line x1="9" y1="20" x2="9" y2="23"></line>
+                        <line x1="15" y1="20" x2="15" y2="23"></line>
+                        <line x1="20" y1="9" x2="23" y2="9"></line>
+                        <line x1="20" y1="15" x2="23" y2="15"></line>
+                        <line x1="1" y1="9" x2="4" y2="9"></line>
+                        <line x1="1" y1="15" x2="4" y2="15"></line>
+                    </svg>
+                </div>
                 <div class="logo-text">
                     <h1>Giftia 管理面板</h1>
                     <p>管理您的会话记忆、媒体转述与决策审计数据</p>
@@ -193,7 +206,7 @@
 
             <!-- TAB 5: Profiles -->
             <section id="tab-profiles" class="tab-panel">
-                <div class="sub-tab-navigation" style="margin-bottom: 16px; display: flex; gap: 8px;">
+                <div class="sub-tab-navigation">
                     <button class="sub-nav-tab active" data-subtab="user-profiles">用户画像</button>
                     <button class="sub-nav-tab" data-subtab="group-profiles">群聊画像</button>
                 </div>
@@ -365,22 +378,22 @@
                     <label>哈希值 (Hash)</label>
                     <input type="text" id="edit-media-hash-display" readonly class="readonly-input">
                 </div>
-                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <div class="form-row">
+                    <div class="form-group">
                         <label>风格类型</label>
                         <input type="text" id="edit-media-genre" placeholder="例如：q版, 动漫插画">
                     </div>
-                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <div class="form-group">
                         <label>涉及人物</label>
                         <input type="text" id="edit-media-character" placeholder="例如：天童爱丽丝">
                     </div>
                 </div>
-                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <div class="form-row">
+                    <div class="form-group">
                         <label>来源作品</label>
                         <input type="text" id="edit-media-source" placeholder="例如：蔚蓝档案">
                     </div>
-                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                    <div class="form-group">
                         <label>画面文字 (OCR)</label>
                         <input type="text" id="edit-media-text" placeholder="识别出或图片里的文字">
                     </div>
@@ -434,12 +447,12 @@
                 <input type="hidden" id="edit-user-prof-bot">
                 <input type="hidden" id="edit-user-prof-group">
                 <input type="hidden" id="edit-user-prof-user">
-                <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-                    <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <div class="form-row">
+                    <div class="form-group">
                         <label>好感度</label>
                         <input type="number" id="edit-user-prof-relation" placeholder="好感度数值">
                     </div>
-                    <div class="form-group" style="flex: 2; margin-bottom: 0;">
+                    <div class="form-group flex-2">
                         <label>关系头衔</label>
                         <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
                     </div>
@@ -480,15 +493,15 @@
 
     <!-- MODAL: Custom Confirm Dialog -->
     <div id="confirm-modal" class="modal-overlay">
-        <div class="modal-card card" style="max-width: 400px;">
+        <div class="modal-card card confirm-modal-card">
             <div class="modal-header">
                 <h2 id="confirm-title">确认操作</h2>
                 <button class="modal-close-btn" onclick="closeConfirmModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <p id="confirm-message" style="font-size: 15px; color: var(--font-secondary); margin-bottom: 8px;">确定要执行此操作吗？</p>
+                <p id="confirm-message" class="confirm-text">确定要执行此操作吗？</p>
             </div>
-            <div class="modal-footer" style="padding-top: 12px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 8px;">
+            <div class="modal-footer confirm-modal-footer">
                 <button class="btn btn-secondary" onclick="closeConfirmModal()">取消</button>
                 <button class="btn btn-danger" id="confirm-btn-ok">确认</button>
             </div>
