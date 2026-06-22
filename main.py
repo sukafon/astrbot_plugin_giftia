@@ -107,6 +107,8 @@ class Giftia(Star):
         self.user_throttle_time = self.concurrent_config.get("user_throttle_time", 10)
         self.group_throttle_time = self.concurrent_config.get("group_throttle_time", 5)
         self.throttle_map: dict[str, float] = {}
+        # 接话分析窗口计数器 bot_name:group_or_user_id -> remaining_messages
+        self.active_reply_counters: dict[str, int] = {}
         # 防抖字典
         self.user_debounce_time = self.concurrent_config.get("user_debounce_time", 3)
         self.user_max_debounce_time = self.concurrent_config.get(
@@ -146,7 +148,9 @@ class Giftia(Star):
 
         # 实例化
         self.http_manager = HttpManager(self.conf)
-        sticker_summaries = self.sticker_config.get("sticker_summaries", ["这是一张表情包"])
+        sticker_summaries = self.sticker_config.get(
+            "sticker_summaries", ["这是一张表情包"]
+        )
         self.aiocqhttp = AIoCQHTTPAction(sticker_summaries=sticker_summaries)
 
         # 缓存
@@ -161,7 +165,7 @@ class Giftia(Star):
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
         # 实例化
-        self.ltm = LTM(self.embedding_conf, self.rerank_conf)
+        self.ltm = LTM(self.context, self.embedding_conf, self.rerank_conf)
         self.db = await Database.connect()
         self.data_cache = DataCache(
             db=self.db,
@@ -176,7 +180,9 @@ class Giftia(Star):
         sticker_summaries = self.conf.get("sticker_config", {}).get(
             "sticker_summaries", ["这是一张表情包"]
         )
-        self.xml_parse = XmlParse(self.data_cache, self.emoji_manager, sticker_summaries)
+        self.xml_parse = XmlParse(
+            self.data_cache, self.emoji_manager, sticker_summaries
+        )
         self.call_llm = CallLLM(
             context=self.context,
             xml_parse=self.xml_parse,
@@ -210,6 +216,137 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("get_message_context_enabled", True):
             self.context.add_llm_tools(GetMessageContextTool(plugin=self))
             logger.info("已注册函数调用工具: get_message_context")
+
+        # 注册 Web API
+        from .core.web_api import GiftiaWebApi
+
+        self.web_api = GiftiaWebApi(self)
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media",
+            view_handler=self.web_api.get_media,
+            methods=["GET"],
+            desc="Get media captions list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/update",
+            view_handler=self.web_api.update_media,
+            methods=["POST"],
+            desc="Update media caption text",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/delete",
+            view_handler=self.web_api.delete_media,
+            methods=["POST"],
+            desc="Delete media caption",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/<hash_val>",
+            view_handler=self.web_api.get_media_file,
+            methods=["GET"],
+            desc="Get cached media file by hash",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/b64/<hash_val>",
+            view_handler=self.web_api.get_media_file_b64,
+            methods=["GET"],
+            desc="Get cached media file as base64 by hash",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/genres",
+            view_handler=self.web_api.get_media_genres,
+            methods=["GET"],
+            desc="Get all distinct media genres",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/clean",
+            view_handler=self.web_api.clean_media_cache,
+            methods=["POST"],
+            desc="Clean media files cache by criteria",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/memories",
+            view_handler=self.web_api.get_memories,
+            methods=["GET"],
+            desc="Get memories list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/memories/add",
+            view_handler=self.web_api.add_memory,
+            methods=["POST"],
+            desc="Add new memory",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/memories/update",
+            view_handler=self.web_api.update_memory,
+            methods=["POST"],
+            desc="Update memory text",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/memories/delete",
+            view_handler=self.web_api.delete_memory,
+            methods=["POST"],
+            desc="Delete memory",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/status",
+            view_handler=self.web_api.get_bot_status,
+            methods=["GET"],
+            desc="Get bot status list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/status/fill_energy",
+            view_handler=self.web_api.fill_energy,
+            methods=["POST"],
+            desc="Fill bot energy",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/status/update",
+            view_handler=self.web_api.update_bot_status,
+            methods=["POST"],
+            desc="Update bot mood/state",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history",
+            view_handler=self.web_api.get_chat_history,
+            methods=["GET"],
+            desc="Get chat history list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user",
+            view_handler=self.web_api.get_user_profiles,
+            methods=["GET"],
+            desc="Get user profiles list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/update",
+            view_handler=self.web_api.update_user_profile,
+            methods=["POST"],
+            desc="Update user profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/delete",
+            view_handler=self.web_api.delete_user_profile,
+            methods=["POST"],
+            desc="Delete user profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group",
+            view_handler=self.web_api.get_group_profiles,
+            methods=["GET"],
+            desc="Get group profiles list",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/update",
+            view_handler=self.web_api.update_group_profile,
+            methods=["POST"],
+            desc="Update group profile",
+        )
+        self.context.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/delete",
+            view_handler=self.web_api.delete_group_profile,
+            methods=["POST"],
+            desc="Delete group profile",
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("工具列表")
@@ -496,18 +633,20 @@ class Giftia(Star):
                     content=[Plain(task)],
                 )
             )
-        nodes.extend([
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
-            ),
-            Node(
-                uin=event.get_sender_id(),
-                name=event.get_sender_name(),
-                content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
-            ),
-        ])
+        nodes.extend(
+            [
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain(f"共 {len(tasks)} 个任务，当前为第 {index} 页")],
+                ),
+                Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=[Plain("/删除定时任务 <task_id> 删除定时任务")],
+                ),
+            ]
+        )
         if index < total_pages:
             nodes.append(
                 Node(
@@ -594,7 +733,8 @@ class Giftia(Star):
             _, media_caption = await self.data_cache.get_caption_by_filename(file_name)
 
         if media_caption:
-            msg = f"""media_type: {media_caption.media_type}
+            msg = f"""hash_val: {media_caption.hash_val}
+media_type: {media_caption.media_type}
 file_name: {media_caption.file_name}
 genre: {media_caption.genre}
 character: {media_caption.character}
@@ -730,9 +870,10 @@ caption: {media_caption.caption}"""
             else:
                 self.debounce_at_map[debounce_key] = is_just_at
 
+        decrement_counter = False
         if not is_just_at:
-            if not decision_conf.get("enabled", True) or not decision_conf.get(
-                "provider_id"
+            if not decision_conf.get("enabled", True) or not (
+                decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
                 logger.debug("没有at机器人且未开启决策，跳过处理")
                 return
@@ -740,6 +881,69 @@ caption: {media_caption.caption}"""
                 "group_whitelist"
             ) and group_or_user_id not in decision_conf.get("group_whitelist"):
                 logger.debug("没有at机器人且当前群组不在决策白名单内，跳过处理")
+                return
+
+            # Active window & proactive probability check
+            fmt_key = f"{bot_name}:{group_or_user_id}"
+            active_counter = self.active_reply_counters.get(fmt_key, 0)
+            proactive_prob = decision_conf.get("proactive_probability", 0)
+
+            is_active_window = active_counter > 0
+            is_proactive_hit = False
+            is_keyword_hit = False
+
+            if is_active_window:
+                decrement_counter = True
+            else:
+                is_proactive_hit = (
+                    proactive_prob > 0 and random.randint(1, 100) <= proactive_prob
+                )
+
+                # Keyword trigger check
+                if (
+                    not is_proactive_hit
+                    and decision_conf.get("keyword_trigger_enabled", False)
+                    and current_message.content
+                ):
+                    content_lower = current_message.content.lower()
+                    keyword_rules = decision_conf.get("keyword_rules", [])
+                    default_prob = decision_conf.get("keyword_default_probability", 100)
+
+                    for rule_str in keyword_rules:
+                        if not rule_str or not isinstance(rule_str, str):
+                            continue
+                        if ":" in rule_str:
+                            keywords_str, prob_str = rule_str.split(":", 1)
+                            prob = prob_str.strip()
+                        else:
+                            keywords_str = rule_str
+                            prob = default_prob
+
+                        kw_list = [
+                            k.strip()
+                            for k in re.split(r"[,，]", keywords_str)
+                            if k.strip()
+                        ]
+                        for kw in kw_list:
+                            if kw.lower() in content_lower:
+                                try:
+                                    prob_val = int(prob)
+                                except (ValueError, TypeError):
+                                    prob_val = default_prob
+
+                                if random.randint(1, 100) <= prob_val:
+                                    is_keyword_hit = True
+                                    logger.info(
+                                        f"{bot_name} 匹配到兴趣关键词 '{kw}'，触发接话决策"
+                                    )
+                                break
+                        if is_keyword_hit:
+                            break
+
+            if not is_active_window and not is_proactive_hit and not is_keyword_hit:
+                logger.debug(
+                    "没有at机器人且不满足接话分析窗口、主动概率或关键词触发，跳过处理"
+                )
                 return
 
         # 跳过没有文本也没有图片的消息
@@ -886,13 +1090,28 @@ caption: {media_caption.caption}"""
                         user_relation=user_relation,
                     )
                     decision_conf = bot_conf.get("decision_conf", {})
-                    provider_id = decision_conf.get("provider_id")
-                    if not provider_id:
+                    provider_ids = decision_conf.get("provider_ids")
+                    if not provider_ids:
+                        old_provider_id = decision_conf.get("provider_id")
+                        if old_provider_id:
+                            provider_ids = [old_provider_id] + decision_conf.get(
+                                "fallback_provider_ids", []
+                            )
+                        else:
+                            logger.error(f"{bot_name} 未配置决策模型ID")
+                            return None
+                    provider_ids = [p for p in provider_ids if p]
+                    if not provider_ids:
                         logger.error(f"{bot_name} 未配置决策模型ID")
                         return None
-                    provider_ids = [provider_id] + decision_conf.get(
-                        "fallback_provider_ids", []
-                    )
+                    if decrement_counter:
+                        fmt_key = f"{bot_name}:{group_or_user_id}"
+                        self.active_reply_counters[fmt_key] = max(
+                            0, self.active_reply_counters.get(fmt_key, 0) - 1
+                        )
+                        logger.debug(
+                            f"{bot_name} 消耗接话分析窗口次数，当前群组剩余分析次数: {self.active_reply_counters[fmt_key]}"
+                        )
                     result = await self.call_llm.call_llm_decision(
                         provider_ids=provider_ids,
                         system_prompt=decision_conf.get("decision_prompt"),
@@ -970,6 +1189,7 @@ caption: {media_caption.caption}"""
             self.replying_status[reply_key] = self.replying_status.get(reply_key, 0) + 1
 
         try:
+            has_sent_reply = False
             async for chunk in self.dispatch_llm_reply(
                 event=event,
                 bot_name=bot_name,
@@ -988,8 +1208,18 @@ caption: {media_caption.caption}"""
                         group_or_user_id=group_or_user_id,
                         llm_result=chunk,
                     )
+                    if chunk.msg_chains:
+                        has_sent_reply = True
                 else:
                     logger.error(f"{bot_name} 生成消息失败，收到空消息块")
+
+            if has_sent_reply:
+                fmt_key = f"{bot_name}:{group_or_user_id}"
+                window_size = decision_conf.get("reply_active_window", 10)
+                self.active_reply_counters[fmt_key] = window_size
+                logger.info(
+                    f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
+                )
         finally:
             self.replying_status[reply_key] = max(
                 0, self.replying_status.get(reply_key, 0) - 1
@@ -1027,9 +1257,9 @@ caption: {media_caption.caption}"""
             bot_name, group_or_user_id, self.msg_number
         )
         # 先取所有消息的media_id，去重后获取caption xml string
-        hash_vals = list({
-            media_id for msg in recent_messages for media_id in msg.media_id_list
-        })
+        hash_vals = list(
+            {media_id for msg in recent_messages for media_id in msg.media_id_list}
+        )
 
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:
@@ -1095,11 +1325,20 @@ caption: {media_caption.caption}"""
             bot_sticker=bot_sticker_cache,
         )
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
-        provider_id = llm_reply_conf.get("provider_id")
-        if not provider_id:
+        provider_ids = llm_reply_conf.get("provider_ids")
+        if not provider_ids:
+            old_provider_id = llm_reply_conf.get("provider_id")
+            if old_provider_id:
+                provider_ids = [old_provider_id] + llm_reply_conf.get(
+                    "fallback_provider_ids", []
+                )
+            else:
+                logger.error(f"{bot_name} 未配置回复模型ID")
+                return
+        provider_ids = [p for p in provider_ids if p]
+        if not provider_ids:
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
-        provider_ids = [provider_id] + llm_reply_conf.get("fallback_provider_ids", [])
         provider_selection_mode = llm_reply_conf.get(
             "provider_selection_mode", "fallback"
         )
@@ -1342,7 +1581,14 @@ caption: {media_caption.caption}"""
         image_base64 = []
         if len(llm_result.tools_to_call) > 0:
             for tool_name, tool_args in llm_result.tools_to_call:
-                tool = self.context.get_llm_tool_manager().get_func(tool_name)
+                # 兼容处理带命名空间前缀的工具名（例如 default_api:send_meme -> send_meme）
+                clean_tool_name = (
+                    tool_name.split(":")[-1] if ":" in tool_name else tool_name
+                )
+                tool = self.context.get_llm_tool_manager().get_func(clean_tool_name)
+                if tool is None:
+                    tool = self.context.get_llm_tool_manager().get_func(tool_name)
+
                 if tool is None:
                     logger.error(f"{bot_name} 工具 {tool_name} 不存在")
                     result = {
@@ -1356,24 +1602,33 @@ caption: {media_caption.caption}"""
                     context=AstrAgentContext(context=self.context, event=event),
                     tool_call_timeout=self.tools_config.get("timeout", 120),
                 )
-                tool_result = await tool.call(run_context, **tool_args)
-                # 普通字符串返回
+                from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
+
                 result = []
-                if isinstance(tool_result, str):
-                    result.append(tool_result)
-                # MCP工具返回结果(看着类型写的，没测试过)
-                elif isinstance(tool_result, mcp.types.CallToolResult):
-                    for content in tool_result.content:
-                        if isinstance(content, mcp.types.TextContent):
-                            result.append(content.text)
-                        elif isinstance(content, mcp.types.ImageContent):
-                            result.append("图片已直接发送给用户")
-                            image_base64.append("base64://" + content.data)
-                result = {
+                try:
+                    async for tool_result in FunctionToolExecutor.execute(
+                        tool, run_context, **tool_args
+                    ):
+                        if isinstance(tool_result, str):
+                            result.append(tool_result)
+                        elif isinstance(tool_result, mcp.types.CallToolResult):
+                            for content in tool_result.content:
+                                if isinstance(content, mcp.types.TextContent):
+                                    result.append(content.text)
+                                elif isinstance(content, mcp.types.ImageContent):
+                                    result.append("图片已直接发送给用户")
+                                    image_base64.append("base64://" + content.data)
+                except Exception as e:
+                    logger.error(
+                        f"Error executing tool {tool_name}: {e}", exc_info=True
+                    )
+                    result.append(f"工具执行失败: {e}")
+
+                result_dict = {
                     "name": tool_name,
                     "results": "\n".join(result),
                 }
-                tool_results.append(result)
+                tool_results.append(result_dict)
                 success_logs.append(
                     f"<tool_call name={tool_name} args={tool_args} status='finished' />"
                 )
@@ -1796,6 +2051,7 @@ caption: {media_caption.caption}"""
             unified_msg_origin=unified_msg_origin,
             adapter_id=adapter_id,
         )
+        has_sent_reply = False
         async for chunk in self.dispatch_llm_reply(
             event=mock_event,
             bot_name=bot_name,
@@ -1813,6 +2069,8 @@ caption: {media_caption.caption}"""
                             group_or_user_id=group_or_user_id,
                             llm_result=chunk,
                         )
+                        if chunk.msg_chains:
+                            has_sent_reply = True
                         continue
                 # 降级到普通消息发送
                 if not chunk.msg_chains:
@@ -1821,8 +2079,19 @@ caption: {media_caption.caption}"""
                     await self.context.send_message(
                         unified_msg_origin, MessageChain(msg_chain)
                     )
+                    has_sent_reply = True
             else:
                 logger.error(f"{bot_name} 定时任务调度失败，未获取到回复内容")
+
+        if has_sent_reply:
+            fmt_key = f"{bot_name}:{group_or_user_id}"
+            bot_conf = self.bot_map.get(bot_name, {})
+            decision_conf = bot_conf.get("decision_conf", {})
+            window_size = decision_conf.get("reply_active_window", 10)
+            self.active_reply_counters[fmt_key] = window_size
+            logger.info(
+                f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"
+            )
 
     def fake_event(
         self,

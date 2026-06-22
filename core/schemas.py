@@ -65,11 +65,13 @@ class Sticker:
     description: str
     filename: str = ""
 
+
 @dataclass(repr=False, slots=True)
 class BotSticker:
-    timestamp: float    # 缓存时间戳
-    sticker_list: list[str] # 完整的sticker_id列表
+    timestamp: float  # 缓存时间戳
+    sticker_list: list[str]  # 完整的sticker_id列表
     sticker_set: set[str]  # 完整的sticker_id集合
+
 
 @dataclass(repr=False, slots=True)
 class XmlLlmResult:

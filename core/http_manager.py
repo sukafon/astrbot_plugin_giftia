@@ -23,11 +23,32 @@ class HttpManager:
 
     async def download_media(self, url: str) -> bytes:
         """下载媒体文件"""
+        # 如果是本地文件路径，直接从本地读取
+        if not url.startswith("http://") and not url.startswith("https://"):
+            local_path = url
+            if local_path.startswith("file://"):
+                local_path = local_path[7:]
+            # Windows system path handling: file:///C:/path -> C:/path
+            if (
+                local_path.startswith("/")
+                and len(local_path) > 2
+                and local_path[2] == ":"
+            ):
+                local_path = local_path[1:]
+            path = Path(local_path)
+            try:
+                if path.exists():
+                    with open(path, "rb") as f:
+                        return f.read()
+                else:
+                    logger.error(f"本地媒体文件不存在: {path}")
+            except Exception as e:
+                logger.error(f"从本地读取媒体文件失败: {e}, Path: {path}")
+            return b""
+
         for _ in range(3):
             try:
-                headers = {
-                    "Referer": "https://im.qq.com/"
-                }
+                headers = {"Referer": "https://im.qq.com/"}
                 async with self.session.get(url, headers=headers) as resp:
                     if resp.status == 200:
                         return await resp.read()
@@ -43,7 +64,9 @@ class HttpManager:
                 ssl_context = ssl.create_default_context()
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
-                async with self.session.get(url, ssl=ssl_context, headers=headers) as resp:
+                async with self.session.get(
+                    url, ssl=ssl_context, headers=headers
+                ) as resp:
                     if resp.status == 200:
                         return await resp.read()
                     else:
@@ -62,10 +85,15 @@ class HttpManager:
                 is_animated = getattr(img, "is_animated", False)
                 if is_animated:
                     total_frames = getattr(img, "n_frames", 1)
-                    # 决定取哪些帧（这里仍按顺序，但加入了边界保护）
-                    num_to_extract = min(total_frames, max_frames)
-                    for i in range(num_to_extract):
-                        img.seek(i)
+                    if total_frames <= max_frames:
+                        frame_indices = list(range(total_frames))
+                    else:
+                        frame_indices = [
+                            int(i * (total_frames - 1) / (max_frames - 1))
+                            for i in range(max_frames)
+                        ]
+                    for idx in frame_indices:
+                        img.seek(idx)
                         # 使用副本进行转换，不破坏原 img 对象的帧索引
                         frame = img.convert("RGB")
                         buf = BytesIO()

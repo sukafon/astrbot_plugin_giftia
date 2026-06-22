@@ -41,18 +41,12 @@
                                 "default": true,
                                 "hint": "启用小模型判断功能，如果关闭，将不会触发主动回复功能。"
                             },
-                            "provider_id": {
-                                "type": "string",
-                                "description": "小模型提供商",
-                                "_special": "select_provider",
-                                "default": "",
-                                "hint": "留空将跳过使用小模型判断功能。如果使用谷歌API，建议关闭原生搜索功能，否则很容易429"
-                            },
-                            "fallback_provider_ids": {
-                                "description": "回退提供商",
-                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                            "provider_ids": {
                                 "type": "list",
-                                "default": []
+                                "description": "小模型提供商（按优先级多选）",
+                                "_special": "select_providers",
+                                "default": [],
+                                "hint": "选择用于小模型判断的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空将跳过使用小模型判断功能。如果使用谷歌API，建议关闭原生搜索功能，否则很容易429"
                             },
                             "group_whitelist": {
                                 "description": "白名单群组",
@@ -67,6 +61,36 @@
                                 "description": "小模型判断系统提示词",
                                 "default": "",
                                 "hint": "小模型判断的系统提示词。当前仅支持修改系统提示词，如果要修改用户提示词，请直接修改prompt.py文件。"
+                            },
+                            "reply_active_window": {
+                                "type": "int",
+                                "description": "接话分析窗口消息数",
+                                "default": 10,
+                                "hint": "当机器人发言后，后续多少条群消息会触发分析。设置为0表示只在被@时回复。如果再次发言，该计数会被重置。"
+                            },
+                            "proactive_probability": {
+                                "type": "int",
+                                "description": "主动接话触发概率（%）",
+                                "default": 0,
+                                "hint": "当分析计数为0且没有被@时，群友发来的每条消息按照设定概率（0-100）随机触发一次小模型决策。若决策决定回复，则回复并重置分析计数。"
+                            },
+                            "keyword_trigger_enabled": {
+                                "type": "bool",
+                                "description": "启用关键词监听模式",
+                                "default": false,
+                                "hint": "开启后，当群聊消息中提到设置的兴趣关键词时，将按概率触发小模型分析。"
+                            },
+                            "keyword_rules": {
+                                "type": "list",
+                                "description": "兴趣关键词列表",
+                                "hint": "当群聊消息中提到这些关键词时触发分析。支持直接输入关键词，或使用『关键词:概率』格式（例如『原神:50』）指定独立触发概率，多个可用英文逗号分隔。",
+                                "default": []
+                            },
+                            "keyword_default_probability": {
+                                "type": "int",
+                                "description": "关键词默认触发概率（%）",
+                                "hint": "当规则中没有指定概率时使用此默认概率",
+                                "default": 100
                             }
                         }
                     },
@@ -80,18 +104,12 @@
                                 "default": false,
                                 "hint": "启用大模型回复功能"
                             },
-                            "provider_id": {
-                                "type": "string",
-                                "description": "大模型回复提供商",
-                                "_special": "select_provider",
-                                "default": "",
-                                "hint": "留空将跳过使用大模型回复功能"
-                            },
-                            "fallback_provider_ids": {
-                                "description": "回退提供商",
-                                "hint": "当主provider_id重试机会耗尽时，将依次尝试这些提供商。",
+                            "provider_ids": {
                                 "type": "list",
-                                "default": []
+                                "description": "大模型回复提供商（按优先级多选）",
+                                "_special": "select_providers",
+                                "default": [],
+                                "hint": "选择用于大模型回复的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空将跳过使用大模型回复功能。"
                             },
                             "provider_selection_mode": {
                                 "type": "string",
@@ -141,18 +159,12 @@
                 "default": true,
                 "hint": "即使关闭图片转述，当前消息的图片仍然会与提示词一起发送给LLM。"
             },
-            "image_caption_provider_id": {
-                "type": "string",
-                "description": "图片转述提供商",
-                "_special": "select_provider",
-                "default": "",
-                "hint": "若不填写则不启用。"
-            },
-            "image_caption_fallback_provider_ids": {
-                "description": "回退提供商",
-                "hint": "当主图片转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+            "image_caption_provider_ids": {
                 "type": "list",
-                "default": []
+                "description": "图片转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "选择用于图片转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
             "image_caption_system_prompt": {
                 "type": "text",
@@ -168,18 +180,12 @@
                 "default": true,
                 "hint": "即使关闭音频转述，当前消息的音频仍然会与提示词一起发送给LLM。"
             },
-            "audio_caption_provider_id": {
-                "type": "string",
-                "description": "音频转述提供商",
-                "_special": "select_provider",
-                "default": "",
-                "hint": "若不填写则不启用。"
-            },
-            "audio_caption_fallback_provider_ids": {
-                "description": "回退提供商",
-                "hint": "当主音频转述提供商重试机会耗尽时，将依次尝试这些提供商。",
+            "audio_caption_provider_ids": {
                 "type": "list",
-                "default": []
+                "description": "音频转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "选择用于音频转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
             "audio_caption_system_prompt": {
                 "type": "text",
@@ -373,11 +379,23 @@
                         "default": false,
                         "hint": "只有当启动嵌入模型的时候，才支持写入和查询长期记忆。"
                     },
+                    "use_external_provider": {
+                        "description": "使用 AstrBot 嵌入提供商",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后将使用 AstrBot 中配置的 Embedding 提供商，而不是本地 FastEmbed 模型。"
+                    },
+                    "external_provider_id": {
+                        "description": "外部嵌入提供商 ID",
+                        "type": "string",
+                        "default": "",
+                        "hint": "在使用 AstrBot 提供商时生效。如果不填写，将默认使用 AstrBot 当前激活的第一个嵌入模型。"
+                    },
                     "model": {
-                        "description": "模型名称",
+                        "description": "本地模型名称",
                         "type": "string",
                         "default": "BAAI/bge-small-zh-v1.5",
-                        "hint": "嵌入模型名称。FastEmbed并不官方支持通用模型，且支持的模型名单上并没有BAAI/bge-base-zh-v1.5。如需修改，可用 /打印embedding模型 在控制台查看支持的模型列表。更换模型后需手动删除插件数据目录下的lancedb文件夹。"
+                        "hint": "本地嵌入模型名称（使用本地 FastEmbed 引擎时生效）。更换模型或提供商后需手动删除插件数据目录下的lancedb文件夹。"
                     },
                     "top_k": {
                         "description": "返回记忆数量",

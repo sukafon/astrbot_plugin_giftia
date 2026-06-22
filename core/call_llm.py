@@ -1,6 +1,7 @@
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
+from astrbot.core.exceptions import EmptyModelOutputError
 
 from .schemas import (
     Decision,
@@ -25,16 +26,30 @@ class CallLLM:
         self.network_conf = network_config
         self.sticker_analysis_prompt = sticker_analysis_prompt
         # 图片转述配置
-        self.image_caption_provider_ids = [
-            caption_config.get("image_caption_provider_id", "")
-        ] + caption_config.get("image_caption_fallback_provider_ids", [])
+        image_caption_provider_ids = caption_config.get("image_caption_provider_ids")
+        if not image_caption_provider_ids:
+            old_image_provider_id = caption_config.get("image_caption_provider_id")
+            if old_image_provider_id:
+                image_caption_provider_ids = [
+                    old_image_provider_id
+                ] + caption_config.get("image_caption_fallback_provider_ids", [])
+            else:
+                image_caption_provider_ids = []
+        self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
         self.image_caption_prompt = caption_config.get(
             "image_caption_system_prompt", ""
         )
         # 音频转述配置
-        self.audio_caption_provider_ids = [
-            caption_config.get("audio_caption_provider_id", "")
-        ] + caption_config.get("audio_caption_fallback_provider_ids", [])
+        audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids")
+        if not audio_caption_provider_ids:
+            old_audio_provider_id = caption_config.get("audio_caption_provider_id")
+            if old_audio_provider_id:
+                audio_caption_provider_ids = [
+                    old_audio_provider_id
+                ] + caption_config.get("audio_caption_fallback_provider_ids", [])
+            else:
+                audio_caption_provider_ids = []
+        self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
         self.audio_caption_prompt = caption_config.get(
             "audio_caption_system_prompt", ""
         )
@@ -66,9 +81,15 @@ class CallLLM:
                         logger.info(
                             f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
                         )
-                        return self.xml_parse.decode_decision_xml(
+                        result = self.xml_parse.decode_decision_xml(
                             llm_resp.completion_text
                         )
+                        if result is not None:
+                            return result
+                        logger.warning(
+                            f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
+                        )
+                        continue
                     logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
                     continue
                 except Exception as e:
@@ -141,9 +162,30 @@ class CallLLM:
                         result = await self.xml_parse.decode_llm_xml(
                             llm_resp.completion_text, group_or_user_id
                         )
-                        return result
-                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}，provider_id: {provider_id}")
-                    continue
+                        if result is not None:
+                            return result
+                        logger.warning(
+                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
+                        )
+                        continue
+                    elif llm_resp.reasoning_content:
+                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
+                        logger.warning(
+                            f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
+                        )
+                        continue
+                    else:
+                        # Succeeded but both completion and reasoning are empty.
+                        logger.info(
+                            f"LLM returned completely empty response, treating as no reply. provider_id: {provider_id}"
+                        )
+                        return XmlLlmResult()
+                except EmptyModelOutputError:
+                    # Gemini empty output error; treat as no reply needed.
+                    logger.info(
+                        f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
+                    )
+                    return XmlLlmResult()
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
                     continue
@@ -191,7 +233,7 @@ class CallLLM:
                         audio_urls=audio_urls,
                     )
                     if llm_resp.completion_text:
-                        return self.xml_parse.decode_media_caption_xml(
+                        return self.xml_parse.decode_media_audio_xml(
                             llm_resp.completion_text
                         )
                     logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
@@ -246,7 +288,7 @@ class CallLLM:
                             name=result_dict.get("name", "未知表情"),
                             category=result_dict.get("category", "默认分类"),
                             tags=tags,
-                            description=result_dict.get("description", "")
+                            description=result_dict.get("description", ""),
                         )
                         return True, sticker
                 except Exception as e:
