@@ -203,13 +203,12 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
                 try:
-                    # Log a short hash of the actual base64 content being sent, so
-                    # we can confirm distinct images produce distinct hashes here.
-                    # We take the first 128 chars of the payload (after prefix) — enough
-                    # to distinguish different images without hashing the full string.
+                    # Hash a 128-char window starting at offset 200 (past the ~150-char
+                    # JPEG JFIF header in base64), so different images produce different
+                    # fingerprints. Also include the payload length as a discriminator.
                     def _b64_sig(u: str) -> str:
                         payload = u.removeprefix("base64://")
-                        return xxh3_64_hexdigest(payload[:128].encode())
+                        return f"{len(payload)}:{xxh3_64_hexdigest(payload[200:328].encode())}"
 
                     b64_hashes = [_b64_sig(u) for u in image_urls]
                     logger.info(
@@ -222,6 +221,10 @@ class CallLLM:
                         image_urls=image_urls,
                     )
                     if llm_resp.completion_text:
+                        logger.info(
+                            f"[Giftia] LLM转述响应片段: "
+                            f"{llm_resp.completion_text[:120]!r}"
+                        )
                         return self.xml_parse.decode_media_caption_xml(
                             llm_resp.completion_text
                         )
