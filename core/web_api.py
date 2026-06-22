@@ -1063,8 +1063,14 @@ class GiftiaWebApi:
                                 img.save(temp_thumb_path, format="WEBP")
                                 content_type = "image/webp"
                             except Exception:
-                                img.save(temp_thumb_path, format="JPEG")
-                                content_type = "image/jpeg"
+                                try:
+                                    img.save(temp_thumb_path, format="PNG")
+                                    content_type = "image/png"
+                                except Exception:
+                                    # Fallback to JPEG requires converting to RGB mode to support RGBA/P formats
+                                    rgb_img = img.convert("RGB")
+                                    rgb_img.save(temp_thumb_path, format="JPEG")
+                                    content_type = "image/jpeg"
 
                             import os
 
