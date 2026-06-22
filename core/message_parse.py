@@ -20,7 +20,7 @@ from astrbot.api.message_components import (
 from astrbot.core.message.components import BaseMessageComponent
 
 from .call_llm import CallLLM
-from .data_cache import DataCache
+from .data_cache import DataCache, is_temp_or_local_path
 from .http_manager import HttpManager
 from .schemas import MessageData
 from .xml_parse import MediaCaption
@@ -144,7 +144,7 @@ class MessageParser:
                             media_caption = None
                             hash_val = None
 
-                            if file_name:
+                            if file_name and not is_temp_or_local_path(file_name):
                                 (
                                     hash_val,
                                     media_caption,
@@ -169,7 +169,11 @@ class MessageParser:
                             media_caption = None
                             hash_val = None
 
-                            if file_name and self.audio_caption_enabled:
+                            if (
+                                file_name
+                                and self.audio_caption_enabled
+                                and not is_temp_or_local_path(file_name)
+                            ):
                                 (
                                     hash_val,
                                     media_caption,
@@ -210,7 +214,7 @@ class MessageParser:
                 media_caption = None
                 hash_val = None
 
-                if file_name:
+                if file_name and not is_temp_or_local_path(file_name):
                     (
                         hash_val,
                         media_caption,
@@ -234,7 +238,11 @@ class MessageParser:
                 media_caption = None
                 hash_val = None
 
-                if file_name and self.audio_caption_enabled:
+                if (
+                    file_name
+                    and self.audio_caption_enabled
+                    and not is_temp_or_local_path(file_name)
+                ):
                     (
                         hash_val,
                         media_caption,
@@ -268,7 +276,7 @@ class MessageParser:
     ) -> tuple[str | None, MediaCaption | None]:
         """获取图片描述"""
         async with self.url_locks[url]:
-            if file_name:
+            if file_name and not is_temp_or_local_path(file_name):
                 # 检查缓存
                 hash_val, media_caption = await self.data_cache.get_caption_by_filename(
                     file_name
@@ -278,31 +286,6 @@ class MessageParser:
 
             # 尝试从 url 或 file_name 提取 32位 MD5 作为稳定的 hash_val
             stable_hash = None
-
-            def is_temp_or_local_path(s: str | None) -> bool:
-                if not s:
-                    return False
-                if s.startswith(("http://", "https://")):
-                    return False
-                if s.startswith("file://") or any(
-                    marker in s
-                    for marker in [
-                        "media_image_",
-                        "media_audio_",
-                        "media_file_",
-                        "io_temp_img_",
-                        "compressed_",
-                    ]
-                ):
-                    return True
-                import os
-
-                try:
-                    if os.path.isabs(s) or os.path.exists(s):
-                        return True
-                except Exception:
-                    pass
-                return False
 
             if file_name and not is_temp_or_local_path(file_name):
                 match = re.search(r"([a-fA-F0-9]{32})", file_name)
@@ -391,7 +374,7 @@ class MessageParser:
     ) -> tuple[str | None, MediaCaption | None]:
         """获取语音描述"""
         async with self.url_locks[url]:
-            if file_name:
+            if file_name and not is_temp_or_local_path(file_name):
                 # 检查缓存
                 hash_val, media_caption = await self.data_cache.get_caption_by_filename(
                     file_name
