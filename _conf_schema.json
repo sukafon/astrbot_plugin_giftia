@@ -514,6 +514,18 @@
                 "type": "list",
                 "default": [],
                 "hint": "用户ID列表"
+            },
+            "private_user_whitelist_enabled": {
+                "description": "启用私聊用户白名单",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，私聊只响应白名单内的用户。不影响群聊。"
+            },
+            "private_user_whitelist": {
+                "description": "私聊用户ID白名单",
+                "type": "list",
+                "default": [],
+                "hint": "私聊白名单用户ID列表"
             }
         }
     }
