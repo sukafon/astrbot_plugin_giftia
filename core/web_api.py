@@ -1034,9 +1034,8 @@ class GiftiaWebApi:
                         from PIL import Image as PILImage
 
                         with PILImage.open(cache_file) as img:
-                            orig_format = img.format
-                            # If GIF, extract first frame
-                            if orig_format == "GIF":
+                            # If animated (GIF, animated WebP, etc.), extract first frame
+                            if getattr(img, "is_animated", False):
                                 img.seek(0)
                                 img = img.copy()
 
