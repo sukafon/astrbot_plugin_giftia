@@ -438,7 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const mediaUrl = `/api/plug/astrbot_plugin_giftia/media/file/${item.hash_val}`;
             if (item.media_type === "image" && item.url) {
                 preview = `<img src="${mediaUrl}" alt="预览图片" onerror="this.onerror=function(){this.onerror=null;this.src='placeholder.png';};this.src='${item.url}';">`;
-            } else if (item.media_type === "voice" && item.url) {
+            } else if ((item.media_type === "audio" || item.media_type === "voice") && item.url) {
                 preview = `<audio class="media-audio-player" controls src="${mediaUrl}" onerror="this.onerror=null;this.src='${item.url}';"></audio>`;
             } else {
                 preview = `<div style="font-size: 32px;">📄</div>`;
@@ -610,7 +610,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const mediaUrl = `/api/plug/astrbot_plugin_giftia/media/file/${hash}`;
         if (type === "image" && url) {
             previewContainer.innerHTML = `<img src="${mediaUrl}" alt="预览" onerror="this.onerror=function(){this.onerror=null;this.src='placeholder.png';};this.src='${url}';">`;
-        } else if (type === "voice" && url) {
+        } else if ((type === "audio" || type === "voice") && url) {
             previewContainer.innerHTML = `<audio controls src="${mediaUrl}" onerror="this.onerror=null;this.src='${url}';"></audio>`;
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
