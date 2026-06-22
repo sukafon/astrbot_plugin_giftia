@@ -709,7 +709,8 @@ class Giftia(Star):
             _, media_caption = await self.data_cache.get_caption_by_filename(file_name)
 
         if media_caption:
-            msg = f"""media_type: {media_caption.media_type}
+            msg = f"""hash_val: {media_caption.hash_val}
+media_type: {media_caption.media_type}
 file_name: {media_caption.file_name}
 genre: {media_caption.genre}
 character: {media_caption.character}
