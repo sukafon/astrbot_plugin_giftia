@@ -58,13 +58,15 @@ class MessageParser:
         self.hash_locks = defaultdict(asyncio.Lock)
 
     async def parse_user_message(
-        self, event: AstrMessageEvent, bot_name: str
+        self, event: AstrMessageEvent, bot_name: str, defer_caption: bool = False
     ) -> tuple[MessageData, list[str], list[str]]:
         """解析用户发送的消息"""
         # 获取时间
         iso_string = datetime.fromtimestamp(event.message_obj.timestamp).isoformat()
         # 获取消息内容
-        msg, media_id_list = await self.chain_to_str(event.get_messages())
+        msg, media_id_list = await self.chain_to_str(
+            event.get_messages(), defer_caption
+        )
         group_or_user_id = event.get_group_id() or event.get_sender_id()
         # 提取消息中的图片url
         image_urls = []
@@ -121,7 +123,7 @@ class MessageParser:
         return msg_data, image_urls, audio_urls
 
     async def chain_to_str(
-        self, chain: list[BaseMessageComponent]
+        self, chain: list[BaseMessageComponent], defer_caption: bool = False
     ) -> tuple[str, list[str]]:
         """将消息链转换为字符串，用于接收用户消息时转换使用"""
         msg_parts = []
@@ -154,7 +156,7 @@ class MessageParser:
 
                             if not media_caption and quote.url:
                                 hash_val, media_caption = await self._get_image_caption(
-                                    quote.url, file_name
+                                    quote.url, file_name, defer_caption
                                 )
                             if hash_val and media_caption:
                                 quote_parts.append(f"[图片:{hash_val}]")
@@ -187,7 +189,7 @@ class MessageParser:
                                 and self.audio_caption_enabled
                             ):
                                 hash_val, media_caption = await self._get_audio_caption(
-                                    quote.url, file_name
+                                    quote.url, file_name, defer_caption
                                 )
                             if hash_val and media_caption:
                                 quote_parts.append(f"[语音:{hash_val}]")
@@ -222,7 +224,7 @@ class MessageParser:
 
                 if not media_caption and comp.url:
                     hash_val, media_caption = await self._get_image_caption(
-                        comp.url, file_name
+                        comp.url, file_name, defer_caption
                     )
                 if hash_val and media_caption:
                     msg_parts.append(f"[图片:{hash_val}]")
@@ -250,7 +252,7 @@ class MessageParser:
 
                 if not media_caption and comp.url and self.audio_caption_enabled:
                     hash_val, media_caption = await self._get_audio_caption(
-                        comp.url, file_name
+                        comp.url, file_name, defer_caption
                     )
                 if hash_val and media_caption:
                     msg_parts.append(f"[语音:{hash_val}]")
@@ -272,7 +274,7 @@ class MessageParser:
         return " ".join(msg_parts), media_id_list
 
     async def _get_image_caption(
-        self, url: str, file_name: str | None = None
+        self, url: str, file_name: str | None = None, defer_caption: bool = False
     ) -> tuple[str | None, MediaCaption | None]:
         """获取图片描述"""
         async with self.url_locks[url]:
@@ -282,7 +284,8 @@ class MessageParser:
                     file_name
                 )
                 if hash_val and media_caption:
-                    return hash_val, media_caption
+                    if getattr(media_caption, "is_captioned", True) or defer_caption:
+                        return hash_val, media_caption
 
             # Try to extract a stable MD5 hash from file_name as the stable identifier.
             # Only file_name is used — URLs are intentionally excluded because they often
@@ -303,8 +306,9 @@ class MessageParser:
                     media_caption.url = url
                     if file_name:
                         media_caption.file_name = file_name
-                    await self.data_cache.set_caption(media_caption)
-                    return stable_hash, media_caption
+                    if getattr(media_caption, "is_captioned", True) or defer_caption:
+                        await self.data_cache.set_caption(media_caption)
+                        return stable_hash, media_caption
 
             # 下载图片
             image_bytes = await self.http_manager.download_media(url)
@@ -334,11 +338,30 @@ class MessageParser:
                 media_caption.url = url
                 if file_name:
                     media_caption.file_name = file_name
+                if getattr(media_caption, "is_captioned", True) or defer_caption:
+                    await self.data_cache.set_caption(media_caption)
+                    return hash_val, media_caption
+
+            # 如果开启了延迟，或者未开启转述，直接返回一个仅包含url和hash的基础对象
+            if defer_caption:
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="image",
+                    is_captioned=False,
+                )
+                if file_name:
+                    media_caption.file_name = file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
-            # 如果未开启转述，直接返回一个仅包含url和hash的基础对象
+
             if not self.image_caption_enabled:
-                media_caption = MediaCaption(hash_val=hash_val, url=url)
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="image",
+                    is_captioned=True,
+                )
                 if file_name:
                     media_caption.file_name = file_name
                 await self.data_cache.set_caption(media_caption)
@@ -349,7 +372,12 @@ class MessageParser:
                 self.http_manager.handle_image, image_bytes
             )
             if not base64s:
-                media_caption = MediaCaption(hash_val=hash_val, url=url)
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="image",
+                    is_captioned=True,
+                )
                 if file_name:
                     media_caption.file_name = file_name
                 await self.data_cache.set_caption(media_caption)
@@ -365,7 +393,12 @@ class MessageParser:
             # 调用LLM生成图片描述
             media_caption = await self.call_llm.call_llm_image_caption(base64s)
             if not media_caption:
-                media_caption = MediaCaption(hash_val=hash_val, url=url)
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="image",
+                    is_captioned=True,
+                )
                 if file_name:
                     media_caption.file_name = file_name
                 await self.data_cache.set_caption(media_caption)
@@ -374,12 +407,14 @@ class MessageParser:
             media_caption.url = url
             if file_name:
                 media_caption.file_name = file_name
+            media_caption.media_type = "image"
+            media_caption.is_captioned = True
             # 缓存
             await self.data_cache.set_caption(media_caption)
             return hash_val, media_caption
 
     async def _get_audio_caption(
-        self, url: str, file_name: str | None = None
+        self, url: str, file_name: str | None = None, defer_caption: bool = False
     ) -> tuple[str | None, MediaCaption | None]:
         """获取语音描述"""
         async with self.url_locks[url]:
@@ -389,15 +424,24 @@ class MessageParser:
                     file_name
                 )
                 if hash_val and media_caption:
-                    return hash_val, media_caption
-            # 调用LLM生成语音描述
-            media_caption = await self.call_llm.call_llm_audio_caption([url])
-            if not media_caption:
-                return None, None
+                    if getattr(media_caption, "is_captioned", True) or defer_caption:
+                        return hash_val, media_caption
+
             # 语音的hash_val用url生成
             hash_val = xxh3_64_hexdigest(url.encode())
 
+            # 检查缓存
+            media_caption = await self.data_cache.get_caption_by_hash(hash_val)
+            if media_caption:
+                media_caption.url = url
+                if file_name:
+                    media_caption.file_name = file_name
+                if getattr(media_caption, "is_captioned", True) or defer_caption:
+                    await self.data_cache.set_caption(media_caption)
+                    return hash_val, media_caption
+
             # 下载并保存语音文件，以便永久播放
+            audio_bytes = None
             try:
                 audio_bytes = await self.http_manager.download_media(url)
                 if audio_bytes:
@@ -413,10 +457,39 @@ class MessageParser:
             except Exception as e:
                 logger.error(f"[Giftia] 保存音频缓存失败: {e}")
 
+            if defer_caption:
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="audio",
+                    is_captioned=False,
+                )
+                if file_name:
+                    media_caption.file_name = file_name
+                await self.data_cache.set_caption(media_caption)
+                return hash_val, media_caption
+
+            # 调用LLM生成语音描述
+            media_caption = await self.call_llm.call_llm_audio_caption([url])
+            if not media_caption:
+                # 即使LLM失败，也需要保存一个未转述的或者空的对象，但标记为 captioned=False 方便后续重试
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=url,
+                    media_type="audio",
+                    is_captioned=False,
+                )
+                if file_name:
+                    media_caption.file_name = file_name
+                await self.data_cache.set_caption(media_caption)
+                return hash_val, media_caption
+
             media_caption.hash_val = hash_val
             media_caption.url = url
             if file_name:
                 media_caption.file_name = file_name
+            media_caption.media_type = "audio"
+            media_caption.is_captioned = True
             # 缓存
             await self.data_cache.set_caption(media_caption)
             return hash_val, media_caption

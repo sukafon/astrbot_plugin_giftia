@@ -118,7 +118,9 @@ class GiftiaWebApi:
                 conditions.append("media_type = ?")
                 params.append(media_type)
             if search:
-                conditions.append("(caption LIKE ? OR file_name LIKE ? OR hash_val LIKE ?)")
+                conditions.append(
+                    "(caption LIKE ? OR file_name LIKE ? OR hash_val LIKE ?)"
+                )
                 params.append(f"%{search}%")
                 params.append(f"%{search}%")
                 params.append(f"%{search}%")
@@ -135,7 +137,7 @@ class GiftiaWebApi:
 
             # Query data
             data_sql = f"""
-                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times, created_at
+                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at
                 FROM media_caption
                 {where_clause}
                 ORDER BY created_at DESC
@@ -158,6 +160,7 @@ class GiftiaWebApi:
                             "source": r["source"],
                             "text": r["text"],
                             "caption": r["caption"],
+                            "is_captioned": bool(r["is_captioned"]),
                             "query_times": r["query_times"],
                             "created_at": r["created_at"],
                         }

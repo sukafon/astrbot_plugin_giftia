@@ -194,6 +194,18 @@
                 "description": "音频转述系统提示词",
                 "default": "",
                 "hint": "音频转述的系统提示词。依旧是只能修改系统提示词。"
+            },
+            "defer_caption_enabled": {
+                "description": "按需延迟媒体转述",
+                "type": "bool",
+                "default": true,
+                "hint": "在群组未活跃或机器人未被直接召唤时，不立刻调用大模型进行媒体（图片/语音）转述，直到决定回复时再按需补全转述，极大减少Token消耗。"
+            },
+            "max_deferred_captions": {
+                "description": "单次补全转述上限",
+                "type": "int",
+                "default": 5,
+                "hint": "当触发按需补全转述时，一次回复流程中最多对多少个未转述的媒体进行转述（避免上下文内未转述媒体过多时单次产生过多LLM调用）。"
             }
         }
     },
