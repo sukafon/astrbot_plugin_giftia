@@ -19,6 +19,7 @@ class GiftiaWebApi:
             limit = int(request.query.get("limit", 20))
             bot_name = request.query.get("bot_name")
             group_or_user_id = request.query.get("group_or_user_id")
+            user_id = request.query.get("user_id")
             reply_decision = request.query.get("reply_decision")
             use_rag = request.query.get("use_rag")
             search = request.query.get("search")
@@ -33,6 +34,9 @@ class GiftiaWebApi:
             if group_or_user_id:
                 conditions.append("group_or_user_id = ?")
                 params.append(group_or_user_id)
+            if user_id:
+                conditions.append("user_id = ?")
+                params.append(user_id)
             if reply_decision is not None and reply_decision != "":
                 conditions.append("reply_decision = ?")
                 params.append(int(reply_decision))
@@ -118,7 +122,9 @@ class GiftiaWebApi:
                 conditions.append("media_type = ?")
                 params.append(media_type)
             if search:
-                conditions.append("(caption LIKE ? OR file_name LIKE ? OR hash_val LIKE ?)")
+                conditions.append(
+                    "(caption LIKE ? OR file_name LIKE ? OR hash_val LIKE ?)"
+                )
                 params.append(f"%{search}%")
                 params.append(f"%{search}%")
                 params.append(f"%{search}%")
@@ -135,7 +141,7 @@ class GiftiaWebApi:
 
             # Query data
             data_sql = f"""
-                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times, created_at
+                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at
                 FROM media_caption
                 {where_clause}
                 ORDER BY created_at DESC
@@ -158,6 +164,7 @@ class GiftiaWebApi:
                             "source": r["source"],
                             "text": r["text"],
                             "caption": r["caption"],
+                            "is_captioned": bool(r["is_captioned"]),
                             "query_times": r["query_times"],
                             "created_at": r["created_at"],
                         }

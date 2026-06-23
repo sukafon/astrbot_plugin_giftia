@@ -1,3 +1,5 @@
+from xxhash import xxh3_64_hexdigest
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
@@ -201,12 +203,32 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM生成图片描述失败，{provider_id} 重试第 {i} 次")
                 try:
+                    # Hash a 128-char window starting at offset 200 (past the ~150-char
+                    # JPEG JFIF header in base64), so different images produce different
+                    # fingerprints. Also include the payload length as a discriminator.
+                    def _b64_sig(u: str) -> str:
+                        payload = u.removeprefix("base64://")
+                        return f"{len(payload)}:{xxh3_64_hexdigest(payload[200:328].encode())}"
+
+                    b64_hashes = [_b64_sig(u) for u in image_urls]
+                    logger.debug(
+                        f"[Giftia] 发送给LLM的图片内容hash: {b64_hashes} "
+                        f"provider={provider_id}"
+                    )
+                    # Append a unique fingerprint of the images to the prompt.
+                    # This prevents any upstream proxy or API-level cache from returning
+                    # a stale description if they compute cache keys based purely on the text prompt.
+                    unique_prompt = f"{self.image_caption_prompt}\n\n[Image Fingerprint: {','.join(b64_hashes)}]"
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
-                        prompt=self.image_caption_prompt,
+                        prompt=unique_prompt,
                         image_urls=image_urls,
                     )
                     if llm_resp.completion_text:
+                        logger.info(
+                            f"[Giftia] LLM转述响应片段: "
+                            f"{llm_resp.completion_text[:120]!r}"
+                        )
                         return self.xml_parse.decode_media_caption_xml(
                             llm_resp.completion_text
                         )
@@ -227,9 +249,14 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM生成音频描述失败，{provider_id} 重试第 {i} 次")
                 try:
+                    # Generate a unique fingerprint of the audio URLs.
+                    audio_fingerprints = [
+                        xxh3_64_hexdigest(u.encode()) for u in audio_urls
+                    ]
+                    unique_prompt = f"{self.audio_caption_prompt}\n\n[Audio Fingerprint: {','.join(audio_fingerprints)}]"
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
-                        prompt=self.audio_caption_prompt,
+                        prompt=unique_prompt,
                         audio_urls=audio_urls,
                     )
                     if llm_resp.completion_text:
@@ -263,9 +290,15 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM表情包分析失败，{provider_id} 重试第 {i} 次")
                 try:
+                    # Append a unique fingerprint of the images to the prompt.
+                    # This prevents any upstream proxy or API-level cache from returning
+                    # a stale description if they compute cache keys based purely on the text prompt.
+                    unique_prompt = (
+                        f"{prompt}\n\n[Sticker Fingerprint: {','.join(image_urls)}]"
+                    )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
-                        prompt=prompt,
+                        prompt=unique_prompt,
                         image_urls=image_urls,
                     )
                     if llm_resp.completion_text:

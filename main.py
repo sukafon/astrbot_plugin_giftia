@@ -861,13 +861,38 @@ caption: {media_caption.caption}"""
 
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
+        # Check if deferred transcription is enabled
+        caption_config = bot_conf.get("caption_config", {})
+        defer_enabled = caption_config.get("defer_caption_enabled", True)
+
+        should_defer = False
+        if defer_enabled:
+            # Pre-calculate at-mention and active reply counters
+            is_just_at = any(
+                isinstance(c, At) and str(c.qq) == event.get_self_id()
+                for c in event.get_messages()
+            )
+            is_private = not event.get_group_id()
+            if is_private and self.private_chat_bypass:
+                is_just_at = True
+
+            fmt_key = f"{bot_name}:{group_or_user_id}"
+            active_counter = self.active_reply_counters.get(fmt_key, 0)
+            is_active_window = active_counter > 0
+
+            # Defer only if the bot is NOT actively replying or directly mentioned
+            if not is_just_at and not is_active_window:
+                should_defer = True
+
         # 处理当前消息同时进行了缓存
         async with self.parse_locks[f"{bot_name}:{group_or_user_id}"]:
             (
                 current_message,
                 image_urls,
                 audio_urls,
-            ) = await self.message_parser.parse_user_message(event, bot_name)
+            ) = await self.message_parser.parse_user_message(
+                event, bot_name, defer_caption=should_defer
+            )
 
         decision_conf = bot_conf.get("decision_conf", {})
         # 如果没有at机器人且未开启决策，直接返回
@@ -1282,10 +1307,91 @@ caption: {media_caption.caption}"""
             {media_id for msg in recent_messages for media_id in msg.media_id_list}
         )
 
+        caption_config = bot_conf.get("caption_config", {})
+        max_deferred = caption_config.get("max_deferred_captions", 5)
+        deferred_count = 0
+
         media_captions: list[MediaCaption] = []
         for hash_val in hash_vals:
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
+                # If the media caption has not been transcribed yet, transcribe it now
+                if not getattr(media_caption, "is_captioned", True):
+                    if deferred_count < max_deferred:
+                        deferred_count += 1
+                        logger.info(
+                            f"[Giftia] 延迟转述触发: hash={hash_val}, type={media_caption.media_type}"
+                        )
+                        try:
+                            from astrbot.core.star.star_tools import StarTools
+
+                            cache_file = (
+                                StarTools.get_data_dir("astrbot_plugin_giftia")
+                                / "media_cache"
+                                / hash_val
+                            )
+                            if media_caption.media_type == "audio":
+                                audio_urls = (
+                                    [str(cache_file)]
+                                    if cache_file.exists()
+                                    else [media_caption.url]
+                                )
+                                if audio_urls and audio_urls[0]:
+                                    transcribed = (
+                                        await self.call_llm.call_llm_audio_caption(
+                                            audio_urls
+                                        )
+                                    )
+                                    if transcribed:
+                                        media_caption.genre = transcribed.genre
+                                        media_caption.character = transcribed.character
+                                        media_caption.source = transcribed.source
+                                        media_caption.text = transcribed.text
+                                        media_caption.caption = transcribed.caption
+                                        media_caption.is_captioned = True
+                                        await self.data_cache.update_caption(
+                                            media_caption
+                                        )
+                            else:  # image or other media
+                                image_bytes = None
+                                if cache_file.exists():
+                                    try:
+                                        image_bytes = cache_file.read_bytes()
+                                    except Exception as e:
+                                        logger.error(f"[Giftia] 读取图片缓存失败: {e}")
+                                if not image_bytes and media_caption.url:
+                                    image_bytes = (
+                                        await self.http_manager.download_media(
+                                            media_caption.url
+                                        )
+                                    )
+                                if image_bytes:
+                                    base64s, is_animated = await asyncio.to_thread(
+                                        self.http_manager.handle_image, image_bytes
+                                    )
+                                    if base64s:
+                                        transcribed = (
+                                            await self.call_llm.call_llm_image_caption(
+                                                base64s
+                                            )
+                                        )
+                                        if transcribed:
+                                            media_caption.genre = transcribed.genre
+                                            media_caption.character = (
+                                                transcribed.character
+                                            )
+                                            media_caption.source = transcribed.source
+                                            media_caption.text = transcribed.text
+                                            media_caption.caption = transcribed.caption
+                                            media_caption.is_captioned = True
+                                            await self.data_cache.update_caption(
+                                                media_caption
+                                            )
+                        except Exception as e:
+                            logger.error(
+                                f"[Giftia] 延迟转述处理失败: {e}", exc_info=True
+                            )
+
                 if await self.emoji_manager.has_sticker(bot_name, hash_val):
                     media_caption = copy.copy(media_caption)
                     media_caption.caption += " (你已收藏此表情包)"
