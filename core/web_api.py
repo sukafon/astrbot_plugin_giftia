@@ -19,6 +19,7 @@ class GiftiaWebApi:
             limit = int(request.query.get("limit", 20))
             bot_name = request.query.get("bot_name")
             group_or_user_id = request.query.get("group_or_user_id")
+            user_id = request.query.get("user_id")
             reply_decision = request.query.get("reply_decision")
             use_rag = request.query.get("use_rag")
             search = request.query.get("search")
@@ -33,6 +34,9 @@ class GiftiaWebApi:
             if group_or_user_id:
                 conditions.append("group_or_user_id = ?")
                 params.append(group_or_user_id)
+            if user_id:
+                conditions.append("user_id = ?")
+                params.append(user_id)
             if reply_decision is not None and reply_decision != "":
                 conditions.append("reply_decision = ?")
                 params.append(int(reply_decision))

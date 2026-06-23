@@ -43,6 +43,7 @@ window.GiftiaApp = {
             limit: this.pagination.history.limit,
             bot_name: document.getElementById("history-bot-name").value,
             group_or_user_id: document.getElementById("history-group-id").value,
+            user_id: document.getElementById("history-user-id").value,
             reply_decision: document.getElementById("history-decision").value,
             use_rag: document.getElementById("history-rag").value,
             search: document.getElementById("history-search").value
@@ -625,7 +626,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Filter Listeners (Debounced)
     let filterTimeout;
     const filterInputIds = [
-        "history-bot-name", "history-group-id", "history-decision", "history-rag", "history-search",
+        "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
         "memory-bot-name", "memory-group-id", "memory-search",
         "media-type", "media-search",
         "user-profile-bot-name", "user-profile-group-id", "user-profile-user-id", "user-profile-search",
