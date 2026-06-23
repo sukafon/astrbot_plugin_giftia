@@ -43,6 +43,7 @@ window.GiftiaApp = {
             limit: this.pagination.history.limit,
             bot_name: document.getElementById("history-bot-name").value,
             group_or_user_id: document.getElementById("history-group-id").value,
+            user_id: document.getElementById("history-user-id").value,
             reply_decision: document.getElementById("history-decision").value,
             use_rag: document.getElementById("history-rag").value,
             search: document.getElementById("history-search").value
@@ -326,10 +327,14 @@ window.GiftiaApp = {
             const encodedSource = encodeURIComponent(item.source || "");
             const encodedText = encodeURIComponent(item.text || "");
 
+            const badgeClass = item.is_captioned ? "badge-success" : "badge-secondary";
+            const badgeText = item.is_captioned ? "已转述" : "待转述";
+
             return `
                 <div class="media-card card">
                     <div class="media-preview-box">
                         ${preview}
+                        <span class="badge ${badgeClass}" style="position: absolute; top: 8px; right: 8px; z-index: 10;">${badgeText}</span>
                     </div>
                     <div class="media-info">
                         <div class="media-caption-text">${window.escapeHtml(item.caption || "暂无描述内容")}</div>
@@ -621,7 +626,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Filter Listeners (Debounced)
     let filterTimeout;
     const filterInputIds = [
-        "history-bot-name", "history-group-id", "history-decision", "history-rag", "history-search",
+        "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
         "memory-bot-name", "memory-group-id", "memory-search",
         "media-type", "media-search",
         "user-profile-bot-name", "user-profile-group-id", "user-profile-user-id", "user-profile-search",

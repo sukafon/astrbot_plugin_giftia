@@ -27,6 +27,7 @@ class MediaCaption:
     source: str = ""
     text: str = ""
     caption: str = ""
+    is_captioned: bool = True
 
 
 @dataclass(repr=False, slots=True)

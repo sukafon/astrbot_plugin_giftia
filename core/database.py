@@ -75,11 +75,24 @@ class Database:
                     source TEXT,
                     text TEXT,
                     caption TEXT,
+                    is_captioned INTEGER DEFAULT 1,
                     query_times INTEGER,
                     created_at DATETIME,
                     updated_at DATETIME
                 )
             """)
+            try:
+                await cursor.execute(
+                    "ALTER TABLE media_caption ADD COLUMN is_captioned INTEGER DEFAULT 1"
+                )
+            except aiosqlite.OperationalError as e:
+                if (
+                    "duplicate" not in str(e).lower()
+                    and "already exists" not in str(e).lower()
+                ):
+                    logger.warning(
+                        f"Failed to add is_captioned column to media_caption: {e}"
+                    )
             # 创建索引
             await cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_url ON media_caption (url)"
@@ -508,8 +521,8 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 media_caption.hash_val,
@@ -521,6 +534,7 @@ class Database:
                 media_caption.source,
                 media_caption.text,
                 media_caption.caption,
+                1 if media_caption.is_captioned else 0,
                 0,
                 update_time,
                 update_time,
@@ -531,7 +545,7 @@ class Database:
     async def get_media_caption_by_hash(self, hash_val: str) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE hash_val = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times FROM media_caption WHERE hash_val = ?
             """,
             (hash_val,),
         ) as cursor:
@@ -548,6 +562,7 @@ class Database:
                 source=row["source"],
                 text=row["text"],
                 caption=row["caption"],
+                is_captioned=bool(row["is_captioned"]),
             )
             return caption
         return None
@@ -557,7 +572,7 @@ class Database:
     ) -> MediaCaption | None:
         async with self.conn.execute(
             """
-            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, query_times FROM media_caption WHERE file_name = ?
+            SELECT hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times FROM media_caption WHERE file_name = ?
             """,
             (file_name,),
         ) as cursor:
@@ -574,9 +589,34 @@ class Database:
                 source=row["source"],
                 text=row["text"],
                 caption=row["caption"],
+                is_captioned=bool(row["is_captioned"]),
             )
             return caption
         return None
+
+    async def update_media_caption(
+        self,
+        media_caption: MediaCaption,
+    ):
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.conn.execute(
+            """
+            UPDATE media_caption
+            SET genre = ?, character = ?, source = ?, text = ?, caption = ?, is_captioned = ?, updated_at = ?
+            WHERE hash_val = ?
+            """,
+            (
+                media_caption.genre,
+                media_caption.character,
+                media_caption.source,
+                media_caption.text,
+                media_caption.caption,
+                1 if media_caption.is_captioned else 0,
+                update_time,
+                media_caption.hash_val,
+            ),
+        )
+        await self.conn.commit()
 
     async def increment_media_query_times(self, hash_val: str):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
