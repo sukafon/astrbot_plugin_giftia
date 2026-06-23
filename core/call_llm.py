@@ -211,7 +211,7 @@ class CallLLM:
                         return f"{len(payload)}:{xxh3_64_hexdigest(payload[200:328].encode())}"
 
                     b64_hashes = [_b64_sig(u) for u in image_urls]
-                    logger.info(
+                    logger.debug(
                         f"[Giftia] 发送给LLM的图片内容hash: {b64_hashes} "
                         f"provider={provider_id}"
                     )
