@@ -221,7 +221,7 @@ def parse_status_to_str(status: Status) -> str:
         energy_val = 100
     return f"""心情：{status.mood}
 状态：{status.state}
-记忆：{status.memory}
+思考：{status.memory}
 动作：{status.action}
 能量：{energy_val:.0f}"""
 

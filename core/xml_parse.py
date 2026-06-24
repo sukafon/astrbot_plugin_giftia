@@ -98,7 +98,9 @@ class XmlParse:
                         parsed_data.get("能量", "100").strip().strip("\"'")
                     )
                     result.status.memory = (
-                        parsed_data.get("记忆", "").strip().strip("\"'")
+                        (parsed_data.get("思考") or parsed_data.get("记忆", ""))
+                        .strip()
+                        .strip("\"'")
                     )
 
                 elif tag_name == "message":

@@ -158,60 +158,195 @@
     transform: translateY(-2px);
 }
 
-.status-header {
+/* Redesigned Card Header */
+.status-card-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-}
-
-.status-bot-title h3 {
-    font-size: 18px;
-    font-weight: 600;
-}
-
-.status-bot-title p {
-    font-size: 12px;
-    color: var(--font-secondary);
-}
-
-.status-body {
-    display: flex;
-    flex-direction: column;
     gap: 12px;
 }
 
-.status-row {
+.status-card-titles {
     display: flex;
-    justify-content: space-between;
-    font-size: 13px;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
-.status-label {
-    color: var(--font-secondary);
-}
-
-.status-value {
-    font-weight: 500;
-}
-
-.energy-bar-container {
-    width: 100%;
-    height: 8px;
-    background-color: var(--border-color);
-    border-radius: 4px;
+.status-card-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--font-color);
+    white-space: nowrap;
     overflow: hidden;
-    margin-top: 4px;
+    text-overflow: ellipsis;
 }
 
-.energy-bar-fill {
-    height: 100%;
-    background-color: var(--success);
+.status-card-subtitle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-card-subtitle {
+    font-size: 12px;
+    color: var(--font-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.btn-copy-icon {
+    background: none;
+    border: none;
+    padding: 2px;
+    color: var(--font-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
     border-radius: 4px;
-    transition: width 0.5s ease-out;
+    transition: all 0.2s ease;
 }
 
-.energy-bar-fill.low-energy {
-    background-color: var(--danger);
+.btn-copy-icon:hover {
+    color: var(--primary);
+    background-color: var(--primary-light);
+}
+
+/* Energy Badge */
+.status-energy-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 20px;
+    background-color: var(--success-bg);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.15);
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.status-energy-badge.low-energy {
+    background-color: var(--danger-bg);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.15);
+}
+
+.status-energy-badge .energy-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status-energy-badge strong {
+    font-weight: 700;
+}
+
+/* Pill Badges Row */
+.status-badges-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 30px;
+    font-size: 12px;
+    border: 1px solid transparent;
+}
+
+.status-pill .pill-label {
+    font-size: 11px;
+    color: var(--font-secondary);
+    opacity: 0.85;
+}
+
+.status-pill .pill-value {
+    font-weight: 600;
+}
+
+/* Light / Dark Mode adaptive colors for pills */
+.status-pill-mood {
+    background-color: rgba(99, 102, 241, 0.06);
+    border-color: rgba(99, 102, 241, 0.15);
+    color: #4f46e5;
+}
+html[data-theme="dark"] .status-pill-mood {
+    background-color: rgba(129, 140, 248, 0.12);
+    border-color: rgba(129, 140, 248, 0.25);
+    color: #a5b4fc;
+}
+
+.status-pill-state {
+    background-color: rgba(217, 119, 6, 0.06);
+    border-color: rgba(217, 119, 6, 0.15);
+    color: #d97706;
+}
+html[data-theme="dark"] .status-pill-state {
+    background-color: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.25);
+    color: #fcd34d;
+}
+
+.status-pill-action {
+    background-color: rgba(13, 148, 136, 0.06);
+    border-color: rgba(13, 148, 136, 0.15);
+    color: #0d9488;
+}
+html[data-theme="dark"] .status-pill-action {
+    background-color: rgba(45, 212, 191, 0.12);
+    border-color: rgba(45, 212, 191, 0.25);
+    color: #5eead4;
+}
+
+/* Inset Thought Box */
+.status-thought-box {
+    background-color: rgba(0, 0, 0, 0.02);
+    border: 1px dashed var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+    transition: background-color 0.3s ease;
+}
+
+html[data-theme="dark"] .status-thought-box {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.status-thought-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--font-secondary);
+    font-weight: 600;
+}
+
+.status-thought-header .thought-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--primary);
+}
+
+.status-thought-content {
+    font-size: 13px;
+    color: var(--font-color);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 
 .status-actions {
@@ -220,7 +355,7 @@
     gap: 8px;
     border-top: 1px solid var(--border-color);
     padding-top: 12px;
-    margin-top: 8px;
+    margin-top: auto;
 }
 
 /* Media Grid Layout */

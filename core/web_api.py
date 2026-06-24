@@ -513,13 +513,15 @@ class GiftiaWebApi:
             return error_response(f"补充能量失败: {str(e)}")
 
     async def update_bot_status(self):
-        """Update bot mood or active state."""
+        """Update bot mood, state, memory, or action."""
         try:
             body = await request.json()
             bot_name = body.get("bot_name")
             group_or_user_id = body.get("group_or_user_id")
             mood = body.get("mood")
             state = body.get("state")
+            memory = body.get("memory")
+            action = body.get("action")
 
             if not bot_name or not group_or_user_id:
                 return error_response("缺少必要参数")
@@ -533,6 +535,10 @@ class GiftiaWebApi:
                 status.mood = mood
             if state is not None:
                 status.state = state
+            if memory is not None:
+                status.memory = memory
+            if action is not None:
+                status.action = action
 
             self.giftia.data_cache.bot_status[fmt_key] = status
             await self.giftia.db.upsert_bot_status(group_or_user_id, bot_name, status)
