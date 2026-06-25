@@ -1181,6 +1181,12 @@ caption: {media_caption.caption}"""
                         logger.info(f"{bot_name} LLM决策判定：不回复")
                         return None
                     logger.info(f"{bot_name} LLM决策判定：回复")
+                    fmt_key = f"{bot_name}:{group_or_user_id}"
+                    window_size = decision_conf.get("reply_active_window", 10)
+                    self.active_reply_counters[fmt_key] = window_size
+                    logger.info(
+                        f"{bot_name} LLM决策判定回复，重置接话分析窗口计数为 {window_size}"
+                    )
                     if result.use_rag == 1 and self.embedding_conf.get(
                         "enabled", False
                     ):

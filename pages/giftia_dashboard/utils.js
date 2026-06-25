@@ -40,6 +40,47 @@ window.showToast = function(message) {
     }
 };
 
+window.copyToClipboard = function(text, label) {
+    if (!text) return;
+    
+    const successMessage = `${label || "内容"}已复制到剪贴板`;
+    
+    const fallbackCopy = (val) => {
+        try {
+            const textArea = document.createElement("textarea");
+            textArea.value = val;
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            const successful = document.execCommand("copy");
+            document.body.removeChild(textArea);
+            if (successful) {
+                window.showToast(successMessage);
+            } else {
+                window.showToast("复制失败，请手动复制");
+            }
+        } catch (err) {
+            console.error("fallbackCopy 复制失败:", err);
+            window.showToast("复制失败，请手动复制");
+        }
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            window.showToast(successMessage);
+        }).catch(err => {
+            console.error("navigator.clipboard 复制失败:", err);
+            fallbackCopy(text);
+        });
+    } else {
+        fallbackCopy(text);
+    }
+};
+
 window.renderPagination = function(containerId, state, onPageChange) {
     const container = document.getElementById(containerId);
     if (!container) return;

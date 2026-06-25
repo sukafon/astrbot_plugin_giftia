@@ -62,7 +62,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
@@ -137,7 +137,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
@@ -182,7 +182,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            container.innerHTML = `<div class="no-data-row flex-grow">⚠️ 加载状态失败: ${e.message}</div>`;
+            container.innerHTML = `<div class="no-data-row flex-grow">加载状态失败: ${e.message}</div>`;
         }
     },
 
@@ -194,42 +194,66 @@ window.GiftiaApp = {
         }
 
         container.innerHTML = items.map(item => {
-            const energy = parseFloat(item.energy) || 0;
+            const encodeStatusArg = value => encodeURIComponent(value || "").replace(/'/g, "%27");
+            const energy = Math.max(0, Math.min(100, parseFloat(item.energy) || 0));
             const energyClass = energy < 20 ? "low-energy" : "";
             const mood = item.mood || "平静";
             const state = item.state || "发呆";
+            const memory = item.memory || "无";
+            const action = item.action || "无";
+            const botArg = encodeStatusArg(item.bot_name);
+            const groupArg = encodeStatusArg(item.group_or_user_id);
             
             return `
                 <div class="status-card card">
-                    <div class="status-header">
-                        <div class="status-bot-title">
-                            <h3>${item.bot_name}</h3>
-                            <p>会话: ${item.group_or_user_id}</p>
-                        </div>
-                        <span class="badge badge-info">${state}</span>
-                    </div>
-                    <div class="status-body">
-                        <div class="status-row">
-                            <span class="status-label">心情</span>
-                            <span class="status-value">${mood}</span>
-                        </div>
-                        <div class="status-row">
-                            <span class="status-label">最新状态</span>
-                            <span class="status-value">${item.action || "无"}</span>
-                        </div>
-                        <div class="status-row" style="flex-direction: column; gap: 4px;">
-                            <div style="display: flex; justify-content: space-between;">
-                                <span class="status-label">能量</span>
-                                <span class="status-value ${energyClass}">${energy.toFixed(1)}%</span>
-                            </div>
-                            <div class="energy-bar-container">
-                                <div class="energy-bar-fill ${energyClass}" style="width: ${energy}%"></div>
+                    <div class="status-card-header">
+                        <div class="status-card-titles">
+                            <h3 class="status-card-title">${window.escapeHtml(item.bot_name)}</h3>
+                            <div class="status-card-subtitle-row">
+                                <span class="status-card-subtitle" title="${window.escapeHtml(item.group_or_user_id)}">
+                                    会话: ${window.escapeHtml(item.group_or_user_id)}
+                                </span>
+                                <button class="btn-copy-icon" onclick="window.copyToClipboard(decodeURIComponent('${groupArg}'), '会话 ID')" title="复制会话 ID">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
                             </div>
                         </div>
+                        <div class="status-energy-badge ${energyClass}">
+                            <span class="energy-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+                            </span>
+                            <strong>${energy.toFixed(1)}%</strong>
+                        </div>
                     </div>
+
+                    <div class="status-badges-row">
+                        <span class="status-pill status-pill-mood">
+                            <span class="pill-label">心情</span>
+                            <span class="pill-value">${window.escapeHtml(mood)}</span>
+                        </span>
+                        <span class="status-pill status-pill-state">
+                            <span class="pill-label">状态</span>
+                            <span class="pill-value">${window.escapeHtml(state)}</span>
+                        </span>
+                        <span class="status-pill status-pill-action">
+                            <span class="pill-label">动作</span>
+                            <span class="pill-value">${window.escapeHtml(action)}</span>
+                        </span>
+                    </div>
+
+                    <div class="status-thought-box">
+                        <div class="status-thought-header">
+                            <span class="thought-icon">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A5 5 0 0 0 8 8c0 1 .3 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"></path><line x1="9" y1="18" x2="15" y2="18"></line><line x1="10" y1="22" x2="14" y2="22"></line></svg>
+                            </span>
+                            <span class="thought-label">思考</span>
+                        </div>
+                        <div class="status-thought-content">${window.escapeHtml(memory)}</div>
+                    </div>
+
                     <div class="status-actions">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditStatusModal('${item.bot_name}', '${item.group_or_user_id}', '${mood}', '${state}')">调整状态</button>
-                        <button class="btn btn-primary btn-small" onclick="window.fillEnergy('${item.bot_name}', '${item.group_or_user_id}')">⚡ 满能</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openEditStatusModal('${botArg}', '${groupArg}', '${encodeStatusArg(mood)}', '${encodeStatusArg(state)}', '${encodeStatusArg(memory)}', '${encodeStatusArg(action)}')">调整状态</button>
+                        <button class="btn btn-primary btn-small" onclick="window.fillEnergy('${botArg}', '${groupArg}')">补满能量</button>
                     </div>
                 </div>
             `;
@@ -263,7 +287,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            container.innerHTML = `<div class="no-data-row flex-grow">⚠️ 加载失败: ${e.message}</div>`;
+            container.innerHTML = `<div class="no-data-row flex-grow">加载失败: ${e.message}</div>`;
         }
     },
 
@@ -429,7 +453,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="8" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="8" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
@@ -500,7 +524,7 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">⚠️ 加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 

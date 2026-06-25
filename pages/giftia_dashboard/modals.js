@@ -241,6 +241,8 @@ window.deleteMedia = function(hash) {
 
 // 6. Fill energy
 window.fillEnergy = async function(bot, group) {
+    bot = decodeURIComponent(bot);
+    group = decodeURIComponent(group);
     try {
         const res = await window.apiPost("/status/fill_energy", {
             bot_name: bot,
@@ -258,11 +260,19 @@ window.fillEnergy = async function(bot, group) {
 };
 
 // 7. Edit Bot Status
-window.openEditStatusModal = function(bot, group, mood, state) {
+window.openEditStatusModal = function(bot, group, mood, state, memory, action) {
+    bot = decodeURIComponent(bot);
+    group = decodeURIComponent(group);
+    mood = decodeURIComponent(mood || "");
+    state = decodeURIComponent(state || "");
+    memory = decodeURIComponent(memory || "");
+    action = decodeURIComponent(action || "");
     document.getElementById("edit-status-bot").value = bot;
     document.getElementById("edit-status-group").value = group;
     document.getElementById("edit-status-mood").value = mood;
     document.getElementById("edit-status-state").value = state;
+    document.getElementById("edit-status-memory").value = memory;
+    document.getElementById("edit-status-action").value = action;
     window.openModal("edit-status-modal");
 };
 
@@ -271,13 +281,17 @@ window.submitEditStatus = async function() {
     const group = document.getElementById("edit-status-group").value;
     const mood = document.getElementById("edit-status-mood").value.trim();
     const state = document.getElementById("edit-status-state").value.trim();
+    const memory = document.getElementById("edit-status-memory").value.trim();
+    const action = document.getElementById("edit-status-action").value.trim();
 
     try {
         const res = await window.apiPost("/status/update", {
             bot_name: bot,
             group_or_user_id: group,
             mood: mood,
-            state: state
+            state: state,
+            memory: memory,
+            action: action
         });
         if (res.status === "success") {
             window.showToast("Bot 状态调整成功！");
