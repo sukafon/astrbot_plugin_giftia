@@ -521,8 +521,19 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at, updated_at)
+            INSERT INTO media_caption (hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(hash_val) DO UPDATE SET
+                file_name = excluded.file_name,
+                url = excluded.url,
+                media_type = excluded.media_type,
+                genre = excluded.genre,
+                character = excluded.character,
+                source = excluded.source,
+                text = excluded.text,
+                caption = excluded.caption,
+                is_captioned = excluded.is_captioned,
+                updated_at = excluded.updated_at
             """,
             (
                 media_caption.hash_val,
