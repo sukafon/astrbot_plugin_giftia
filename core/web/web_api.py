@@ -370,6 +370,10 @@ class GiftiaWebApi:
             group_or_user_id = body.get("group_or_user_id")
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
+            associated_user_ids = body.get("associated_user_ids")
+
+            if isinstance(associated_user_ids, str):
+                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
 
             if not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数 (bot_name, group_or_user_id, text)")
@@ -379,6 +383,7 @@ class GiftiaWebApi:
                 group_or_user_id=group_or_user_id,
                 text=text,
                 user_id=user_id,
+                associated_user_ids=associated_user_ids,
             )
 
             if not memory_id:
@@ -404,6 +409,10 @@ class GiftiaWebApi:
             group_or_user_id = body.get("group_or_user_id")
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
+            associated_user_ids = body.get("associated_user_ids")
+
+            if isinstance(associated_user_ids, str):
+                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
 
             if not memory_id or not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数")
@@ -417,6 +426,7 @@ class GiftiaWebApi:
                 group_or_user_id=group_or_user_id,
                 text=text,
                 user_id=user_id,
+                associated_user_ids=associated_user_ids,
             )
 
             if not new_memory_id:

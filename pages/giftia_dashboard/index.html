@@ -9,17 +9,17 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Local stylesheets -->
-    <link rel="stylesheet" href="variables.css">
-    <link rel="stylesheet" href="base.css">
-    <link rel="stylesheet" href="components.css">
-    <link rel="stylesheet" href="dashboard.css">
-    <link rel="stylesheet" href="modals.css">
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
     <script src="/api/plugin/page/bridge-sdk.js"></script>
-    <script src="utils.js" defer></script>
-    <script src="api.js" defer></script>
-    <script src="modals.js" defer></script>
-    <script src="app.js" defer></script>
+    <script src="js/utils.js" defer></script>
+    <script src="js/api.js" defer></script>
+    <script src="js/modals.js" defer></script>
+    <script src="js/app.js" defer></script>
 </head>
 <body>
     <div class="app-container">
@@ -152,6 +152,7 @@
                                     <th>Bot</th>
                                     <th>群聊/用户ID</th>
                                     <th>记忆内容 (Text)</th>
+                                    <th>关联用户</th>
                                     <th>创建时间</th>
                                     <th class="text-right">操作</th>
                                 </tr>
@@ -322,6 +323,10 @@
                     <input type="text" id="add-mem-group" placeholder="例如: 123456789">
                 </div>
                 <div class="form-group">
+                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <input type="text" id="add-mem-associated-ids" placeholder="例如: 12345,67890">
+                </div>
+                <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>
                     <textarea id="add-mem-text" rows="5" placeholder="例如: 老师最喜欢的食物是草莓蛋糕。"></textarea>
                 </div>
@@ -349,6 +354,10 @@
                 <div class="form-group">
                     <label>群聊/用户ID</label>
                     <input type="text" id="edit-mem-group" readonly class="readonly-input">
+                </div>
+                <div class="form-group">
+                    <label>关联用户ID (可选，多个以英文逗号分隔)</label>
+                    <input type="text" id="edit-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>

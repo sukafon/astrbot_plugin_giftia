@@ -137,19 +137,25 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderMemories(items) {
         const container = document.getElementById("memory-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
             return;
         }
 
         container.innerHTML = items.map(item => {
             const encodedText = encodeURIComponent(item.text);
+            const associatedUserIds = item.metadata && item.metadata.associated_user_ids
+                ? item.metadata.associated_user_ids.join(', ')
+                : (item.metadata && item.metadata.user_id ? item.metadata.user_id : '-');
+            const associatedUserIdsList = item.metadata && item.metadata.associated_user_ids
+                ? item.metadata.associated_user_ids.join(',')
+                : '';
             return `
                 <tr>
                     <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
@@ -157,9 +163,10 @@ window.GiftiaApp = {
                     <td data-label="记忆内容 (Text)">
                         <div style="max-width: 550px; word-break: break-all;">${window.escapeHtml(item.text)}</div>
                     </td>
+                    <td data-label="关联用户">${associatedUserIds}</td>
                     <td data-label="创建时间">${window.formatDate(item.created_at)}</td>
                     <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="window.deleteMemory('${item.memory_id}')">删除</button>
                     </td>
                 </tr>

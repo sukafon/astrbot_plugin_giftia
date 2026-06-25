@@ -1,0 +1,143 @@
+from .web_api import GiftiaWebApi
+
+
+class WebUIManager:
+    def __init__(self, plugin):
+        self.plugin = plugin
+        self.web_api = GiftiaWebApi(plugin)
+
+    def register_routes(self):
+        ctx = self.plugin.context
+
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media",
+            view_handler=self.web_api.get_media,
+            methods=["GET"],
+            desc="Get media captions list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/update",
+            view_handler=self.web_api.update_media,
+            methods=["POST"],
+            desc="Update media caption text",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/delete",
+            view_handler=self.web_api.delete_media,
+            methods=["POST"],
+            desc="Delete media caption",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/<hash_val>",
+            view_handler=self.web_api.get_media_file,
+            methods=["GET"],
+            desc="Get cached media file by hash",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/b64/<hash_val>",
+            view_handler=self.web_api.get_media_file_b64,
+            methods=["GET"],
+            desc="Get cached media file as base64 by hash",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/file/thumbnail/b64/<hash_val>",
+            view_handler=self.web_api.get_media_file_thumbnail_b64,
+            methods=["GET"],
+            desc="Get cached media thumbnail as base64 by hash",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/genres",
+            view_handler=self.web_api.get_media_genres,
+            methods=["GET"],
+            desc="Get all distinct media genres",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/clean",
+            view_handler=self.web_api.clean_media_cache,
+            methods=["POST"],
+            desc="Clean media files cache by criteria",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories",
+            view_handler=self.web_api.get_memories,
+            methods=["GET"],
+            desc="Get memories list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/add",
+            view_handler=self.web_api.add_memory,
+            methods=["POST"],
+            desc="Add new memory",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/update",
+            view_handler=self.web_api.update_memory,
+            methods=["POST"],
+            desc="Update memory text",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/delete",
+            view_handler=self.web_api.delete_memory,
+            methods=["POST"],
+            desc="Delete memory",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/status",
+            view_handler=self.web_api.get_bot_status,
+            methods=["GET"],
+            desc="Get bot status list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/status/fill_energy",
+            view_handler=self.web_api.fill_energy,
+            methods=["POST"],
+            desc="Fill bot energy",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/status/update",
+            view_handler=self.web_api.update_bot_status,
+            methods=["POST"],
+            desc="Update bot mood/state",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history",
+            view_handler=self.web_api.get_chat_history,
+            methods=["GET"],
+            desc="Get chat history list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user",
+            view_handler=self.web_api.get_user_profiles,
+            methods=["GET"],
+            desc="Get user profiles list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/update",
+            view_handler=self.web_api.update_user_profile,
+            methods=["POST"],
+            desc="Update user profile",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/delete",
+            view_handler=self.web_api.delete_user_profile,
+            methods=["POST"],
+            desc="Delete user profile",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group",
+            view_handler=self.web_api.get_group_profiles,
+            methods=["GET"],
+            desc="Get group profiles list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/update",
+            view_handler=self.web_api.update_group_profile,
+            methods=["POST"],
+            desc="Update group profile",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/delete",
+            view_handler=self.web_api.delete_group_profile,
+            methods=["POST"],
+            desc="Delete group profile",
+        )
