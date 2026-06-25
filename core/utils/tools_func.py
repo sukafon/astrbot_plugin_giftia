@@ -2,7 +2,7 @@ import time
 
 from astrbot.core import AstrBotConfig
 
-from .database import Database
+from ..database.database import Database
 from .http_manager import HttpManager
 from .scheduler import Scheduler
 

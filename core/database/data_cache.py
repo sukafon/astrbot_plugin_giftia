@@ -10,9 +10,9 @@ from cachetools import LRUCache
 from astrbot.api import logger
 
 from .database import Database
-from .http_manager import HttpManager
-from .memory import LTM
-from .schemas import MediaCaption, MemoryItem, MessageData, Status
+from ..utils.http_manager import HttpManager
+from ..memory.memory import LTM
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status
 
 MAX_CAPTION_CACHE_SIZE = 500
 

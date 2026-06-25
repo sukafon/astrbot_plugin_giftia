@@ -209,3 +209,6 @@ __marimo__/
 # Other
 test/
 prompt_example/other/
+
+# Runtime data directory
+data/

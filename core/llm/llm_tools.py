@@ -8,7 +8,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 if TYPE_CHECKING:
-    from ..main import Giftia
+    from ...main import Giftia
 
 TOOLS_NAMESPACE = ["search_chat_history", "get_message_context"]
 

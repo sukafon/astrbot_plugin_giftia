@@ -5,7 +5,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.core.exceptions import EmptyModelOutputError
 
-from .schemas import (
+from ..utils.schemas import (
     Decision,
     MediaCaption,
     Sticker,

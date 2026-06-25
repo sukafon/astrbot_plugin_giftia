@@ -6,7 +6,7 @@ import aiosqlite
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
-from .schemas import MediaCaption, MemoryItem, MessageData, Status, Sticker
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status, Sticker
 
 
 class Database:
