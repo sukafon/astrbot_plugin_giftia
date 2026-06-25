@@ -344,12 +344,13 @@ window.GiftiaApp = {
                 preview = `<div style="font-size: 32px;">📄</div>`;
             }
 
-            const encodedCaption = encodeURIComponent(item.caption || "");
-            const encodedUrl = encodeURIComponent(item.url || "");
-            const encodedGenre = encodeURIComponent(item.genre || "");
-            const encodedCharacter = encodeURIComponent(item.character || "");
-            const encodedSource = encodeURIComponent(item.source || "");
-            const encodedText = encodeURIComponent(item.text || "");
+            const encodeMediaArg = value => encodeURIComponent(value || "").replace(/'/g, "%27");
+            const encodedCaption = encodeMediaArg(item.caption);
+            const encodedUrl = encodeMediaArg(item.url);
+            const encodedGenre = encodeMediaArg(item.genre);
+            const encodedCharacter = encodeMediaArg(item.character);
+            const encodedSource = encodeMediaArg(item.source);
+            const encodedText = encodeMediaArg(item.text);
 
             const badgeClass = item.is_captioned ? "badge-success" : "badge-secondary";
             const badgeText = item.is_captioned ? "已转述" : "待转述";
