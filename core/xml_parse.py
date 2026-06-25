@@ -146,8 +146,8 @@ class XmlParse:
                                                 sticker_id
                                             )
                                         )
-                                        if media_caption and media_caption.url:
-                                            img = Image.fromURL(media_caption.url)
+                                        if media_caption and media_caption.get(url):
+                                            img = Image.fromURL(media_caption.get(url))
                                             sub_chain.append(img)
                                         else:
                                             logger.error(
@@ -184,8 +184,8 @@ class XmlParse:
                             media_caption = await self.data_cache.get_caption_by_hash(
                                 sticker_id
                             )
-                            if media_caption and media_caption.url:
-                                img = Image.fromURL(media_caption.url)
+                            if media_caption and media_caption.get(url):
+                                img = Image.fromURL(media_caption.get(url))
                                 result.msg_chains.append([img])
                             else:
                                 logger.error(
