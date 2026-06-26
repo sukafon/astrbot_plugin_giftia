@@ -64,6 +64,12 @@ class WebUIManager:
             desc="Get memories list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/filter_options",
+            view_handler=self.web_api.get_memory_filter_options,
+            methods=["GET"],
+            desc="Get memory filter options",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/memories/add",
             view_handler=self.web_api.add_memory,
             methods=["POST"],
@@ -106,10 +112,22 @@ class WebUIManager:
             desc="Get chat history list",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/filter_options",
+            view_handler=self.web_api.get_chat_history_filter_options,
+            methods=["GET"],
+            desc="Get chat history filter options",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user",
             view_handler=self.web_api.get_user_profiles,
             methods=["GET"],
             desc="Get user profiles list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/filter_options",
+            view_handler=self.web_api.get_user_profile_filter_options,
+            methods=["GET"],
+            desc="Get user profile filter options",
         )
         ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user/update",
@@ -128,6 +146,12 @@ class WebUIManager:
             view_handler=self.web_api.get_group_profiles,
             methods=["GET"],
             desc="Get group profiles list",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/group/filter_options",
+            view_handler=self.web_api.get_group_profile_filter_options,
+            methods=["GET"],
+            desc="Get group profile filter options",
         )
         ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/group/update",

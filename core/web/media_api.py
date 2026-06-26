@@ -28,48 +28,59 @@ class MediaApi:
         Returns:
             The detected MIME content type string.
         """
-        content_type = None
+        magic_type = None
+        name_type = None
 
-        # 1. Try from DB record
+        # 1. Magic bytes - 优先于扩展名（QQ/微信语音经常改后缀为 .wav，
+        #    但实际是 AMR/Silk，扩展名猜出来的类型完全是误导）
+        try:
+            with open(file_path, "rb") as f:
+                header = f.read(16)
+            if header.startswith(b"\x89PNG"):
+                magic_type = "image/png"
+            elif header.startswith(b"\xff\xd8"):
+                magic_type = "image/jpeg"
+            elif header.startswith(b"GIF8"):
+                magic_type = "image/gif"
+            elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+                magic_type = "image/webp"
+            elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+                magic_type = "audio/wav"
+            elif (
+                header.startswith(b"ID3")
+                or header.startswith(b"\xff\xfb")
+                or header.startswith(b"\xff\xf3")
+                or header.startswith(b"\xff\xf2")
+            ):
+                magic_type = "audio/mpeg"
+            elif header.startswith(b"OggS"):
+                magic_type = "audio/ogg"
+            elif header.startswith(b"fLaC"):
+                magic_type = "audio/flac"
+            elif header[4:8] == b"ftyp":
+                magic_type = "audio/mp4"
+            elif header.startswith(b"#!AMR\n") or header.startswith(b"#!AMR-WB\n"):
+                magic_type = "audio/amr"
+            elif header.startswith(b"#!SILK_V3\n"):
+                magic_type = "audio/silk"
+        except Exception:
+            pass
+
+        # 2. file_name / url 后缀（仅作为 magic bytes 不可用时的回退）
         if media_caption:
             file_name = getattr(media_caption, "file_name", None) or getattr(
                 media_caption, "url", None
             )
             if file_name:
-                content_type, _ = mimetypes.guess_type(file_name)
-            if not content_type:
+                name_type, _ = mimetypes.guess_type(file_name)
+            if not name_type:
                 mt = getattr(media_caption, "media_type", None)
                 if mt == "image":
-                    content_type = "image/jpeg"
+                    name_type = "image/jpeg"
                 elif mt in ("audio", "voice"):
-                    content_type = "audio/mpeg"
+                    name_type = "audio/mpeg"
 
-        # 2. Fallback: check magic bytes
-        if not content_type or content_type == "application/octet-stream":
-            try:
-                with open(file_path, "rb") as f:
-                    header = f.read(12)
-                if header.startswith(b"\x89PNG"):
-                    content_type = "image/png"
-                elif header.startswith(b"\xff\xd8"):
-                    content_type = "image/jpeg"
-                elif header.startswith(b"GIF8"):
-                    content_type = "image/gif"
-                elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-                    content_type = "image/webp"
-                elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
-                    content_type = "audio/wav"
-                elif (
-                    header.startswith(b"ID3")
-                    or header.startswith(b"\xff\xfb")
-                    or header.startswith(b"\xff\xf3")
-                    or header.startswith(b"\xff\xf2")
-                ):
-                    content_type = "audio/mpeg"
-            except Exception:
-                pass
-
-        return content_type or fallback
+        return magic_type or name_type or fallback
 
     @staticmethod
     def _get_cache_dir() -> Path:
@@ -290,19 +301,39 @@ class MediaApi:
             except Exception as e:
                 logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
 
+            # 根据 media_type 推断 fallback：
+            #  - 音频类 → audio/mpeg（即使检测失败，PC 浏览器至少能正确处理错误）
+            #  - 其它   → application/octet-stream
+            media_type = getattr(media_caption, "media_type", None)
+            if media_type in ("audio", "voice"):
+                fallback = "audio/mpeg"
+            else:
+                fallback = "application/octet-stream"
+
             content_type = self._detect_content_type(
-                cache_file, media_caption, fallback="image/jpeg"
+                cache_file, media_caption, fallback=fallback
             )
 
-            # Read file bytes and encode to base64
+            file_size = cache_file.stat().st_size
+
+            # 音频文件 < 1KB 视为不完整（基本只剩头部）
+            media_type = getattr(media_caption, "media_type", None)
+            is_too_small = (
+                media_type in ("audio", "voice") and file_size < 1024
+            )
+
             with open(cache_file, "rb") as f:
                 file_bytes = f.read()
 
             b64_str = base64.b64encode(file_bytes).decode("utf-8")
 
-            return json_response(
-                {"status": "success", "base64": b64_str, "content_type": content_type}
-            )
+            return json_response({
+                "status": "success",
+                "base64": b64_str,
+                "content_type": content_type,
+                "file_size": file_size,
+                "warning": "audio_too_small" if is_too_small else None,
+            })
         except Exception as e:
             logger.error(f"[Giftia API] get_media_file_b64 error: {e}")
             return error_response(f"获取媒体 Base64 失败: {str(e)}")

@@ -106,6 +106,81 @@ class DataApi:
             logger.error(f"[Giftia API] get_chat_history error: {e}")
             return error_response(f"获取聊天记录失败: {str(e)}")
 
+    async def get_chat_history_filter_options(self):
+        """Get bot/session filter options for chat history."""
+        try:
+            bot_name = request.query.get("bot_name")
+            user_id = request.query.get("user_id")
+            reply_decision = request.query.get("reply_decision")
+            use_rag = request.query.get("use_rag")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM chat_history
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if user_id:
+                    conditions.append("user_id = ?")
+                    params.append(user_id)
+                if reply_decision is not None and reply_decision != "":
+                    conditions.append("reply_decision = ?")
+                    params.append(int(reply_decision))
+                if use_rag is not None and use_rag != "":
+                    conditions.append("use_rag = ?")
+                    params.append(int(use_rag))
+                if search:
+                    conditions.append("content LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
+                    FROM chat_history
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_chat_history_filter_options error: {e}")
+            return error_response(f"获取决策审计筛选项失败: {str(e)}")
+
     # ── Memory APIs ─────────────────────────────────────────────────────
 
     async def get_memories(self):
@@ -186,6 +261,73 @@ class DataApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_memories error: {e}")
             return error_response(f"获取记忆列表失败: {str(e)}")
+
+    async def get_memory_filter_options(self):
+        """Get bot/session filter options for memories."""
+        try:
+            bot_name = request.query.get("bot_name")
+            associated_user_id = request.query.get("associated_user_id")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM memories
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if associated_user_id:
+                    conditions.append("metadata LIKE ?")
+                    params.append(f"%{associated_user_id}%")
+                if search:
+                    conditions.append("text LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
+                    FROM memories
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_memory_filter_options error: {e}")
+            return error_response(f"获取长期记忆筛选项失败: {str(e)}")
 
     async def add_memory(self):
         """Add new memory item."""
@@ -470,6 +612,73 @@ class DataApi:
             logger.error(f"[Giftia API] get_user_profiles error: {e}")
             return error_response(f"获取用户画像列表失败: {str(e)}")
 
+    async def get_user_profile_filter_options(self):
+        """Get bot/session filter options for user profiles."""
+        try:
+            bot_name = request.query.get("bot_name")
+            user_id = request.query.get("user_id")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM user_profiles
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if user_id:
+                    conditions.append("user_id = ?")
+                    params.append(user_id)
+                if search:
+                    conditions.append("profile LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
+                    FROM user_profiles
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_user_profile_filter_options error: {e}")
+            return error_response(f"获取用户画像筛选项失败: {str(e)}")
+
     async def update_user_profile(self):
         """Update/Upsert user profile."""
         try:
@@ -624,6 +833,69 @@ class DataApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_group_profiles error: {e}")
             return error_response(f"获取群聊画像列表失败: {str(e)}")
+
+    async def get_group_profile_filter_options(self):
+        """Get bot/session filter options for group profiles."""
+        try:
+            bot_name = request.query.get("bot_name")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM group_profiles
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if search:
+                    conditions.append("profile LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
+                    FROM group_profiles
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_group_profile_filter_options error: {e}")
+            return error_response(f"获取群画像筛选项失败: {str(e)}")
 
     async def update_group_profile(self):
         """Update/Upsert group profile."""

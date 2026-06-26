@@ -158,3 +158,35 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 });
+
+window.downloadMedia = async function(hash, mimeType) {
+    try {
+        window.showToast("正在准备下载...");
+        const res = await window.apiGet(`/media/file/b64/${hash}`);
+        if (res && res.status === "success" && res.base64) {
+            const actualMime = res.content_type || mimeType || "audio/mpeg";
+            const byteCharacters = atob(res.base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: actualMime });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement("a");
+            a.href = url;
+            const ext = actualMime.replace("audio/", "").replace("voice/", "") || "amr";
+            a.download = `${hash}.${ext.toLowerCase()}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } else {
+            window.showToast("获取音频文件失败");
+        }
+    } catch (e) {
+        console.error("Failed to download media:", e);
+        window.showToast("下载失败: " + e.message);
+    }
+};

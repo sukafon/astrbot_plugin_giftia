@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giftia Dashboard</title>
-    <!-- Modern Font Family -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Inter 字体（本地化版本，避免对 fonts.googleapis.com 的依赖） -->
+    <link rel="stylesheet" href="css/fonts.css">
     <!-- Local stylesheets -->
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/base.css">
@@ -63,11 +61,11 @@
                     <div class="filter-row">
                         <div class="filter-group">
                             <label>Bot名称</label>
-                            <input type="text" id="history-bot-name" placeholder="所有机器人">
+                            <select id="history-bot-name"></select>
                         </div>
                         <div class="filter-group">
                             <label>群聊/用户ID</label>
-                            <input type="text" id="history-group-id" placeholder="所有会话">
+                            <select id="history-group-id"></select>
                         </div>
                         <div class="filter-group">
                             <label>发送人ID</label>
@@ -104,8 +102,7 @@
                             <thead>
                                 <tr>
                                     <th>时间</th>
-                                    <th>机器人</th>
-                                    <th>发送人/会话</th>
+                                    <th>发送人</th>
                                     <th>消息内容</th>
                                     <th>判定结果</th>
                                     <th>RAG状态</th>
@@ -128,11 +125,11 @@
                     <div class="filter-row flex-grow">
                         <div class="filter-group">
                             <label>Bot名称</label>
-                            <input type="text" id="memory-bot-name" placeholder="筛选机器人">
+                            <select id="memory-bot-name"></select>
                         </div>
                         <div class="filter-group">
                             <label>群聊/用户ID</label>
-                            <input type="text" id="memory-group-id" placeholder="筛选会话">
+                            <select id="memory-group-id"></select>
                         </div>
                         <div class="filter-group">
                             <label>关联用户ID</label>
@@ -153,8 +150,6 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Bot</th>
-                                    <th>群聊/用户ID</th>
                                     <th>记忆内容 (Text)</th>
                                     <th>关联用户</th>
                                     <th>创建时间</th>
@@ -211,41 +206,36 @@
 
             <!-- TAB 5: Profiles -->
             <section id="tab-profiles" class="tab-panel">
-                <div class="sub-tab-navigation">
-                    <button class="sub-nav-tab active" data-subtab="user-profiles">用户画像</button>
-                    <button class="sub-nav-tab" data-subtab="group-profiles">群聊画像</button>
-                </div>
-
-                <!-- User Profiles Panel -->
-                <div id="subpanel-user-profiles" class="subpanel active">
-                    <div class="filter-card card">
-                        <div class="filter-row">
-                            <div class="filter-group">
-                                <label>Bot名称</label>
-                                <input type="text" id="user-profile-bot-name" placeholder="筛选机器人">
-                            </div>
-                            <div class="filter-group">
-                                <label>群聊/用户ID</label>
-                                <input type="text" id="user-profile-group-id" placeholder="筛选会话">
-                            </div>
-                            <div class="filter-group">
-                                <label>用户ID</label>
-                                <input type="text" id="user-profile-user-id" placeholder="筛选用户">
-                            </div>
-                            <div class="filter-group flex-grow">
-                                <label>搜索画像内容</label>
-                                <input type="text" id="user-profile-search" placeholder="输入关键字搜索...">
-                            </div>
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>画像类型</label>
+                            <select id="profile-type">
+                                <option value="user-profiles">用户画像</option>
+                                <option value="group-profiles">群聊画像</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Bot名称</label>
+                            <select id="profile-bot-name"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label>群聊/用户ID</label>
+                            <select id="profile-group-id"></select>
+                        </div>
+                        <div class="filter-group" id="profile-user-filter-group">
+                            <label>用户ID</label>
+                            <input type="text" id="profile-user-id" placeholder="筛选用户">
                         </div>
                     </div>
+                </div>
 
+                <div id="subpanel-user-profiles" class="subpanel active">
                     <div class="data-card card">
                         <div class="table-container">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Bot</th>
-                                        <th>群聊/会话ID</th>
                                         <th>用户ID</th>
                                         <th>好感度</th>
                                         <th>关系头衔</th>
@@ -265,32 +255,12 @@
                     </div>
                 </div>
 
-                <!-- Group Profiles Panel -->
                 <div id="subpanel-group-profiles" class="subpanel">
-                    <div class="filter-card card">
-                        <div class="filter-row">
-                            <div class="filter-group">
-                                <label>Bot名称</label>
-                                <input type="text" id="group-profile-bot-name" placeholder="筛选机器人">
-                            </div>
-                            <div class="filter-group">
-                                <label>群聊/用户ID</label>
-                                <input type="text" id="group-profile-group-id" placeholder="筛选会话">
-                            </div>
-                            <div class="filter-group flex-grow">
-                                <label>搜索画像内容</label>
-                                <input type="text" id="group-profile-search" placeholder="输入关键字搜索...">
-                            </div>
-                        </div>
-                    </div>
-
                     <div class="data-card card">
                         <div class="table-container">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Bot</th>
-                                        <th>群聊/会话ID</th>
                                         <th>群聊画像总结内容 (Profile)</th>
                                         <th>更新时间</th>
                                         <th class="text-right">操作</th>

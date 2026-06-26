@@ -166,7 +166,24 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             previewContainer.innerHTML = `<img id="${uniqueId}" src="${gridEl.src}">`;
         } else if ((type === "audio" || type === "voice") && url) {
             const uniqueId = `edit-media-preview-audio-${hash}`;
-            previewContainer.innerHTML = `<audio id="${uniqueId}" src="${gridEl.src}" controls></audio>`;
+            const dataUrl = gridEl.src;
+            const mimeMatch = dataUrl.match(/^data:([^;,]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : "";
+            if (window.GiftiaApp.isClientPlayableAudio(mimeType)) {
+                previewContainer.innerHTML = `<audio id="${uniqueId}" src="${dataUrl}" controls></audio>`;
+            } else {
+                const friendly = mimeType ? mimeType.replace("audio/", "").toUpperCase() : "未知";
+                previewContainer.innerHTML = `
+                    <div class="media-audio-unsupported">
+                        <div class="media-audio-unsupported-icon">🎧</div>
+                        <div class="media-audio-unsupported-title">${friendly} 音频</div>
+                        <div class="media-audio-unsupported-hint">PC 浏览器不支持此格式在线播放<br>（仅移动端 / IM WebView 可播放）</div>
+                        <a href="#" class="btn btn-secondary btn-small media-audio-download-btn" onclick="window.downloadMedia('${hash}', '${mimeType}'); return false;">
+                            📥 下载音频
+                        </a>
+                    </div>
+                `;
+            }
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }

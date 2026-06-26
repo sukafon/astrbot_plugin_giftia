@@ -346,6 +346,8 @@ class Database:
         self, bot_name: str, group_or_user_id: str, offset: int
     ) -> int:
         """获取从最新消息往回偏移 offset 处的条目的 id（即上下文窗口边界的 id）"""
+        if offset <= 0:
+            offset = 1
         async with self.conn.execute(
             """
             SELECT id FROM chat_history
@@ -353,7 +355,7 @@ class Database:
             ORDER BY id DESC
             LIMIT 1 OFFSET ?
             """,
-            (group_or_user_id, bot_name, offset),
+            (group_or_user_id, bot_name, offset - 1),
         ) as cursor:
             row = await cursor.fetchone()
         return row["id"] if row else 0

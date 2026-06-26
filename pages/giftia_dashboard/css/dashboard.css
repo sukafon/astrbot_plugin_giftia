@@ -138,6 +138,7 @@
     box-shadow: 0 0 0 3px var(--primary-light);
 }
 
+/* Session Driven Views */
 /* Status Grid & Card Layout */
 .grid-layout {
     display: grid;
@@ -152,6 +153,7 @@
     flex-direction: column;
     gap: 16px;
 }
+
 
 .status-card:hover {
     box-shadow: var(--shadow-hover);
@@ -404,6 +406,51 @@ html[data-theme="dark"] .media-preview-box {
 
 .media-audio-player {
     width: 90%;
+}
+
+/* PC 端不支持的音频格式（AMR / Silk 等）提示 */
+.media-audio-unsupported {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px;
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    color: var(--font-secondary);
+    box-sizing: border-box;
+}
+
+.media-audio-unsupported-icon {
+    font-size: 32px;
+    line-height: 1;
+}
+
+.media-audio-unsupported-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--font-color);
+    background-color: var(--bg-color);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+}
+
+.media-audio-unsupported-hint {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--font-secondary);
+    max-width: 200px;
+}
+
+.media-audio-download-btn {
+    margin-top: 4px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .media-info {

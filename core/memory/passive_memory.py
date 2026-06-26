@@ -8,6 +8,74 @@ class PassiveMemoryManager:
     def __init__(self, plugin):
         self.plugin = plugin
 
+    async def _format_message_content_for_summary(self, msg) -> str:
+        """清洗消息中的媒体占位符，并补充适合总结的媒体转述文本"""
+        content = msg.content or ""
+        if not msg.media_id_list:
+            return content
+
+        media_lines = []
+        for media_id in msg.media_id_list:
+            media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
+            if not media_caption:
+                content = content.replace(f"[图片:{media_id}]", "[图片]")
+                content = content.replace(f"[语音:{media_id}]", "[语音]")
+                continue
+
+            media_type = (media_caption.media_type or "").lower()
+            caption_text = (media_caption.caption or "").strip()
+            transcript_text = (media_caption.text or "").strip()
+
+            if media_type == "audio":
+                content = content.replace(
+                    f"[语音:{media_id}]",
+                    "" if (transcript_text or caption_text) else "[语音]",
+                )
+                if transcript_text:
+                    media_lines.append(f"[语音转写:{transcript_text}]")
+                if caption_text:
+                    media_lines.append(f"[语音总结:{caption_text}]")
+                elif not transcript_text:
+                    media_lines.append("[语音]")
+                continue
+
+            if media_type == "image":
+                content = content.replace(
+                    f"[图片:{media_id}]",
+                    "" if caption_text else "[图片]",
+                )
+                if caption_text:
+                    media_lines.append(f"[图片转述:{caption_text}]")
+                else:
+                    media_lines.append("[图片]")
+                continue
+
+            content = content.replace(f"[图片:{media_id}]", "")
+            content = content.replace(f"[语音:{media_id}]", "")
+            if caption_text:
+                media_lines.append(f"[媒体转述:{caption_text}]")
+            elif transcript_text:
+                media_lines.append(f"[媒体内容:{transcript_text}]")
+
+        if media_lines:
+            content = f"{content} {' '.join(media_lines)}".strip()
+
+        return re.sub(r"\s{2,}", " ", content).strip()
+
+    async def mark_silence_summary_armed(
+        self, bot_name: str, group_or_user_id: str
+    ) -> None:
+        """bot 发言后重新武装一次静默总结"""
+        if not self.plugin.passive_memory_enabled:
+            return
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        await self.plugin.db.upsert_kv_data(
+            f"passive_memory:silence_armed:{fmt_key}", 1
+        )
+        await self.plugin.db.upsert_kv_data(
+            f"passive_memory:silent_count:{fmt_key}", 0
+        )
+
     async def search_and_filter_memories(
         self,
         bot_name: str,
@@ -89,6 +157,9 @@ class PassiveMemoryManager:
                 await self.plugin.db.upsert_kv_data(
                     f"passive_memory:silent_count:{fmt_key}", 0
                 )
+                await self.plugin.db.upsert_kv_data(
+                    f"passive_memory:silence_armed:{fmt_key}", 0
+                )
                 return
 
             if max_id <= last_summarized_id:
@@ -99,6 +170,9 @@ class PassiveMemoryManager:
             trigger_type = None
             start_id = last_summarized_id + 1
             end_id = max_id
+            silence_armed = await self.plugin.db.get_kv_data(
+                f"passive_memory:silence_armed:{fmt_key}", 0
+            )
             
             boundary_id = await self.plugin.db.get_boundary_message_id(
                 bot_name, group_or_user_id, self.plugin.msg_number
@@ -112,7 +186,7 @@ class PassiveMemoryManager:
                     trigger_type = "overflow"
                     end_id = boundary_id
             
-            if trigger_type is None and active_counter == 0:
+            if trigger_type is None and active_counter == 0 and silence_armed:
                 silent_count = await self.plugin.db.get_kv_data(
                     f"passive_memory:silent_count:{fmt_key}", 0
                 )
@@ -130,6 +204,28 @@ class PassiveMemoryManager:
                 )
                 
             if trigger_type:
+                # 收窄总结范围到上下文窗口内，bot 只记忆自己"见过"的消息
+                if start_id < boundary_id:
+                    logger.info(
+                        f"[Giftia Passive Memory] start_id({start_id}) 超出上下文窗口边界({boundary_id})，"
+                        f"收窄到上下文范围，跳过 bot 未见过的消息"
+                    )
+                    start_id = boundary_id
+
+                if start_id > end_id:
+                    # 上下文窗口内无需总结的消息
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:silent_count:{fmt_key}", 0
+                    )
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:last_summarized_id:{fmt_key}", end_id
+                    )
+                    if trigger_type == "silence":
+                        await self.plugin.db.upsert_kv_data(
+                            f"passive_memory:silence_armed:{fmt_key}", 0
+                        )
+                    return
+
                 logger.info(
                     f"[Giftia Passive Memory] 触发被动总结 ({trigger_type}). "
                     f"范围: {start_id} 到 {end_id}"
@@ -140,6 +236,10 @@ class PassiveMemoryManager:
                 await self.plugin.db.upsert_kv_data(
                     f"passive_memory:last_summarized_id:{fmt_key}", end_id
                 )
+                if trigger_type == "silence":
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:silence_armed:{fmt_key}", 0
+                    )
                 
                 asyncio.create_task(
                     self._run_background_summarize(
@@ -220,7 +320,10 @@ class PassiveMemoryManager:
             # 格式化聊天记录
             chat_history_lines = []
             for msg in db_messages:
-                chat_history_lines.append(f"[{msg.time}] {msg.nickname}({msg.user_id}): {msg.content}")
+                content = await self._format_message_content_for_summary(msg)
+                chat_history_lines.append(
+                    f"[{msg.time}] {msg.nickname}({msg.user_id}): {content}"
+                )
             chat_history_text = "\n".join(chat_history_lines)
 
             # 构建 User Prompt

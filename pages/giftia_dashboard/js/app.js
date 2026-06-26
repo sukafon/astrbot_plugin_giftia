@@ -15,13 +15,177 @@ window.GiftiaApp = {
     },
 
     loadedOriginalMediaG: new Set(),
+    filterOptions: {},
+
+    getScopedViewConfig(viewKey) {
+        const configs = {
+            history: {
+                endpoint: "/chat_history",
+                filterEndpoint: "/chat_history/filter_options",
+                botInputId: "history-bot-name",
+                groupInputId: "history-group-id",
+                paginationKey: "history",
+            },
+            memories: {
+                endpoint: "/memories",
+                filterEndpoint: "/memories/filter_options",
+                botInputId: "memory-bot-name",
+                groupInputId: "memory-group-id",
+                paginationKey: "memories",
+            },
+            userProfiles: {
+                endpoint: "/profiles/user",
+                filterEndpoint: "/profiles/user/filter_options",
+                botInputId: "profile-bot-name",
+                groupInputId: "profile-group-id",
+                paginationKey: "userProfiles",
+            },
+            groupProfiles: {
+                endpoint: "/profiles/group",
+                filterEndpoint: "/profiles/group/filter_options",
+                botInputId: "profile-bot-name",
+                groupInputId: "profile-group-id",
+                paginationKey: "groupProfiles",
+            }
+        };
+        return configs[viewKey];
+    },
+
+    getScopedFilterParams(viewKey) {
+        switch (viewKey) {
+            case "history":
+                return {
+                    bot_name: document.getElementById("history-bot-name").value,
+                    user_id: document.getElementById("history-user-id").value,
+                    reply_decision: document.getElementById("history-decision").value,
+                    use_rag: document.getElementById("history-rag").value,
+                    search: document.getElementById("history-search").value
+                };
+            case "memories":
+                return {
+                    bot_name: document.getElementById("memory-bot-name").value,
+                    associated_user_id: document.getElementById("memory-associated-user-id").value,
+                    search: document.getElementById("memory-search").value
+                };
+            case "userProfiles":
+                return {
+                    bot_name: document.getElementById("profile-bot-name").value,
+                    user_id: document.getElementById("profile-user-id").value
+                };
+            case "groupProfiles":
+                return {
+                    bot_name: document.getElementById("profile-bot-name").value
+                };
+            default:
+                return {};
+        }
+    },
+
+    populateBotSelect(selectEl, bots, selectedBotName) {
+        if (!selectEl) return;
+        selectEl.innerHTML = "";
+        if (!bots || bots.length === 0) {
+            selectEl.append(new Option("暂无 Bot", ""));
+            selectEl.disabled = true;
+            return;
+        }
+
+        bots.forEach(bot => {
+            selectEl.append(new Option(bot, bot));
+        });
+        selectEl.disabled = false;
+        selectEl.value = selectedBotName || bots[0];
+    },
+
+    populateSessionSelect(selectEl, sessions, selectedSession) {
+        if (!selectEl) return;
+        selectEl.innerHTML = "";
+        if (!sessions || sessions.length === 0) {
+            selectEl.append(new Option("暂无会话", ""));
+            selectEl.disabled = true;
+            return;
+        }
+
+        sessions.forEach(session => {
+            const sessionId = session.group_or_user_id || "";
+            const total = session.total || 0;
+            selectEl.append(new Option(`${sessionId} (${total})`, sessionId));
+        });
+        selectEl.disabled = false;
+        selectEl.value = selectedSession || sessions[0].group_or_user_id || "";
+    },
+
+    async refreshScopedFilters(viewKey, preserveSession = true) {
+        const config = this.getScopedViewConfig(viewKey);
+        if (!config) return;
+
+        const botEl = document.getElementById(config.botInputId);
+        const groupEl = document.getElementById(config.groupInputId);
+        const currentSession = groupEl ? groupEl.value : "";
+        const params = this.getScopedFilterParams(viewKey);
+
+        try {
+            const res = await window.apiGet(config.filterEndpoint, params);
+            const data = res.status === "success" && res.data ? res.data : { bots: [], sessions: [], selected_bot_name: "" };
+            const bots = data.bots || [];
+            const selectedBotName = data.selected_bot_name || "";
+            const sessions = data.sessions || [];
+
+            this.populateBotSelect(botEl, bots, selectedBotName);
+
+            const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
+                ? currentSession
+                : (sessions[0] ? sessions[0].group_or_user_id : "");
+
+            if (groupEl) {
+                groupEl.value = nextSession;
+            }
+            this.populateSessionSelect(groupEl, sessions, nextSession);
+        } catch (e) {
+            if (groupEl) {
+                groupEl.value = "";
+            }
+            this.populateSessionSelect(groupEl, [], "");
+        }
+    },
+
+    async initializeScopedView(viewKey) {
+        await this.refreshScopedFilters(viewKey);
+        await this.loadScopedViewData(viewKey);
+    },
+
+    async loadScopedViewData(viewKey) {
+        switch (viewKey) {
+            case "history":
+                await this.loadChatHistory();
+                break;
+            case "memories":
+                await this.loadMemories();
+                break;
+            case "userProfiles":
+                await this.loadUserProfiles();
+                break;
+            case "groupProfiles":
+                await this.loadGroupProfiles();
+                break;
+            default:
+                break;
+        }
+    },
+
+    resetPagination(viewKey) {
+        const config = this.getScopedViewConfig(viewKey);
+        if (config && this.pagination[config.paginationKey]) {
+            this.pagination[config.paginationKey].page = 1;
+        }
+    },
 
     // Helper: Load data based on active tab
     loadActiveTabData() {
         if (this.activeTab === "chat-history") {
-            this.loadChatHistory();
+            this.initializeScopedView("history");
         } else if (this.activeTab === "memories") {
-            this.loadMemories();
+            this.initializeScopedView("memories");
         } else if (this.activeTab === "bot-status") {
             this.loadBotStatus();
         } else if (this.activeTab === "media-captions") {
@@ -36,7 +200,13 @@ window.GiftiaApp = {
     // ----------------------------------------------------
     async loadChatHistory() {
         const listContainer = document.getElementById("history-list");
-        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        if (!document.getElementById("history-bot-name").value) {
+            this.pagination.history.total = 0;
+            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无可用 Bot</td></tr>`;
+            window.renderPagination("history-pagination", this.pagination.history, () => {});
+            return;
+        }
 
         const params = {
             page: this.pagination.history.page,
@@ -62,14 +232,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderChatHistory(items) {
         const container = document.getElementById("history-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关聊天记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无相关聊天记录</td></tr>`;
             return;
         }
 
@@ -94,11 +264,7 @@ window.GiftiaApp = {
             return `
                 <tr>
                     <td data-label="时间" style="white-space: nowrap;">${window.formatDate(item.created_at)}</td>
-                    <td data-label="机器人" style="font-weight: 600;">${item.bot_name}</td>
-                    <td data-label="发送人/会话">
-                        <div style="font-size: 13px;">${senderDisp}</div>
-                        <div style="font-size: 11px; color: var(--font-secondary);">群组: ${item.group_or_user_id}</div>
-                    </td>
+                    <td data-label="发送人">${senderDisp}</td>
                     <td data-label="消息内容">
                         <div style="max-width: 480px; word-break: break-all;">${window.escapeHtml(item.content)}</div>
                     </td>
@@ -114,7 +280,13 @@ window.GiftiaApp = {
     // ----------------------------------------------------
     async loadMemories() {
         const listContainer = document.getElementById("memory-list");
-        listContainer.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="4" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        if (!document.getElementById("memory-bot-name").value) {
+            this.pagination.memories.total = 0;
+            listContainer.innerHTML = `<tr><td colspan="4" class="no-data-row">暂无可用 Bot</td></tr>`;
+            window.renderPagination("memory-pagination", this.pagination.memories, () => {});
+            return;
+        }
 
         const params = {
             page: this.pagination.memories.page,
@@ -138,29 +310,33 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="4" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderMemories(items) {
         const container = document.getElementById("memory-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="4" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
             return;
         }
 
         container.innerHTML = items.map(item => {
             const encodedText = encodeURIComponent(item.text);
-            const associatedUserIds = item.metadata && item.metadata.associated_user_ids
-                ? item.metadata.associated_user_ids.join(', ')
-                : (item.metadata && item.metadata.user_id ? item.metadata.user_id : '-');
-            const associatedUserIdsList = item.metadata && item.metadata.associated_user_ids
-                ? item.metadata.associated_user_ids.join(',')
-                : '';
+            const associatedUserIdsArray = item.metadata && Array.isArray(item.metadata.associated_user_ids)
+                ? item.metadata.associated_user_ids.filter(Boolean)
+                : [];
+            const fallbackUserId = item.metadata && item.metadata.user_id
+                ? String(item.metadata.user_id)
+                : "";
+            const associatedUserIdsList = associatedUserIdsArray.length > 0
+                ? associatedUserIdsArray.join(',')
+                : fallbackUserId;
+            const associatedUserIds = associatedUserIdsArray.length > 0
+                ? associatedUserIdsArray.join(', ')
+                : (fallbackUserId || '-');
             return `
                 <tr>
-                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
-                    <td data-label="群聊/用户ID">${item.group_or_user_id}</td>
                     <td data-label="记忆内容 (Text)">
                         <div style="max-width: 550px; word-break: break-all;">${window.escapeHtml(item.text)}</div>
                     </td>
@@ -299,6 +475,90 @@ window.GiftiaApp = {
         }
     },
 
+    /**
+     * 判断音频 MIME 在当前客户端上能否被原生解码。
+     *
+     * 注意：AMR（QQ 语音）、Silk（微信语音）只有 IM WebView（微信/QQ 浏览器）
+     * 才能播放，PC 端 Chrome / Edge / Firefox 全部不支持。所以这里要根据
+     * 客户端平台分别处理：
+     *  - 移动端 / IM WebView：信任其内置 AMR/Silk 解码器
+     *  - PC 浏览器：只信任标准 MIME 白名单
+     */
+    isClientPlayableAudio(mimeType) {
+        if (!mimeType) return false;
+
+        // 1. 标准 MIME（所有浏览器都支持）— 直接放行
+        const standardMimes = [
+            "audio/mpeg",
+            "audio/mp3",
+            "audio/wav",
+            "audio/wave",
+            "audio/x-wav",
+            "audio/ogg",
+            "audio/flac",
+            "audio/x-flac",
+            "audio/mp4",
+            "audio/aac",
+            "audio/x-m4a",
+        ];
+        if (standardMimes.includes(mimeType)) return true;
+
+        // 2. 移动端 / IM WebView 通常内置 AMR/Silk 解码器
+        //    微信: MicroMessenger，QQ: QQ/
+        //    通用移动端 UA 也兜底（iOS Safari / Android Chrome 多数 IM WebView）
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(
+            navigator.userAgent || ""
+        );
+        const isIMWebView = /MicroMessenger|QQ\//i.test(navigator.userAgent || "");
+
+        if (isMobile || isIMWebView) {
+            // 移动端 / IM WebView：信任它能播放 AMR/Silk
+            if (
+                mimeType === "audio/amr" ||
+                mimeType === "audio/silk" ||
+                mimeType === "audio/x-amr"
+            ) {
+                return true;
+            }
+        }
+
+        // 3. PC 浏览器对 AMR/Silk 完全无能为力
+        return false;
+    },
+
+    /**
+     * 兼容旧名（保留调用点向后兼容）
+     * @deprecated use isClientPlayableAudio instead
+     */
+    isPcPlayableAudio(mimeType) {
+        return this.isClientPlayableAudio(mimeType);
+    },
+
+    /**
+     * 把音频预览区替换为"PC 不支持"提示。
+     * AMR（QQ 语音）、Silk（微信语音）只有 IM WebView / 移动浏览器内置解码器，
+     * PC 端 Chrome / Edge / Firefox 全部无法播放，转写文本会在对话上下文里展示。
+     */
+    renderAudioUnsupportedNotice(elementId, hash, mimeType) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const wrapper = el.closest(".media-preview-box") || el.parentElement;
+        if (!wrapper) return;
+        const friendly = mimeType
+            ? mimeType.replace("audio/", "").toUpperCase()
+            : "未知";
+        wrapper.innerHTML = `
+            <div class="media-audio-unsupported">
+                <div class="media-audio-unsupported-icon">🎧</div>
+                <div class="media-audio-unsupported-title">${friendly} 音频</div>
+                <div class="media-audio-unsupported-hint">PC 浏览器不支持此格式在线播放<br>（仅移动端 / IM WebView 可播放）</div>
+                <a href="#" class="btn btn-secondary btn-small media-audio-download-btn" onclick="window.downloadMedia('${hash}', '${mimeType}'); return false;">
+                    📥 下载音频
+                </a>
+            </div>
+        `;
+    },
+
     async loadMediaFileB64(hash, elementId, fallbackUrl, type, isThumbnail = false) {
         const el = document.getElementById(elementId);
         if (!el) return;
@@ -308,6 +568,15 @@ window.GiftiaApp = {
             const res = await window.apiGet(endpoint);
             if (res && res.status === "success" && res.base64) {
                 const mimeType = res.content_type || (type === "image" ? "image/jpeg" : "audio/mpeg");
+
+                // 音频：若客户端无法播放该格式，才展示不支持提示
+                if (type === "audio" || type === "voice") {
+                    if (!this.isClientPlayableAudio(mimeType)) {
+                        this.renderAudioUnsupportedNotice(elementId, hash, mimeType);
+                        return;
+                    }
+                }
+
                 el.src = `data:${mimeType};base64,${res.base64}`;
             } else {
                 if (type === "image") {
@@ -316,6 +585,9 @@ window.GiftiaApp = {
                         el.src = 'placeholder.png';
                     };
                     el.src = fallbackUrl || 'placeholder.png';
+                } else if (type === "audio" || type === "voice") {
+                    // 失败也按不支持处理，给出下载入口
+                    this.renderAudioUnsupportedNotice(elementId, hash, "");
                 } else if (fallbackUrl) {
                     el.src = fallbackUrl;
                 }
@@ -328,6 +600,8 @@ window.GiftiaApp = {
                     el.src = 'placeholder.png';
                 };
                 el.src = fallbackUrl || 'placeholder.png';
+            } else if (type === "audio" || type === "voice") {
+                this.renderAudioUnsupportedNotice(elementId, hash, "");
             } else if (fallbackUrl) {
                 el.src = fallbackUrl;
             }
@@ -429,24 +703,47 @@ window.GiftiaApp = {
     // TAB 5: Profiles (User and Group)
     // ----------------------------------------------------
     loadProfilesData() {
+        this.activeSubTab = document.getElementById("profile-type")?.value || "user-profiles";
+        this.updateProfileFilterVisibility();
         if (this.activeSubTab === "user-profiles") {
-            this.loadUserProfiles();
+            this.initializeScopedView("userProfiles");
         } else if (this.activeSubTab === "group-profiles") {
-            this.loadGroupProfiles();
+            this.initializeScopedView("groupProfiles");
+        }
+    },
+
+    updateProfileFilterVisibility() {
+        const userFilterGroup = document.getElementById("profile-user-filter-group");
+        const userPanel = document.getElementById("subpanel-user-profiles");
+        const groupPanel = document.getElementById("subpanel-group-profiles");
+        const isUserProfiles = this.activeSubTab === "user-profiles";
+        if (userFilterGroup) {
+            userFilterGroup.style.display = isUserProfiles ? "" : "none";
+        }
+        if (userPanel) {
+            userPanel.classList.toggle("active", isUserProfiles);
+        }
+        if (groupPanel) {
+            groupPanel.classList.toggle("active", !isUserProfiles);
         }
     },
 
     async loadUserProfiles() {
         const listContainer = document.getElementById("user-profile-list");
-        listContainer.innerHTML = `<tr><td colspan="8" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        if (!document.getElementById("profile-bot-name").value) {
+            this.pagination.userProfiles.total = 0;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
+            window.renderPagination("user-profile-pagination", this.pagination.userProfiles, () => {});
+            return;
+        }
 
         const params = {
             page: this.pagination.userProfiles.page,
             limit: this.pagination.userProfiles.limit,
-            bot_name: document.getElementById("user-profile-bot-name").value,
-            group_or_user_id: document.getElementById("user-profile-group-id").value,
-            user_id: document.getElementById("user-profile-user-id").value,
-            search: document.getElementById("user-profile-search").value
+            bot_name: document.getElementById("profile-bot-name").value,
+            group_or_user_id: document.getElementById("profile-group-id").value,
+            user_id: document.getElementById("profile-user-id").value
         };
 
         try {
@@ -462,14 +759,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="8" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderUserProfiles(items) {
         const container = document.getElementById("user-profile-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="8" class="no-data-row">暂无相关用户画像记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关用户画像记录</td></tr>`;
             return;
         }
 
@@ -490,8 +787,6 @@ window.GiftiaApp = {
 
             return `
                 <tr>
-                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
-                    <td data-label="群聊/会话ID">${item.group_or_user_id}</td>
                     <td data-label="用户ID">${item.user_id}</td>
                     <td data-label="好感度">${relationBadge}</td>
                     <td data-label="关系头衔">${titleHtml}</td>
@@ -510,14 +805,19 @@ window.GiftiaApp = {
 
     async loadGroupProfiles() {
         const listContainer = document.getElementById("group-profile-list");
-        listContainer.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="3" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        if (!document.getElementById("profile-bot-name").value) {
+            this.pagination.groupProfiles.total = 0;
+            listContainer.innerHTML = `<tr><td colspan="3" class="no-data-row">暂无可用 Bot</td></tr>`;
+            window.renderPagination("group-profile-pagination", this.pagination.groupProfiles, () => {});
+            return;
+        }
 
         const params = {
             page: this.pagination.groupProfiles.page,
             limit: this.pagination.groupProfiles.limit,
-            bot_name: document.getElementById("group-profile-bot-name").value,
-            group_or_user_id: document.getElementById("group-profile-group-id").value,
-            search: document.getElementById("group-profile-search").value
+            bot_name: document.getElementById("profile-bot-name").value,
+            group_or_user_id: document.getElementById("profile-group-id").value
         };
 
         try {
@@ -533,14 +833,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="3" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderGroupProfiles(items) {
         const container = document.getElementById("group-profile-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无相关群聊画像记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="3" class="no-data-row">暂无相关群聊画像记录</td></tr>`;
             return;
         }
 
@@ -548,8 +848,6 @@ window.GiftiaApp = {
             const encodedProfile = encodeURIComponent(item.profile || "");
             return `
                 <tr>
-                    <td data-label="Bot" style="font-weight: 600;">${item.bot_name}</td>
-                    <td data-label="群聊/会话ID">${item.group_or_user_id}</td>
                     <td data-label="群聊画像总结内容 (Profile)">
                         <div style="max-width: 600px; word-break: break-all; white-space: pre-wrap;">${window.escapeHtml(item.profile || "")}</div>
                     </td>
@@ -615,28 +913,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // Sub-tab Navigation setup (Profiles)
-    const subTabButtons = document.querySelectorAll(".sub-nav-tab");
-    const subPanels = document.querySelectorAll(".subpanel");
-
-    subTabButtons.forEach(button => {
-        button.addEventListener("click", () => {
-            const targetSubTab = button.getAttribute("data-subtab");
-            
-            subTabButtons.forEach(btn => btn.classList.remove("active"));
-            subPanels.forEach(panel => panel.classList.remove("active"));
-            
-            button.classList.add("active");
-            const targetSubPanel = document.getElementById(`subpanel-${targetSubTab}`);
-            if (targetSubPanel) {
-                targetSubPanel.classList.add("active");
-            }
-            
-            window.GiftiaApp.activeSubTab = targetSubTab;
-            window.GiftiaApp.loadProfilesData();
-        });
-    });
-
     // Tab switching for Edit Media Modal
     document.addEventListener("click", (e) => {
         const btn = e.target.closest(".media-tab-btn");
@@ -660,10 +936,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let filterTimeout;
     const filterInputIds = [
         "history-bot-name", "history-group-id", "history-user-id", "history-decision", "history-rag", "history-search",
-        "memory-bot-name", "memory-group-id", "memory-search",
+        "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
         "media-type", "media-search",
-        "user-profile-bot-name", "user-profile-group-id", "user-profile-user-id", "user-profile-search",
-        "group-profile-bot-name", "group-profile-group-id", "group-profile-search"
+        "profile-type", "profile-bot-name", "profile-group-id", "profile-user-id"
     ];
 
     filterInputIds.forEach(id => {
@@ -672,24 +947,36 @@ document.addEventListener("DOMContentLoaded", () => {
             const eventType = el.tagName === "SELECT" ? "change" : "input";
             el.addEventListener(eventType, () => {
                 clearTimeout(filterTimeout);
-                filterTimeout = setTimeout(() => {
+                filterTimeout = setTimeout(async () => {
                     const app = window.GiftiaApp;
+                    const preserveSession = ![
+                        "history-bot-name",
+                        "memory-bot-name",
+                        "profile-bot-name",
+                        "profile-type"
+                    ].includes(id);
                     if (app.activeTab === "chat-history") {
-                        app.pagination.history.page = 1;
-                        app.loadChatHistory();
+                        app.resetPagination("history");
+                        await app.refreshScopedFilters("history", preserveSession);
+                        await app.loadChatHistory();
                     } else if (app.activeTab === "memories") {
-                        app.pagination.memories.page = 1;
-                        app.loadMemories();
+                        app.resetPagination("memories");
+                        await app.refreshScopedFilters("memories", preserveSession);
+                        await app.loadMemories();
                     } else if (app.activeTab === "media-captions") {
                         app.pagination.media.page = 1;
                         app.loadMedia();
                     } else if (app.activeTab === "profiles") {
+                        app.activeSubTab = document.getElementById("profile-type")?.value || "user-profiles";
+                        app.updateProfileFilterVisibility();
                         if (app.activeSubTab === "user-profiles") {
-                            app.pagination.userProfiles.page = 1;
-                            app.loadUserProfiles();
+                            app.resetPagination("userProfiles");
+                            await app.refreshScopedFilters("userProfiles", preserveSession);
+                            await app.loadUserProfiles();
                         } else {
-                            app.pagination.groupProfiles.page = 1;
-                            app.loadGroupProfiles();
+                            app.resetPagination("groupProfiles");
+                            await app.refreshScopedFilters("groupProfiles", preserveSession);
+                            await app.loadGroupProfiles();
                         }
                     }
                 }, 300);

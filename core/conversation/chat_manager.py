@@ -173,6 +173,10 @@ class ChatManager:
                 decision_conf = bot_conf.get("decision_conf", {})
                 window_size = decision_conf.get("reply_active_window", 10)
                 self.plugin.active_reply_counters[fmt_key] = window_size
+                await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                )
                 logger.info(
                     f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
                 )
@@ -253,6 +257,10 @@ class ChatManager:
             decision_conf = bot_conf.get("decision_conf", {})
             window_size = decision_conf.get("reply_active_window", 10)
             self.plugin.active_reply_counters[fmt_key] = window_size
+            await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+            )
             logger.info(
                 f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"
             )
