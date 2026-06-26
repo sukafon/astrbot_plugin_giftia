@@ -283,13 +283,15 @@ class PassiveMemoryManager:
                 if msg.user_id and str(msg.user_id) != str(self_id)
             }
 
-            # 建立昵称与 ID 映射，处理 LLM 可能会直接使用昵称的情况
+            # 建立两套映射：
+            # - nickname → user_id：用于把 LLM 输出里的昵称解析回 user_id
+            # - user_id → nickname：用于在 user_prompt 里按 user_id 取到对应昵称
             nickname_to_user_id = {}
+            user_id_to_nickname = {}
             for msg in db_messages:
-                if msg.user_id:
-                    nickname_to_user_id[msg.user_id] = msg.user_id
-                    if msg.nickname:
-                        nickname_to_user_id[msg.nickname] = msg.user_id
+                if msg.user_id and msg.nickname:
+                    nickname_to_user_id[msg.nickname] = msg.user_id
+                    user_id_to_nickname[msg.user_id] = msg.nickname
 
             # 读取现有画像与好感度/关系
             user_profiles_str = []
@@ -301,15 +303,15 @@ class PassiveMemoryManager:
                     user_id=uid,
                 )
                 if profile:
-                    user_profiles_str.append(f"用户 {uid} ({nickname_to_user_id.get(uid, '')}) 现有画像:\n{profile}")
-                
+                    user_profiles_str.append(f"用户 {uid} ({user_id_to_nickname.get(uid, '')}) 现有画像:\n{profile}")
+
                 relation_score, relation_title = await self.plugin.data_cache.get_user_relation(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
                     user_id=uid,
                 )
                 user_relations_str.append(
-                    f"用户 {uid} ({nickname_to_user_id.get(uid, '')}) 的好感度得分: {relation_score}, 头衔: {relation_title or '无'}"
+                    f"用户 {uid} ({user_id_to_nickname.get(uid, '')}) 的好感度得分: {relation_score}, 头衔: {relation_title or '无'}"
                 )
 
             group_profile = await self.plugin.data_cache.get_group_profile(
@@ -363,6 +365,12 @@ class PassiveMemoryManager:
                     try:
                         logger.info(
                             f"[Giftia Passive Memory] 尝试使用提供商 {provider_id} (第 {attempt+1} 次) 进行后台总结"
+                        )
+                        logger.debug(
+                            f"[Giftia Passive Memory] 开始总结记忆的 system_prompt:\n{sys_prompt}"
+                        )
+                        logger.debug(
+                            f"[Giftia Passive Memory] 开始总结记忆的 user_prompt:\n{user_prompt}"
                         )
                         llm_resp = await self.plugin.context.llm_generate(
                             chat_provider_id=provider_id,

@@ -120,12 +120,89 @@ class CallLLM:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
                     if use_source_tools:
-                        tools_set = (
-                            self.context.get_llm_tool_manager().get_full_tool_set()
-                        )
+                        tool_manager = self.context.get_llm_tool_manager()
+                        tools_set = tool_manager.get_full_tool_set()
+                        # AstrBot 内置的 Tavily 工具（web_search_tavily /
+                        # tavily_extract_web_page）默认不会进入
+                        # get_full_tool_set()，这里按白名单手动追加，
+                        # 前提是 AstrBot 配置里开启了网页搜索且提供商为 tavily。
+                        merged_builtin_tools: list[str] = []
+                        try:
+                            provider_settings = (
+                                self.context.astrbot_config_mgr.default_conf.get(
+                                    "provider_settings", {}
+                                )
+                            )
+                        except Exception:
+                            provider_settings = {}
+                        if bool(provider_settings.get("web_search")) and (
+                            provider_settings.get("websearch_provider") == "tavily"
+                        ):
+                            existing_names = {t.name for t in tools_set.tools}
+                            for builtin_name in (
+                                "web_search_tavily",
+                                "tavily_extract_web_page",
+                            ):
+                                if (
+                                    builtin_name in existing_names
+                                    or not tool_manager.is_builtin_tool(
+                                        builtin_name
+                                    )
+                                ):
+                                    continue
+                                builtin_tool = tool_manager.get_builtin_tool(
+                                    builtin_name
+                                )
+                                tools_set.add_tool(builtin_tool)
+                                existing_names.add(builtin_name)
+                                merged_builtin_tools.append(builtin_name)
+                        if merged_builtin_tools:
+                            logger.debug(
+                                f"<native_tool_merge>\n"
+                                f"  added: {merged_builtin_tools}\n"
+                                f"  reason: provider_settings.web_search=True, websearch_provider=tavily\n"
+                                f"</native_tool_merge>"
+                            )
                         for tool in tools_set.tools[:]:
                             if not tool.active:
                                 tools_set.remove_tool(tool.name)
+                        logger.debug(
+                            f"\n<native_tools count={len(tools_set.tools)}>\n"
+                            + "\n".join(
+                                f"- name: {t.name}\n  description: {t.description}"
+                                for t in tools_set.tools
+                            )
+                            + "\n</native_tools>"
+                        )
+                        target_tool_name = "web_search_tavily"
+                        target_tool = next(
+                            (
+                                t
+                                for t in tools_set.tools
+                                if t.name == target_tool_name
+                            ),
+                            None,
+                        )
+                        if target_tool is None:
+                            is_builtin = tool_manager.is_builtin_tool(
+                                target_tool_name
+                            )
+                            logger.info(
+                                f"<native_tool_probe>\n"
+                                f"  target: {target_tool_name}\n"
+                                f"  in_tools_set: False\n"
+                                f"  is_builtin_tool: {is_builtin}\n"
+                                f"  hint: {'内置工具未进入 tools_set（get_full_tool_set 仅遍历 func_list）' if is_builtin else '该工具未注册到当前工具管理器'}\n"
+                                f"</native_tool_probe>"
+                            )
+                        else:
+                            logger.info(
+                                f"<native_tool_probe>\n"
+                                f"  target: {target_tool_name}\n"
+                                f"  in_tools_set: True\n"
+                                f"  active: {target_tool.active}\n"
+                                f"</native_tool_probe>"
+                            )
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
