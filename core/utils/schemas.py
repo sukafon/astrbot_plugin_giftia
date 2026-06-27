@@ -97,23 +97,12 @@ class XmlLlmResult:
     # 退群，同上。群号
     leave: list[str] = field(default_factory=list)
     # 长期记忆。群号/用户ID，内容
-    save_memories: list[tuple[str, str]] = field(default_factory=list)
     search_memories: list[tuple[str, str]] = field(default_factory=list)
     delete_memories: list[str] = field(default_factory=list)
-    update_memories: list[tuple[str, str]] = field(default_factory=list)
-    # 用户画像，群号，用户ID，内容
-    summary_user_profiles: list[tuple[str, str, str]] = field(default_factory=list)
-    # 群画像，群号，内容
-    summary_group_profiles: list[tuple[str, str]] = field(default_factory=list)
     # 工具调用
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
     )  # (工具名, 工具参数)
-    # 调整关系
-    update_relations: list[tuple[str, int]] = field(default_factory=list)
-    set_relation_titles: list[tuple[str, str]] = field(
-        default_factory=list
-    )  # 用户ID，头衔文本
     # 定时任务，群号/用户ID，时间，内容
     schedule_tasks: list[tuple[str, str, str]] = field(default_factory=list)
     # 删除定时任务，任务ID

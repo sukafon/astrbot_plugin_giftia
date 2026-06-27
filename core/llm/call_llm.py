@@ -12,6 +12,7 @@ from ..utils.schemas import (
     XmlLlmResult,
 )
 from .xml_parse import XmlParse
+from .xml_instructions import build_xml_instructions
 
 
 class CallLLM:
@@ -108,6 +109,8 @@ class CallLLM:
         user_prompt: str,
         timeout: int = 120,
         use_source_tools: bool = False,
+        force_xml_tools: bool = False,
+        enabled_features: list[str] | None = None,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
     ) -> XmlLlmResult | None:
@@ -119,7 +122,10 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
-                    if use_source_tools:
+                    xml_inst = build_xml_instructions(enabled_features)
+                    actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
+                    tools_set = None
+                    if use_source_tools or force_xml_tools:
                         tool_manager = self.context.get_llm_tool_manager()
                         tools_set = tool_manager.get_full_tool_set()
                         # AstrBot 内置的 Tavily 工具（web_search_tavily /
@@ -196,17 +202,39 @@ class CallLLM:
                                 f"</native_tool_probe>"
                             )
                         else:
-                            logger.info(
+                            logger.debug(
                                 f"<native_tool_probe>\n"
                                 f"  target: {target_tool_name}\n"
                                 f"  in_tools_set: True\n"
                                 f"  active: {target_tool.active}\n"
                                 f"</native_tool_probe>"
                             )
+                        
+                        if force_xml_tools and tools_set and tools_set.tools:
+                            import json
+                            xml_tools_str = "\n".join(
+                                f'  - <tool_call name="{t.name}" description="{t.description}">{json.dumps(t.parameters, ensure_ascii=False)}</tool_call>'
+                                for t in tools_set.tools
+                            )
+                            xml_tools_instruction = (
+                                "\n\n# 可用工具 (强制使用 XML 标签调用)\n"
+                                "如果你需要使用工具，必须通过输出并列的 <tool_call name=\"工具名\">参数JSON</tool_call> 标签来调用。不要使用原生的 function calling 功能。若没有需要调用的工具，则不要输出任何 tool_call 标签。\n"
+                                "注意：参数部分必须是正确的 JSON 格式对象，例如：\n"
+                                "<status>...</status>\n"
+                                "<tool_call name=\"search_chat_history\">{\"keyword\": \"查询词\"}</tool_call>\n\n"
+                                "当前可用的工具列表：\n"
+                            ) + xml_tools_str
+                            actual_system_prompt = actual_system_prompt + xml_tools_instruction
+
+                    logger.debug(
+                        f"[Giftia] 触发大模型回复，最终系统提示词 (system_prompt):\n{actual_system_prompt}"
+                    )
+
+                    if use_source_tools and not force_xml_tools:
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
-                            system_prompt=system_prompt,
+                            system_prompt=actual_system_prompt,
                             prompt=user_prompt,
                             image_urls=image_urls,
                             audio_urls=audio_urls,
@@ -219,7 +247,7 @@ class CallLLM:
                         llm_resp = await self.context.tool_loop_agent(
                             event=event,
                             chat_provider_id=provider_id,
-                            system_prompt=system_prompt,
+                            system_prompt=actual_system_prompt,
                             prompt=user_prompt,
                             image_urls=image_urls,
                             audio_urls=audio_urls,

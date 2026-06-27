@@ -158,6 +158,8 @@ class ReplyPipeline:
             system_prompt=llm_reply_conf.get("llm_reply_prompt"),
             user_prompt=user_prompt,
             use_source_tools=self.plugin.tools_config.get("use_source_tools", False),
+            force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
+            enabled_features=self.plugin.tools_config.get("enabled_interactive_features"),
             image_urls=image_urls,
             audio_urls=audio_urls,
             timeout=self.plugin.tools_config.get("timeout", 120),

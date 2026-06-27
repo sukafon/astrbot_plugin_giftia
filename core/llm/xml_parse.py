@@ -276,28 +276,6 @@ class XmlParse:
                 elif tag_name == "leave":
                     result.leave.append(group_or_user_id)
 
-                elif tag_name == "summary_user_profile":
-                    text = child.get_text(strip=True)
-                    user_id = self._attr_str(child, "user_id", "")
-                    if text and user_id:
-                        result.summary_user_profiles.append(
-                            (
-                                group_or_user_id,
-                                user_id,
-                                text,
-                            )
-                        )
-
-                elif tag_name == "summary_group_profile":
-                    text = child.get_text(strip=True)
-                    if text:
-                        result.summary_group_profiles.append((group_or_user_id, text))
-
-                elif tag_name == "save_memory":
-                    text = child.get_text(strip=True)
-                    if text:
-                        result.save_memories.append((group_or_user_id, text))
-
                 elif tag_name == "search_memory":
                     text = child.get_text(strip=True)
                     if text:
@@ -351,50 +329,7 @@ class XmlParse:
                             f"Delete memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
-                elif tag_name == "update_memory":
-                    memory_id = self._attr_str(child, "id", "")
-                    text = child.get_text(strip=True)
-                    if memory_id and text:
-                        result.update_memories.append((memory_id, text))
-                    else:
-                        logger.error(
-                            f"Update memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
 
-                elif tag_name == "update_relation":
-                    user_id = self._attr_str(child, "user_id", "")
-                    delta = self._attr_str(child, "delta", "")
-                    if user_id and delta:
-                        # delta应该是数字类型，尝试转换
-                        try:
-                            # 如果有+号，去掉它再转换
-                            if delta.startswith("+"):
-                                delta = delta[1:]
-                            delta_int = int(delta)
-                            # 如果delta绝对值大于+-5，截断到+-5，防止误操作导致关系崩盘
-                            if delta_int > 5:
-                                delta_int = 5
-                            elif delta_int < -5:
-                                delta_int = -5
-                            result.update_relations.append((user_id, delta_int))
-                        except ValueError:
-                            logger.error(
-                                f"Update relation delta值无效: {delta}, xml_str: {xml_str[:1000]}"
-                            )
-                    else:
-                        logger.error(
-                            f"Update relation数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
-
-                elif tag_name == "set_relation_title":
-                    user_id = self._attr_str(child, "user_id", "")
-                    title = child.get_text(strip=True)
-                    if user_id and title:
-                        result.set_relation_titles.append((user_id, title))
-                    else:
-                        logger.error(
-                            f"Set relation title数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
-                        )
 
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
