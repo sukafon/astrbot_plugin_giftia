@@ -350,6 +350,12 @@
                 "default": true,
                 "hint": "启用原生的函数调用工具，需提供商支持。无论是否启用此项，XML工具都可以被调用。"
             },
+            "force_xml_tools": {
+                "description": "强制使用 XML 标签调用工具",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，将从原生工具列表中获取工具，并以 XML 格式写入系统提示词，而不会将原生 tools 结构传给 LLM（对模型遵循指令能力要求较高，建议在能力较强的模型上使用）。"
+            },
             "max_loop": {
                 "description": "工具调用轮数上限",
                 "type": "int",
@@ -373,6 +379,32 @@
                 "type": "bool",
                 "default": true,
                 "hint": "用于AI获取指定消息的上下文"
+            },
+            "enabled_interactive_features": {
+                "description": "启用的内置交互功能",
+                "hint": "勾选表示启用对应的内置互动/功能 XML 标签，大模型将只能输出勾选的标签。",
+                "type": "list",
+                "options": [
+                    "poke(戳一戳)",
+                    "emoji_like(贴表情回应)",
+                    "like(点赞名片)",
+                    "delete(撤回自身消息)",
+                    "group_admin(群管禁言/踢人)",
+                    "schedule_task(设置/查看/删除定时任务)",
+                    "leave(退群)",
+                    "sticker(表情包发送与收集)",
+                    "memory_query_delete(记忆查询与删除)"
+                ],
+                "default": [
+                    "poke(戳一戳)",
+                    "emoji_like(贴表情回应)",
+                    "like(点赞名片)",
+                    "delete(撤回自身消息)",
+                    "group_admin(群管禁言/踢人)",
+                    "schedule_task(设置/查看/删除定时任务)",
+                    "sticker(表情包发送与收集)",
+                    "memory_query_delete(记忆查询与删除)"
+                ]
             }
         }
     },
