@@ -387,6 +387,21 @@ class Database:
             )
         return None
 
+    async def get_database_id_by_message_id(
+        self, message_id: str, group_or_user_id: str, bot_name: str
+    ) -> int | None:
+        """获取指定 message_id 在 chat_history 表中的自增 id"""
+        async with self.conn.execute(
+            """
+            SELECT id FROM chat_history
+            WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (message_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["id"] if row else None
+
     async def search_messages(
         self,
         group_or_user_id: str,

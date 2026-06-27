@@ -187,7 +187,7 @@ class CallLLM:
                             is_builtin = tool_manager.is_builtin_tool(
                                 target_tool_name
                             )
-                            logger.info(
+                            logger.debug(
                                 f"<native_tool_probe>\n"
                                 f"  target: {target_tool_name}\n"
                                 f"  in_tools_set: False\n"

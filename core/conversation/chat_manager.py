@@ -170,12 +170,19 @@ class ChatManager:
 
             if has_sent_reply:
                 fmt_key = f"{bot_name}:{group_or_user_id}"
+                active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
                 decision_conf = bot_conf.get("decision_conf", {})
                 window_size = decision_conf.get("reply_active_window", 10)
                 self.plugin.active_reply_counters[fmt_key] = window_size
+                
+                trigger_msg_id = None
+                if active_counter == 0 and "current_message" in locals() and current_message:
+                    trigger_msg_id = current_message.message_id
+                
                 await self.plugin.passive_memory_manager.mark_silence_summary_armed(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
+                    trigger_msg_id=trigger_msg_id,
                 )
                 logger.info(
                     f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"

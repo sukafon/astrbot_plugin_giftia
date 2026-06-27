@@ -91,6 +91,12 @@ class DataApi:
                         }
                     )
 
+            last_summarized_id = 0
+            if bot_name and group_or_user_id:
+                last_summarized_id = await self.giftia.db.get_kv_data(
+                    f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}", 0
+                )
+
             return json_response(
                 {
                     "status": "success",
@@ -99,6 +105,7 @@ class DataApi:
                         "total": total,
                         "page": page,
                         "limit": limit,
+                        "last_summarized_id": last_summarized_id,
                     },
                 }
             )

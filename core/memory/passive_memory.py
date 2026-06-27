@@ -7,6 +7,7 @@ from astrbot.api import logger
 class PassiveMemoryManager:
     def __init__(self, plugin):
         self.plugin = plugin
+        self.initialized_keys = set()
 
     async def _format_message_content_for_summary(self, msg) -> str:
         """清洗消息中的媒体占位符，并补充适合总结的媒体转述文本"""
@@ -63,7 +64,7 @@ class PassiveMemoryManager:
         return re.sub(r"\s{2,}", " ", content).strip()
 
     async def mark_silence_summary_armed(
-        self, bot_name: str, group_or_user_id: str
+        self, bot_name: str, group_or_user_id: str, trigger_msg_id: str = None
     ) -> None:
         """bot 发言后重新武装一次静默总结"""
         if not self.plugin.passive_memory_enabled:
@@ -75,6 +76,26 @@ class PassiveMemoryManager:
         await self.plugin.db.upsert_kv_data(
             f"passive_memory:silent_count:{fmt_key}", 0
         )
+
+        # 如果提供了触发消息的 ID（说明机器人在此前处于不活跃状态被唤醒），
+        # 推进 last_summarized_id 到该触发消息的前一位，跳过这期间从未见过的群友对话。
+        if trigger_msg_id:
+            db_msg_id = await self.plugin.db.get_database_id_by_message_id(
+                message_id=trigger_msg_id,
+                group_or_user_id=group_or_user_id,
+                bot_name=bot_name,
+            )
+            if db_msg_id:
+                last_summarized_id = await self.plugin.db.get_kv_data(
+                    f"passive_memory:last_summarized_id:{fmt_key}", 0
+                )
+                if db_msg_id - 1 > last_summarized_id:
+                    logger.info(
+                        f"[Giftia Passive Memory] 机器人从不活跃中被唤醒。将 last_summarized_id 从 {last_summarized_id} 推进到 {db_msg_id - 1}，跳过未见过的消息。"
+                    )
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:last_summarized_id:{fmt_key}", db_msg_id - 1
+                    )
 
     async def search_and_filter_memories(
         self,
@@ -135,6 +156,15 @@ class PassiveMemoryManager:
             return
 
         fmt_key = f"{bot_name}:{group_or_user_id}"
+
+        # 如果机器人既不处于活跃计数窗口中，也未武装静默总结，说明处于闲置状态，直接返回。
+        # 此时无需执行任何数据库查询和计算，唤醒时 B 逻辑会自动推进边界并跳过闲置期。
+        active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
+        silence_armed = await self.plugin.db.get_kv_data(
+            f"passive_memory:silence_armed:{fmt_key}", 0
+        )
+        if active_counter == 0 and not silence_armed:
+            return
         
         if not hasattr(self, "passive_memory_locks"):
             self.passive_memory_locks = {}
@@ -160,7 +190,31 @@ class PassiveMemoryManager:
                 await self.plugin.db.upsert_kv_data(
                     f"passive_memory:silence_armed:{fmt_key}", 0
                 )
+                self.initialized_keys.add(fmt_key)
                 return
+
+            boundary_id = await self.plugin.db.get_boundary_message_id(
+                bot_name, group_or_user_id, self.plugin.msg_number
+            )
+
+            # 首次检查：如果未总结的消息范围太旧（已经超出了当前上下文窗口），直接跳过（这通常是离线期间的消息）
+            if fmt_key not in self.initialized_keys:
+                if boundary_id > last_summarized_id:
+                    logger.info(
+                        f"[Giftia Passive Memory] 检测到离线期间未见过的消息。将 last_summarized_id 从 {last_summarized_id} 推进到 {boundary_id}，跳过离线消息。"
+                    )
+                    last_summarized_id = boundary_id
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:last_summarized_id:{fmt_key}", last_summarized_id
+                    )
+                    # 重置静默武装状态，防止旧状态被残留唤醒
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:silence_armed:{fmt_key}", 0
+                    )
+                    await self.plugin.db.upsert_kv_data(
+                        f"passive_memory:silent_count:{fmt_key}", 0
+                    )
+                self.initialized_keys.add(fmt_key)
 
             if max_id <= last_summarized_id:
                 return
@@ -172,10 +226,6 @@ class PassiveMemoryManager:
             end_id = max_id
             silence_armed = await self.plugin.db.get_kv_data(
                 f"passive_memory:silence_armed:{fmt_key}", 0
-            )
-            
-            boundary_id = await self.plugin.db.get_boundary_message_id(
-                bot_name, group_or_user_id, self.plugin.msg_number
             )
             
             if boundary_id > last_summarized_id:
@@ -204,28 +254,6 @@ class PassiveMemoryManager:
                 )
                 
             if trigger_type:
-                # 收窄总结范围到上下文窗口内，bot 只记忆自己"见过"的消息
-                if start_id < boundary_id:
-                    logger.info(
-                        f"[Giftia Passive Memory] start_id({start_id}) 超出上下文窗口边界({boundary_id})，"
-                        f"收窄到上下文范围，跳过 bot 未见过的消息"
-                    )
-                    start_id = boundary_id
-
-                if start_id > end_id:
-                    # 上下文窗口内无需总结的消息
-                    await self.plugin.db.upsert_kv_data(
-                        f"passive_memory:silent_count:{fmt_key}", 0
-                    )
-                    await self.plugin.db.upsert_kv_data(
-                        f"passive_memory:last_summarized_id:{fmt_key}", end_id
-                    )
-                    if trigger_type == "silence":
-                        await self.plugin.db.upsert_kv_data(
-                            f"passive_memory:silence_armed:{fmt_key}", 0
-                        )
-                    return
-
                 logger.info(
                     f"[Giftia Passive Memory] 触发被动总结 ({trigger_type}). "
                     f"范围: {start_id} 到 {end_id}"

@@ -200,10 +200,10 @@ window.GiftiaApp = {
     // ----------------------------------------------------
     async loadChatHistory() {
         const listContainer = document.getElementById("history-list");
-        listContainer.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
         if (!document.getElementById("history-bot-name").value) {
             this.pagination.history.total = 0;
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无可用 Bot</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
             window.renderPagination("history-pagination", this.pagination.history, () => {});
             return;
         }
@@ -223,7 +223,12 @@ window.GiftiaApp = {
             const res = await window.apiGet("/chat_history", params);
             if (res.status === "success" && res.data) {
                 this.pagination.history.total = res.data.total;
-                this.renderChatHistory(res.data.items);
+                const lastSummarizedId = res.data.last_summarized_id || 0;
+                const boundaryEl = document.getElementById("history-last-summarized-id");
+                if (boundaryEl) {
+                    boundaryEl.textContent = lastSummarizedId > 0 ? `#${lastSummarizedId}` : "无";
+                }
+                this.renderChatHistory(res.data.items, lastSummarizedId);
                 window.renderPagination("history-pagination", this.pagination.history, (page) => {
                     this.pagination.history.page = page;
                     this.loadChatHistory();
@@ -232,14 +237,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
-    renderChatHistory(items) {
+    renderChatHistory(items, lastSummarizedId = 0) {
         const container = document.getElementById("history-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无相关聊天记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关聊天记录</td></tr>`;
             return;
         }
 
@@ -261,8 +266,19 @@ window.GiftiaApp = {
 
             const senderDisp = item.nickname ? `${item.nickname} (${item.user_id})` : item.user_id;
 
+            const isSummarized = item.id <= lastSummarizedId;
+            const summaryBadge = isSummarized
+                ? `<span class="badge badge-success" style="font-size: 0.75rem; padding: 2px 6px;">已归档</span>`
+                : `<span class="badge badge-secondary" style="font-size: 0.75rem; padding: 2px 6px;">待总结/跳过</span>`;
+
             return `
                 <tr>
+                    <td data-label="ID">
+                        <div style="display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+                            <code>#${item.id}</code>
+                            ${summaryBadge}
+                        </div>
+                    </td>
                     <td data-label="时间" style="white-space: nowrap;">${window.formatDate(item.created_at)}</td>
                     <td data-label="发送人">${senderDisp}</td>
                     <td data-label="消息内容">
