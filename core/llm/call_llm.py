@@ -12,7 +12,12 @@ from ..utils.schemas import (
     XmlLlmResult,
 )
 from .xml_parse import XmlParse
-from .xml_instructions import build_xml_instructions
+from .preset_prompts import (
+    build_xml_instructions,
+    DEFAULT_IMAGE_CAPTION_PROMPT,
+    DEFAULT_AUDIO_CAPTION_PROMPT,
+)
+from .json_parse import decode_media_caption_json, decode_media_audio_json
 
 
 class CallLLM:
@@ -39,9 +44,7 @@ class CallLLM:
             else:
                 image_caption_provider_ids = []
         self.image_caption_provider_ids = [p for p in image_caption_provider_ids if p]
-        self.image_caption_prompt = caption_config.get(
-            "image_caption_system_prompt", ""
-        )
+        self.image_caption_prompt = DEFAULT_IMAGE_CAPTION_PROMPT
         # 音频转述配置
         audio_caption_provider_ids = caption_config.get("audio_caption_provider_ids")
         if not audio_caption_provider_ids:
@@ -53,9 +56,7 @@ class CallLLM:
             else:
                 audio_caption_provider_ids = []
         self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
-        self.audio_caption_prompt = caption_config.get(
-            "audio_caption_system_prompt", ""
-        )
+        self.audio_caption_prompt = DEFAULT_AUDIO_CAPTION_PROMPT
 
     async def call_llm_decision(
         self,
@@ -334,10 +335,14 @@ class CallLLM:
                             f"[Giftia] LLM转述响应片段: "
                             f"{llm_resp.completion_text[:120]!r}"
                         )
-                        return self.xml_parse.decode_media_caption_xml(
+                        parsed = decode_media_caption_json(
                             llm_resp.completion_text
                         )
-                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                        if parsed:
+                            return parsed
+                        logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
+                    else:
+                        logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
@@ -365,10 +370,14 @@ class CallLLM:
                         audio_urls=audio_urls,
                     )
                     if llm_resp.completion_text:
-                        return self.xml_parse.decode_media_audio_xml(
+                        parsed = decode_media_audio_json(
                             llm_resp.completion_text
                         )
-                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                        if parsed:
+                            return parsed
+                        logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
+                    else:
+                        logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")

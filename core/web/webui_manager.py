@@ -58,6 +58,24 @@ class WebUIManager:
             desc="Clean media files cache by criteria",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/auto_clean/config",
+            view_handler=self.web_api.get_auto_clean_config,
+            methods=["GET"],
+            desc="Get media cache auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/auto_clean/config",
+            view_handler=self.web_api.set_auto_clean_config,
+            methods=["POST"],
+            desc="Set media cache auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/media/cache/auto_clean/trigger",
+            view_handler=self.web_api.trigger_auto_clean,
+            methods=["POST"],
+            desc="Manually trigger media cache auto cleanup",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/memories",
             view_handler=self.web_api.get_memories,
             methods=["GET"],

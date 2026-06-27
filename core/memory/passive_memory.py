@@ -357,23 +357,14 @@ class PassiveMemoryManager:
             chat_history_text = "\n".join(chat_history_lines)
 
             # 构建 User Prompt
-            user_prompt = f"""以下是一段历史聊天记录，你需要根据这段记录，提取/更新长期记忆、用户画像、群聊画像和好感度/关系头衔。
-
-【当前群聊ID/会话ID】: {group_or_user_id}
-
-【现有状态信息】:
-1. 用户现有画像:
-{"\n---\n".join(user_profiles_str) if user_profiles_str else "无"}
-
-2. 用户现有好感度/关系:
-{"\n".join(user_relations_str) if user_relations_str else "无"}
-
-3. 当前群聊的现有画像:
-{group_profile or "无"}
-
-【待分析的聊天记录】:
-{chat_history_text}
-"""
+            user_prompt_parts = [
+                f"<session_id>{group_or_user_id}</session_id>",
+                f"<current_user_profiles>\n{'\n---\n'.join(user_profiles_str) if user_profiles_str else '无'}\n</current_user_profiles>",
+                f"<current_relations>\n{'\n'.join(user_relations_str) if user_relations_str else '无'}\n</current_relations>",
+                f"<current_group_profile>\n{group_profile or '无'}\n</current_group_profile>",
+                f"<chat_history>\n{chat_history_text}\n</chat_history>"
+            ]
+            user_prompt = "\n\n".join(user_prompt_parts)
 
             bot_conf = self.plugin.bot_map.get(bot_name, {})
             nickname = bot_conf.get("nickname", bot_name)
@@ -397,7 +388,7 @@ class PassiveMemoryManager:
                         logger.debug(
                             f"[Giftia Passive Memory] 开始总结记忆的 system_prompt:\n{sys_prompt}"
                         )
-                        logger.debug(
+                        logger.info(
                             f"[Giftia Passive Memory] 开始总结记忆的 user_prompt:\n{user_prompt}"
                         )
                         llm_resp = await self.plugin.context.llm_generate(

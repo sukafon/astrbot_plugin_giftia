@@ -929,7 +929,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
-    // Tab switching for Edit Media Modal
+    // Tab switching for Edit Media Modal and Clean Cache Modal
     document.addEventListener("click", (e) => {
         const btn = e.target.closest(".media-tab-btn");
         if (btn) {
@@ -943,6 +943,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 const targetPanel = parent.querySelector(`#mediatab-${tabName}`);
                 if (targetPanel) {
                     targetPanel.classList.add("active");
+                }
+                
+                // Toggle clean-cache-modal footer buttons visibility
+                const modal = btn.closest("#clean-cache-modal");
+                if (modal) {
+                    const btnManualCalc = modal.querySelector("#btn-manual-calc");
+                    const btnManualSubmit = modal.querySelector("#btn-manual-submit");
+                    const btnAutoTrigger = modal.querySelector("#btn-auto-trigger");
+                    const btnAutoSave = modal.querySelector("#btn-auto-save");
+                    if (tabName === "clean-manual") {
+                        if (btnManualCalc) btnManualCalc.style.display = "inline-block";
+                        if (btnManualSubmit) btnManualSubmit.style.display = "inline-block";
+                        if (btnAutoTrigger) btnAutoTrigger.style.display = "none";
+                        if (btnAutoSave) btnAutoSave.style.display = "none";
+                    } else if (tabName === "clean-auto") {
+                        if (btnManualCalc) btnManualCalc.style.display = "none";
+                        if (btnManualSubmit) btnManualSubmit.style.display = "none";
+                        if (btnAutoTrigger) btnAutoTrigger.style.display = "inline-block";
+                        if (btnAutoSave) btnAutoSave.style.display = "inline-block";
+                    }
                 }
             }
         }

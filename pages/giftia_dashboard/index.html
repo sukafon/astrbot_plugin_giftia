@@ -498,48 +498,87 @@
                 <h2>清理媒体文件缓存</h2>
                 <button class="modal-close-btn" onclick="closeModal('clean-cache-modal')">&times;</button>
             </div>
-            <div class="modal-body">
-                <div class="form-row">
-                    <div class="form-group flex-grow">
-                        <label for="clean-media-type">媒体类型</label>
-                        <select id="clean-media-type">
-                            <option value="all">全部</option>
-                            <option value="image">仅图片</option>
-                            <option value="audio">仅音频</option>
-                        </select>
+            <div class="modal-body" style="padding: 15px 20px; overflow: visible;">
+                <div class="edit-media-tabs">
+                    <div class="edit-media-tab-header">
+                        <button type="button" class="media-tab-btn active" data-mediatab="clean-manual">条件清理</button>
+                        <button type="button" class="media-tab-btn" data-mediatab="clean-auto" onclick="loadAutoCleanConfig()">自动清理管理</button>
                     </div>
-                </div>
-                <div class="form-row" style="margin-top: 12px;">
-                    <div class="form-group flex-grow" style="display: flex; flex-direction: column;">
-                        <label>风格类型</label>
-                        <div class="selection-helper-buttons" style="margin-bottom: 6px; display: flex; gap: 8px;">
-                            <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(true)">全选</button>
-                            <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(false)">全不选</button>
-                            <button type="button" class="btn btn-secondary btn-small" onclick="invertCleanGenres()">反选</button>
+                    <div class="edit-media-tab-content" style="padding: 15px 0 0 0;">
+                        <!-- Tab Panel 1: Conditional clean (existing) -->
+                        <div id="mediatab-clean-manual" class="media-tab-panel active" style="padding: 0;">
+                            <div class="form-row">
+                                <div class="form-group flex-grow">
+                                    <label for="clean-media-type">媒体类型</label>
+                                    <select id="clean-media-type">
+                                        <option value="all">全部</option>
+                                        <option value="image">仅图片</option>
+                                        <option value="audio">仅音频</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row" style="margin-top: 12px;">
+                                <div class="form-group flex-grow" style="display: flex; flex-direction: column;">
+                                    <label>风格类型</label>
+                                    <div class="selection-helper-buttons" style="margin-bottom: 6px; display: flex; gap: 8px;">
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(true)">全选</button>
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllCleanGenres(false)">全不选</button>
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="invertCleanGenres()">反选</button>
+                                    </div>
+                                    <div id="clean-media-genre-container" style="max-height: 120px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 6px; background-color: var(--bg-secondary);">
+                                        <!-- Dynamically generated checkbox list of genres -->
+                                    </div>
+                                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--font-secondary);">
+                                        <input type="checkbox" id="clean-genre-exclude" style="width: auto; margin: 0; cursor: pointer;">
+                                        <label for="clean-genre-exclude" style="margin: 0; cursor: pointer; color: var(--font-secondary); font-weight: normal;">排除模式（仅清理未勾选的风格类型）</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row" style="margin-top: 12px;">
+                                <div class="form-group flex-grow">
+                                    <label for="clean-max-query-times">使用次数限制 (≤ N 次)</label>
+                                    <input type="number" id="clean-max-query-times" value="0" min="0" placeholder="默认 0，表示只清理从未被重复使用的缓存">
+                                </div>
+                            </div>
+                            <div id="clean-cache-preview-info" style="margin-top: 16px; padding: 12px; border-radius: 6px; background-color: var(--bg-secondary); border-left: 4px solid var(--border-color); font-size: 13px; line-height: 1.5;">
+                                点击下方“计算清理空间”进行预估...
+                            </div>
                         </div>
-                        <div id="clean-media-genre-container" style="max-height: 120px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 6px; background-color: var(--bg-secondary);">
-                            <!-- Dynamically generated checkbox list of genres -->
-                        </div>
-                        <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--font-secondary);">
-                            <input type="checkbox" id="clean-genre-exclude" style="width: auto; margin: 0; cursor: pointer;">
-                            <label for="clean-genre-exclude" style="margin: 0; cursor: pointer; color: var(--font-secondary); font-weight: normal;">排除模式（仅清理未勾选的风格类型）</label>
+
+                        <!-- Tab Panel 2: Auto clean management -->
+                        <div id="mediatab-clean-auto" class="media-tab-panel" style="padding: 0;">
+                            <div class="form-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                                <div>
+                                    <strong style="color: var(--font-primary);">开启定时自动清理</strong>
+                                    <div style="font-size: 12px; color: var(--font-secondary); margin-top: 4px;">启用后，每天凌晨 03:00 将自动清理超出会话上下文的媒体缓存</div>
+                                </div>
+                                <div class="switch-container">
+                                    <input type="checkbox" id="auto-clean-enabled" class="switch-checkbox">
+                                    <label for="auto-clean-enabled" class="switch-label"></label>
+                                </div>
+                            </div>
+                            <div class="form-row" style="margin-top: 12px;">
+                                <div class="form-group flex-grow" style="display: flex; flex-direction: column;">
+                                    <label>自动清理时保留的风格类型</label>
+                                    <div style="font-size: 12px; color: var(--font-secondary); margin-bottom: 6px;">勾选的风格类型即使超出会话窗口也<b>不会</b>被物理删除。</div>
+                                    <div id="auto-clean-genre-container" style="max-height: 140px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 6px; background-color: var(--bg-secondary);">
+                                        <!-- Dynamically generated checkbox list of genres for auto clean -->
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 15px; padding: 12px; border-radius: 6px; background-color: var(--bg-secondary); border-left: 4px solid var(--primary); font-size: 12px; color: var(--font-secondary); line-height: 1.6;">
+                                💡 <b>始终保留规则：</b>活跃会话上下文引用的媒体文件（每个会话最新 100 条消息内）、最近 24 小时下载或生成的媒体文件，以及系统收录的表情包（Stickers），均会受到安全保护不会被自动删除。
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div class="form-row" style="margin-top: 12px;">
-                    <div class="form-group flex-grow">
-                        <label for="clean-max-query-times">使用次数限制 (≤ N 次)</label>
-                        <input type="number" id="clean-max-query-times" value="0" min="0" placeholder="默认 0，表示只清理从未被重复使用的缓存">
-                    </div>
-                </div>
-                <div id="clean-cache-preview-info" style="margin-top: 16px; padding: 12px; border-radius: 6px; background-color: var(--bg-secondary); border-left: 4px solid var(--border-color); font-size: 13px; line-height: 1.5;">
-                    点击下方“计算清理空间”进行预估...
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('clean-cache-modal')">取消</button>
-                <button class="btn btn-secondary" onclick="calculateCleanSpace()">计算清理空间</button>
-                <button class="btn btn-danger" onclick="submitCleanCache()">确认清理</button>
+                <button class="btn btn-secondary" onclick="closeModal('clean-cache-modal')">关闭</button>
+                <button id="btn-manual-calc" class="btn btn-secondary" onclick="calculateCleanSpace()">计算清理空间</button>
+                <button id="btn-manual-submit" class="btn btn-danger" onclick="submitCleanCache()">确认清理</button>
+                <button id="btn-auto-trigger" class="btn btn-primary" style="display: none;" onclick="triggerAutoCleanImmediately()">立即执行清理</button>
+                <button id="btn-auto-save" class="btn btn-danger" style="display: none;" onclick="saveAutoCleanConfig()">保存配置</button>
             </div>
         </div>
     </div>

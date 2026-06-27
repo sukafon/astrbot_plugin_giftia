@@ -80,7 +80,7 @@ def build_xml_instructions(enabled_features: list[str] | None) -> str:
     if interactive_lines:
         prompt_lines.append("")
         prompt_lines.append("## 可用的可选互动与功能标签")
-        prompt_lines.append("你可以根据上下文需要，在 `<root>` 节点内输出以下标签来实现特殊互动功能：")
+        prompt_lines.append("你可以根据上下文需要，在回复中输出以下标签来实现特殊互动功能：")
         prompt_lines.extend(interactive_lines)
 
     # 3. 输出格式示例与提示
@@ -103,3 +103,39 @@ def build_xml_instructions(enabled_features: list[str] | None) -> str:
     ])
 
     return "\n".join(prompt_lines)
+
+
+DEFAULT_IMAGE_CAPTION_PROMPT = """# 请识别图片的以下信息：
+- genre：你认为合适的图片分类，例如“屏幕截图”“表情包”“插画”“漫画”“游戏图片”“写真”“风景照”等，若无法确定则为 ""。
+- character：识别图片中的角色名称，若无法确定则为 ""。
+- source：图片所属的作品名、地点名字，若无法确定则为 ""。
+- text：识别图片中的文字内容，不限字数，若无或无法识别则为 ""。
+- caption：从多角度描述图片内容，包括图片中的角色形象、场景、氛围、情感等，一段话纯文本，不超过 120 个字。
+
+# 输出格式
+必须输出为合法的 JSON 对象，且不要输出任何 Markdown 标记以外的解释性文字。格式如下：
+{
+  "genre": "图片分类",
+  "character": "角色名称",
+  "source": "作品/来源名",
+  "text": "图片内识别出的文字",
+  "caption": "图片详细描述"
+}"""
+
+
+DEFAULT_AUDIO_CAPTION_PROMPT = """# 请识别音频的以下信息：
+- genre：语音对话、直播语音、声优台词、音乐，若无法确定则为 ""。
+- character：如果为非语音对话，识别出具体主播或者声优名字，包括视频主播和虚拟主播以及游戏、动漫CV等，若无法确定则为 ""。
+- source：如果是声优台词，请识别出作品名；如果是音乐，请识别出音乐名称，若无法确定则为 ""。
+- text：识别语音的文字内容，若无或无法识别则为 ""。
+- caption：从多角度描述音频内容，包括音频的氛围、情感、场景等，一段话纯文本，不超过 120 个字。
+
+# 输出格式
+必须输出为合法的 JSON 对象，且不要输出任何 Markdown 标记以外的解释性文字。格式如下：
+{
+  "genre": "音频分类",
+  "character": "主播/声优名字",
+  "source": "作品/音乐名称",
+  "text": "语音转写的文字内容",
+  "caption": "音频多角度描述"
+}"""

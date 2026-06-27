@@ -583,3 +583,43 @@ class MediaApi:
         except Exception as e:
             logger.error(f"[Giftia API] clean_media_cache error: {e}")
             return error_response(f"清理媒体文件缓存失败: {str(e)}")
+
+    async def get_auto_clean_config(self) -> dict:
+        """获取自动清理缓存的配置"""
+        try:
+            import json
+            raw_cfg = await self.giftia.db.get_kv_data("auto_clean_media_config")
+            cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
+            return json_response({"status": "success", "config": cfg})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_auto_clean_config error: {e}")
+            return error_response(f"获取自动清理配置失败: {str(e)}")
+
+    async def set_auto_clean_config(self) -> dict:
+        """更新并保存自动清理缓存的配置"""
+        try:
+            import json
+            body = await request.json()
+            enabled = bool(body.get("enabled", False))
+            keep_genres = list(body.get("keep_genres", ["表情包", "sticker"]))
+            
+            cfg = {"enabled": enabled, "keep_genres": keep_genres}
+            await self.giftia.db.upsert_kv_data("auto_clean_media_config", json.dumps(cfg))
+            
+            # 动态更新调度器任务
+            self.giftia.tools_func.update_auto_clean_media_job()
+            
+            return json_response({"status": "success", "message": "配置保存成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] set_auto_clean_config error: {e}")
+            return error_response(f"保存自动清理配置失败: {str(e)}")
+
+    async def trigger_auto_clean(self) -> dict:
+        """手动触发执行自动清理"""
+        try:
+            res = await self.giftia.tools_func.auto_clean_media_cache()
+            return json_response(res)
+        except Exception as e:
+            logger.error(f"[Giftia API] trigger_auto_clean error: {e}")
+            return error_response(f"执行自动清理失败: {str(e)}")
+

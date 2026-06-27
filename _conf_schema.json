@@ -166,14 +166,6 @@
                 "default": [],
                 "hint": "选择用于图片转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
-            "image_caption_system_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "图片转述系统提示词",
-                "default": "",
-                "hint": "图片转述的系统提示词。依旧是只能修改系统提示词。"
-            },
             "audio_caption_enabled": {
                 "description": "启用音频转述",
                 "type": "bool",
@@ -186,14 +178,6 @@
                 "_special": "select_providers",
                 "default": [],
                 "hint": "选择用于音频转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
-            },
-            "audio_caption_system_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "音频转述系统提示词",
-                "default": "",
-                "hint": "音频转述的系统提示词。依旧是只能修改系统提示词。"
             },
             "defer_caption_enabled": {
                 "description": "按需延迟媒体转述",

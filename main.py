@@ -181,7 +181,7 @@ class Giftia(Star):
         # 定时任务
         self.task_manager = Scheduler()
         self.tools_func = ToolsFunc(
-            self.conf, self.task_manager, self.db, self.http_manager
+            self.conf, self.task_manager, self.db, self.http_manager, self.data_cache
         )
 
         # 实例化逻辑管理器

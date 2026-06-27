@@ -391,61 +391,7 @@ class XmlParse:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
             return None
 
-    def decode_media_caption_xml(self, xml_str: str) -> MediaCaption | None:
-        """解码媒体图片描述XML字符串"""
-        result = MediaCaption()
-        result.media_type = "image"
 
-        try:
-            safe_xml = self.preprocess_xml(xml_str)
-            soup = BeautifulSoup(safe_xml, "xml")
-            root = soup.find("root")
-            if root:
-                for child in root.find_all(recursive=False):
-                    if child.name == "caption":
-                        result.genre = self._attr_str(child, "genre", "")
-                        result.character = self._attr_str(child, "character", "")
-                        result.source = self._attr_str(child, "source", "")
-                        result.text = self._attr_str(child, "text", "")
-                        result.caption = child.get_text(strip=True)
-
-            if not result.caption:
-                logger.warning(
-                    f"媒体图片描述数据无效: {result}, xml_str: {xml_str[:1000]}"
-                )
-                return None
-            return result
-        except Exception as e:
-            logger.error(f"解析媒体图片描述XML失败: {e}, xml_str: {xml_str[:1000]}")
-            return None
-
-    def decode_media_audio_xml(self, xml_str: str) -> MediaCaption | None:
-        """解码媒体语音描述XML字符串"""
-        result = MediaCaption()
-        result.media_type = "audio"
-
-        try:
-            safe_xml = self.preprocess_xml(xml_str)
-            soup = BeautifulSoup(safe_xml, "xml")
-            root = soup.find("root")
-            if root:
-                for child in root.find_all(recursive=False):
-                    if child.name == "caption":
-                        result.genre = self._attr_str(child, "genre", "")
-                        result.character = self._attr_str(child, "character", "")
-                        result.source = self._attr_str(child, "source", "")
-                        result.text = self._attr_str(child, "text", "")
-                        result.caption = child.get_text(strip=True)
-
-            if not result.caption:
-                logger.warning(
-                    f"媒体语音描述数据无效: {result}, xml_str: {xml_str[:1000]}"
-                )
-                return None
-            return result
-        except Exception as e:
-            logger.error(f"解析媒体语音描述XML失败: {e}, xml_str: {xml_str[:1000]}")
-            return None
 
     def parse_str_json(self, response_text: str) -> dict | None:
         """把AI回复的json字符串解析成字典"""
