@@ -19,11 +19,11 @@ from astrbot.api.message_components import (
 )
 from astrbot.core.message.components import BaseMessageComponent
 
-from .call_llm import CallLLM
-from .data_cache import DataCache, is_temp_or_local_path
+from ..llm.call_llm import CallLLM
+from ..database.data_cache import DataCache, is_temp_or_local_path
 from .http_manager import HttpManager
 from .schemas import MessageData
-from .xml_parse import MediaCaption
+from ..llm.xml_parse import MediaCaption
 
 # 支持的图片文件格式
 SUPPORTED_FILE_FORMATS_WITH_DOT = (

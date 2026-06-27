@@ -18,6 +18,7 @@ window.closeModal = function(id) {
 window.openAddMemoryModal = function() {
     document.getElementById("add-mem-bot").value = "";
     document.getElementById("add-mem-group").value = "";
+    document.getElementById("add-mem-associated-ids").value = "";
     document.getElementById("add-mem-text").value = "";
     window.openModal("add-memory-modal");
 };
@@ -25,6 +26,7 @@ window.openAddMemoryModal = function() {
 window.submitAddMemory = async function() {
     const botName = document.getElementById("add-mem-bot").value.trim();
     const groupId = document.getElementById("add-mem-group").value.trim();
+    const associatedIds = document.getElementById("add-mem-associated-ids").value.trim();
     const text = document.getElementById("add-mem-text").value.trim();
 
     if (!botName || !groupId || !text) {
@@ -37,7 +39,8 @@ window.submitAddMemory = async function() {
             bot_name: botName,
             group_or_user_id: groupId,
             text: text,
-            user_id: "admin"
+            user_id: "admin",
+            associated_user_ids: associatedIds
         });
         if (res.status === "success") {
             window.showToast("保存记忆成功！");
@@ -52,11 +55,12 @@ window.submitAddMemory = async function() {
 };
 
 // 2. Edit Memory
-window.openEditMemoryModal = function(id, bot, group, textEncoded) {
+window.openEditMemoryModal = function(id, bot, group, textEncoded, associatedIds) {
     const text = decodeURIComponent(textEncoded);
     document.getElementById("edit-mem-id").value = id;
     document.getElementById("edit-mem-bot").value = bot;
     document.getElementById("edit-mem-group").value = group;
+    document.getElementById("edit-mem-associated-ids").value = associatedIds || "";
     document.getElementById("edit-mem-text").value = text;
     window.openModal("edit-memory-modal");
 };
@@ -65,6 +69,7 @@ window.submitEditMemory = async function() {
     const id = document.getElementById("edit-mem-id").value;
     const bot = document.getElementById("edit-mem-bot").value;
     const group = document.getElementById("edit-mem-group").value;
+    const associatedIds = document.getElementById("edit-mem-associated-ids").value.trim();
     const text = document.getElementById("edit-mem-text").value.trim();
 
     if (!text) {
@@ -78,7 +83,8 @@ window.submitEditMemory = async function() {
             bot_name: bot,
             group_or_user_id: group,
             text: text,
-            user_id: "admin"
+            user_id: "admin",
+            associated_user_ids: associatedIds
         });
         if (res.status === "success") {
             window.showToast("保存成功！");
@@ -160,7 +166,24 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             previewContainer.innerHTML = `<img id="${uniqueId}" src="${gridEl.src}">`;
         } else if ((type === "audio" || type === "voice") && url) {
             const uniqueId = `edit-media-preview-audio-${hash}`;
-            previewContainer.innerHTML = `<audio id="${uniqueId}" src="${gridEl.src}" controls></audio>`;
+            const dataUrl = gridEl.src;
+            const mimeMatch = dataUrl.match(/^data:([^;,]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : "";
+            if (window.GiftiaApp.isClientPlayableAudio(mimeType)) {
+                previewContainer.innerHTML = `<audio id="${uniqueId}" src="${dataUrl}" controls></audio>`;
+            } else {
+                const friendly = mimeType ? mimeType.replace("audio/", "").toUpperCase() : "未知";
+                previewContainer.innerHTML = `
+                    <div class="media-audio-unsupported">
+                        <div class="media-audio-unsupported-icon">🎧</div>
+                        <div class="media-audio-unsupported-title">${friendly} 音频</div>
+                        <div class="media-audio-unsupported-hint">PC 浏览器不支持此格式在线播放<br>（仅移动端 / IM WebView 可播放）</div>
+                        <a href="#" class="btn btn-secondary btn-small media-audio-download-btn" onclick="window.downloadMedia('${hash}', '${mimeType}'); return false;">
+                            📥 下载音频
+                        </a>
+                    </div>
+                `;
+            }
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }

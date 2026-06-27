@@ -6,7 +6,7 @@ import aiosqlite
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
-from .schemas import MediaCaption, MemoryItem, MessageData, Status, Sticker
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status, Sticker
 
 
 class Database:
@@ -288,6 +288,78 @@ class Database:
             for row in rows
         ]
 
+    async def get_max_message_id(self, bot_name: str, group_or_user_id: str) -> int:
+        """获取指定会话在 chat_history 表中的最大 id"""
+        async with self.conn.execute(
+            """
+            SELECT MAX(id) as max_id FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["max_id"] if row and row["max_id"] is not None else 0
+
+    async def get_messages_by_id_range(
+        self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
+    ) -> list[MessageData]:
+        """获取指定 id 范围内的历史消息"""
+        async with self.conn.execute(
+            """
+            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+            FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ? AND id >= ? AND id <= ?
+            ORDER BY id ASC
+            """,
+            (group_or_user_id, bot_name, start_id, end_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            MessageData(
+                nickname=row["nickname"],
+                user_id=row["user_id"],
+                time=row["created_at"],
+                message_id=row["message_id"],
+                content=row["content"],
+                is_recalled=row["is_recalled"],
+                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
+            )
+            for row in rows
+        ]
+
+    async def get_message_count_by_id_range(
+        self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
+    ) -> int:
+        """获取指定 id 范围内的消息数量"""
+        async with self.conn.execute(
+            """
+            SELECT COUNT(*) as count FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ? AND id > ? AND id <= ?
+            """,
+            (group_or_user_id, bot_name, start_id, end_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["count"] if row else 0
+
+    async def get_boundary_message_id(
+        self, bot_name: str, group_or_user_id: str, offset: int
+    ) -> int:
+        """获取从最新消息往回偏移 offset 处的条目的 id（即上下文窗口边界的 id）"""
+        if offset <= 0:
+            offset = 1
+        async with self.conn.execute(
+            """
+            SELECT id FROM chat_history
+            WHERE group_or_user_id = ? AND bot_name = ?
+            ORDER BY id DESC
+            LIMIT 1 OFFSET ?
+            """,
+            (group_or_user_id, bot_name, offset - 1),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["id"] if row else 0
+
     async def get_message_by_id(
         self, message_id: str, group_or_user_id: str, bot_name: str
     ) -> MessageData | None:
@@ -314,6 +386,21 @@ class Database:
                 role=row["role"] if "role" in row.keys() else "message",
             )
         return None
+
+    async def get_database_id_by_message_id(
+        self, message_id: str, group_or_user_id: str, bot_name: str
+    ) -> int | None:
+        """获取指定 message_id 在 chat_history 表中的自增 id"""
+        async with self.conn.execute(
+            """
+            SELECT id FROM chat_history
+            WHERE message_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (message_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["id"] if row else None
 
     async def search_messages(
         self,

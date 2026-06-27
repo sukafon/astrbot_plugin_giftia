@@ -10,9 +10,9 @@ from cachetools import LRUCache
 from astrbot.api import logger
 
 from .database import Database
-from .http_manager import HttpManager
-from .memory import LTM
-from .schemas import MediaCaption, MemoryItem, MessageData, Status
+from ..utils.http_manager import HttpManager
+from ..memory.memory import LTM
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status
 
 MAX_CAPTION_CACHE_SIZE = 500
 
@@ -366,17 +366,22 @@ class DataCache:
         return db_memories
 
     async def add_memory(
-        self, bot_name: str, group_or_user_id: str, text: str, user_id: str
+        self, bot_name: str, group_or_user_id: str, text: str, user_id: str, associated_user_ids: list[str] = None
     ) -> str | None:
         """添加记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
         now = datetime.now().isoformat()
+        meta_dict = {"user_id": user_id}
+        if associated_user_ids:
+            meta_dict["associated_user_ids"] = associated_user_ids
+        meta_str = json.dumps(meta_dict)
+        
         result = await self.ltm.add_memory(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             text=text,
             time=now,
-            metadata=json.dumps({"user_id": user_id}),
+            metadata=meta_str,
         )
         if result is None:
             return
@@ -385,7 +390,7 @@ class DataCache:
             memory_id=memory_id,
             text=text,
             vector=vector,
-            metadata=json.dumps({"user_id": user_id}),
+            metadata=meta_str,
             updated_at=now,
             created_at=now,
         )

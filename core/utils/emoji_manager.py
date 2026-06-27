@@ -9,7 +9,7 @@ from PIL import Image
 from astrbot.api import logger
 from astrbot.api.star import StarTools
 
-from .database import Database
+from ..database.database import Database
 from .schemas import BotSticker, Sticker
 
 

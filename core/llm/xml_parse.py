@@ -10,9 +10,9 @@ from astrbot.api import logger
 from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.core.message.components import BaseMessageComponent
 
-from .data_cache import DataCache
-from .emoji_manager import EmojiManager
-from .schemas import Decision, MediaCaption, XmlLlmResult
+from ..database.data_cache import DataCache
+from ..utils.emoji_manager import EmojiManager
+from ..utils.schemas import Decision, MediaCaption, XmlLlmResult
 
 
 class XmlParse:

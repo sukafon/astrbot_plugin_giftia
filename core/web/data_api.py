@@ -6,8 +6,8 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 
-class GiftiaWebApi:
-    """Giftia plugin web APIs for dashboard pages."""
+class DataApi:
+    """Data management APIs: chat history, memories, bot status, profiles."""
 
     def __init__(self, giftia):
         self.giftia = giftia
@@ -91,6 +91,12 @@ class GiftiaWebApi:
                         }
                     )
 
+            last_summarized_id = 0
+            if bot_name and group_or_user_id:
+                last_summarized_id = await self.giftia.db.get_kv_data(
+                    f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}", 0
+                )
+
             return json_response(
                 {
                     "status": "success",
@@ -99,6 +105,7 @@ class GiftiaWebApi:
                         "total": total,
                         "page": page,
                         "limit": limit,
+                        "last_summarized_id": last_summarized_id,
                     },
                 }
             )
@@ -106,186 +113,82 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] get_chat_history error: {e}")
             return error_response(f"获取聊天记录失败: {str(e)}")
 
-    async def get_media(self):
-        """Get media captions with pagination and filters."""
+    async def get_chat_history_filter_options(self):
+        """Get bot/session filter options for chat history."""
         try:
-            page = int(request.query.get("page", 1))
-            limit = int(request.query.get("limit", 20))
-            media_type = request.query.get("media_type")
+            bot_name = request.query.get("bot_name")
+            user_id = request.query.get("user_id")
+            reply_decision = request.query.get("reply_decision")
+            use_rag = request.query.get("use_rag")
             search = request.query.get("search")
 
-            offset = (page - 1) * limit
-            conditions = []
-            params = []
-
-            if media_type:
-                conditions.append("media_type = ?")
-                params.append(media_type)
-            if search:
-                conditions.append(
-                    "(caption LIKE ? OR file_name LIKE ? OR hash_val LIKE ?)"
-                )
-                params.append(f"%{search}%")
-                params.append(f"%{search}%")
-                params.append(f"%{search}%")
-
-            where_clause = ""
-            if conditions:
-                where_clause = "WHERE " + " AND ".join(conditions)
-
-            # Query count
-            count_sql = f"SELECT COUNT(*) as total FROM media_caption {where_clause}"
-            async with self.giftia.db.conn.execute(count_sql, params) as cursor:
-                row = await cursor.fetchone()
-                total = row["total"] if row else 0
-
-            # Query data
-            data_sql = f"""
-                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at
-                FROM media_caption
-                {where_clause}
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
-            """
-            data_params = params + [limit, offset]
-            items = []
-            async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM chat_history
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
                 rows = await cursor.fetchall()
-                for r in rows:
-                    items.append(
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if user_id:
+                    conditions.append("user_id = ?")
+                    params.append(user_id)
+                if reply_decision is not None and reply_decision != "":
+                    conditions.append("reply_decision = ?")
+                    params.append(int(reply_decision))
+                if use_rag is not None and use_rag != "":
+                    conditions.append("use_rag = ?")
+                    params.append(int(use_rag))
+                if search:
+                    conditions.append("content LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
+                    FROM chat_history
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
                         {
-                            "id": r["id"],
-                            "hash_val": r["hash_val"],
-                            "file_name": r["file_name"],
-                            "url": r["url"],
-                            "media_type": r["media_type"],
-                            "genre": r["genre"],
-                            "character": r["character"],
-                            "source": r["source"],
-                            "text": r["text"],
-                            "caption": r["caption"],
-                            "is_captioned": bool(r["is_captioned"]),
-                            "query_times": r["query_times"],
-                            "created_at": r["created_at"],
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
                         }
-                    )
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
 
             return json_response(
                 {
                     "status": "success",
                     "data": {
-                        "items": items,
-                        "total": total,
-                        "page": page,
-                        "limit": limit,
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
                     },
                 }
             )
         except Exception as e:
-            logger.error(f"[Giftia API] get_media error: {e}")
-            return error_response(f"获取媒体转述列表失败: {str(e)}")
+            logger.error(f"[Giftia API] get_chat_history_filter_options error: {e}")
+            return error_response(f"获取决策审计筛选项失败: {str(e)}")
 
-    async def update_media(self):
-        """Update media caption text."""
-        try:
-            body = await request.json()
-            hash_val = body.get("hash_val")
-            caption = body.get("caption")
-            text = body.get("text")
-            genre = body.get("genre")
-            character = body.get("character")
-            source = body.get("source")
-
-            if not hash_val:
-                return error_response("缺少 hash_val 参数")
-
-            # Fetch existing cache to verify and update
-            media_caption = await self.giftia.data_cache.get_caption_by_hash(hash_val)
-            if not media_caption:
-                return error_response("媒体记录不存在")
-
-            media_caption.caption = caption
-            if text is not None:
-                media_caption.text = text
-            if genre is not None:
-                media_caption.genre = genre
-            if character is not None:
-                media_caption.character = character
-            if source is not None:
-                media_caption.source = source
-
-            # Update DB
-            await self.giftia.db.conn.execute(
-                """
-                UPDATE media_caption
-                SET caption = ?, text = ?, genre = ?, character = ?, source = ?, updated_at = ?
-                WHERE hash_val = ?
-                """,
-                (
-                    caption,
-                    media_caption.text,
-                    media_caption.genre,
-                    media_caption.character,
-                    media_caption.source,
-                    datetime.now().isoformat(),
-                    hash_val,
-                ),
-            )
-            await self.giftia.db.conn.commit()
-
-            # Update cache
-            self.giftia.data_cache.caption[hash_val] = media_caption
-
-            return json_response({"status": "success", "message": "保存媒体描述成功"})
-        except Exception as e:
-            logger.error(f"[Giftia API] update_media error: {e}")
-            return error_response(f"修改媒体描述失败: {str(e)}")
-
-    async def delete_media(self):
-        """Delete media caption cache."""
-        try:
-            body = await request.json()
-            hash_val = body.get("hash_val")
-
-            if not hash_val:
-                return error_response("缺少 hash_val 参数")
-
-            # Delete from DB
-            await self.giftia.db.conn.execute(
-                "DELETE FROM media_caption WHERE hash_val = ?", (hash_val,)
-            )
-            await self.giftia.db.conn.commit()
-
-            # Remove from cache
-            self.giftia.data_cache.caption.pop(hash_val, None)
-
-            # Remove from local persistent disk cache
-            try:
-                from astrbot.core.star.star_tools import StarTools
-
-                cache_file = (
-                    StarTools.get_data_dir("astrbot_plugin_giftia")
-                    / "media_cache"
-                    / hash_val
-                )
-                if cache_file.exists():
-                    cache_file.unlink()
-                # Also delete thumbnail if exists
-                thumb_file = (
-                    StarTools.get_data_dir("astrbot_plugin_giftia")
-                    / "media_cache"
-                    / "thumbnails"
-                    / hash_val
-                )
-                if thumb_file.exists():
-                    thumb_file.unlink()
-            except Exception as e:
-                logger.error(f"[Giftia API] delete_media file error: {e}")
-
-            return json_response({"status": "success", "message": "删除媒体描述成功"})
-        except Exception as e:
-            logger.error(f"[Giftia API] delete_media error: {e}")
-            return error_response(f"删除媒体描述失败: {str(e)}")
+    # ── Memory APIs ─────────────────────────────────────────────────────
 
     async def get_memories(self):
         """Get memories with pagination and filters."""
@@ -294,6 +197,7 @@ class GiftiaWebApi:
             limit = int(request.query.get("limit", 20))
             bot_name = request.query.get("bot_name")
             group_or_user_id = request.query.get("group_or_user_id")
+            associated_user_id = request.query.get("associated_user_id")
             search = request.query.get("search")
 
             offset = (page - 1) * limit
@@ -306,6 +210,9 @@ class GiftiaWebApi:
             if group_or_user_id:
                 conditions.append("group_or_user_id = ?")
                 params.append(group_or_user_id)
+            if associated_user_id:
+                conditions.append("metadata LIKE ?")
+                params.append(f"%{associated_user_id}%")
             if search:
                 conditions.append("text LIKE ?")
                 params.append(f"%{search}%")
@@ -362,6 +269,73 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] get_memories error: {e}")
             return error_response(f"获取记忆列表失败: {str(e)}")
 
+    async def get_memory_filter_options(self):
+        """Get bot/session filter options for memories."""
+        try:
+            bot_name = request.query.get("bot_name")
+            associated_user_id = request.query.get("associated_user_id")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM memories
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if associated_user_id:
+                    conditions.append("metadata LIKE ?")
+                    params.append(f"%{associated_user_id}%")
+                if search:
+                    conditions.append("text LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(created_at) as latest_at
+                    FROM memories
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_memory_filter_options error: {e}")
+            return error_response(f"获取长期记忆筛选项失败: {str(e)}")
+
     async def add_memory(self):
         """Add new memory item."""
         try:
@@ -370,6 +344,10 @@ class GiftiaWebApi:
             group_or_user_id = body.get("group_or_user_id")
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
+            associated_user_ids = body.get("associated_user_ids")
+
+            if isinstance(associated_user_ids, str):
+                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
 
             if not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数 (bot_name, group_or_user_id, text)")
@@ -379,6 +357,7 @@ class GiftiaWebApi:
                 group_or_user_id=group_or_user_id,
                 text=text,
                 user_id=user_id,
+                associated_user_ids=associated_user_ids,
             )
 
             if not memory_id:
@@ -404,6 +383,10 @@ class GiftiaWebApi:
             group_or_user_id = body.get("group_or_user_id")
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
+            associated_user_ids = body.get("associated_user_ids")
+
+            if isinstance(associated_user_ids, str):
+                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
 
             if not memory_id or not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数")
@@ -417,6 +400,7 @@ class GiftiaWebApi:
                 group_or_user_id=group_or_user_id,
                 text=text,
                 user_id=user_id,
+                associated_user_ids=associated_user_ids,
             )
 
             if not new_memory_id:
@@ -450,6 +434,8 @@ class GiftiaWebApi:
         except Exception as e:
             logger.error(f"[Giftia API] delete_memory error: {e}")
             return error_response(f"删除记忆失败: {str(e)}")
+
+    # ── Bot Status APIs ─────────────────────────────────────────────────
 
     async def get_bot_status(self):
         """Get active bot status list."""
@@ -548,6 +534,8 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] update_bot_status error: {e}")
             return error_response(f"更新 Bot 状态失败: {str(e)}")
 
+    # ── User Profile APIs ───────────────────────────────────────────────
+
     async def get_user_profiles(self):
         """Get user profiles with pagination and filters."""
         try:
@@ -631,6 +619,73 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] get_user_profiles error: {e}")
             return error_response(f"获取用户画像列表失败: {str(e)}")
 
+    async def get_user_profile_filter_options(self):
+        """Get bot/session filter options for user profiles."""
+        try:
+            bot_name = request.query.get("bot_name")
+            user_id = request.query.get("user_id")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM user_profiles
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if user_id:
+                    conditions.append("user_id = ?")
+                    params.append(user_id)
+                if search:
+                    conditions.append("profile LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
+                    FROM user_profiles
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_user_profile_filter_options error: {e}")
+            return error_response(f"获取用户画像筛选项失败: {str(e)}")
+
     async def update_user_profile(self):
         """Update/Upsert user profile."""
         try:
@@ -712,6 +767,8 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] delete_user_profile error: {e}")
             return error_response(f"删除用户画像失败: {str(e)}")
 
+    # ── Group Profile APIs ──────────────────────────────────────────────
+
     async def get_group_profiles(self):
         """Get group profiles with pagination and filters."""
         try:
@@ -784,6 +841,69 @@ class GiftiaWebApi:
             logger.error(f"[Giftia API] get_group_profiles error: {e}")
             return error_response(f"获取群聊画像列表失败: {str(e)}")
 
+    async def get_group_profile_filter_options(self):
+        """Get bot/session filter options for group profiles."""
+        try:
+            bot_name = request.query.get("bot_name")
+            search = request.query.get("search")
+
+            bots = []
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT DISTINCT bot_name
+                FROM group_profiles
+                WHERE bot_name IS NOT NULL AND bot_name != ''
+                ORDER BY bot_name ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bots = [row["bot_name"] for row in rows if row["bot_name"]]
+
+            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+
+            sessions = []
+            if selected_bot_name:
+                conditions = ["bot_name = ?"]
+                params = [selected_bot_name]
+                if search:
+                    conditions.append("profile LIKE ?")
+                    params.append(f"%{search}%")
+
+                where_clause = "WHERE " + " AND ".join(conditions)
+                async with self.giftia.db.conn.execute(
+                    f"""
+                    SELECT group_or_user_id, COUNT(*) as total, MAX(updated_at) as latest_at
+                    FROM group_profiles
+                    {where_clause}
+                    GROUP BY group_or_user_id
+                    ORDER BY latest_at DESC, group_or_user_id ASC
+                    """,
+                    params,
+                ) as cursor:
+                    rows = await cursor.fetchall()
+                    sessions = [
+                        {
+                            "group_or_user_id": row["group_or_user_id"],
+                            "total": row["total"],
+                        }
+                        for row in rows
+                        if row["group_or_user_id"]
+                    ]
+
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "bots": bots,
+                        "selected_bot_name": selected_bot_name,
+                        "sessions": sessions,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_group_profile_filter_options error: {e}")
+            return error_response(f"获取群画像筛选项失败: {str(e)}")
+
     async def update_group_profile(self):
         """Update/Upsert group profile."""
         try:
@@ -825,426 +945,3 @@ class GiftiaWebApi:
         except Exception as e:
             logger.error(f"[Giftia API] delete_group_profile error: {e}")
             return error_response(f"删除群聊画像失败: {str(e)}")
-
-    async def get_media_file(self, hash_val: str):
-        """Get cached media file by hash value."""
-        try:
-            import mimetypes
-
-            from astrbot.api.web import file_response
-            from astrbot.core.star.star_tools import StarTools
-
-            cache_file = (
-                StarTools.get_data_dir("astrbot_plugin_giftia")
-                / "media_cache"
-                / hash_val
-            )
-            if not cache_file.exists():
-                return error_response("文件不存在或已被删除", status_code=404)
-
-            content_type = None
-            try:
-                # Query db to get content_type based on original file name or url
-                media_caption = await self.giftia.db.get_media_caption_by_hash(hash_val)
-                if media_caption:
-                    file_name = media_caption.file_name or media_caption.url
-                    if file_name:
-                        content_type, _ = mimetypes.guess_type(file_name)
-                    if not content_type:
-                        if media_caption.media_type == "image":
-                            content_type = "image/jpeg"
-                        elif media_caption.media_type in ("audio", "voice"):
-                            content_type = "audio/mpeg"
-            except Exception as e:
-                logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
-
-            if not content_type or content_type == "application/octet-stream":
-                # fallback: check magic bytes
-                try:
-                    with open(cache_file, "rb") as f:
-                        header = f.read(12)
-                    if header.startswith(b"\x89PNG"):
-                        content_type = "image/png"
-                    elif header.startswith(b"\xff\xd8"):
-                        content_type = "image/jpeg"
-                    elif header.startswith(b"GIF8"):
-                        content_type = "image/gif"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-                        content_type = "image/webp"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
-                        content_type = "audio/wav"
-                    elif (
-                        header.startswith(b"ID3")
-                        or header.startswith(b"\xff\xfb")
-                        or header.startswith(b"\xff\xf3")
-                        or header.startswith(b"\xff\xf2")
-                    ):
-                        content_type = "audio/mpeg"
-                except Exception:
-                    pass
-
-            if not content_type:
-                content_type = "application/octet-stream"
-
-            return file_response(cache_file, content_type=content_type)
-        except Exception as e:
-            logger.error(f"[Giftia API] get_media_file error: {e}")
-            return error_response(f"获取媒体文件失败: {str(e)}")
-
-    async def get_media_file_b64(self, hash_val: str):
-        """Get cached media file as base64 string (JSON response)."""
-        try:
-            import base64
-            import mimetypes
-
-            from astrbot.core.star.star_tools import StarTools
-
-            cache_file = (
-                StarTools.get_data_dir("astrbot_plugin_giftia")
-                / "media_cache"
-                / hash_val
-            )
-            if not cache_file.exists():
-                return error_response("文件不存在或已被删除", status_code=404)
-
-            # Determine content type
-            content_type = None
-            try:
-                media_caption = await self.giftia.db.get_media_caption_by_hash(hash_val)
-                if media_caption:
-                    file_name = media_caption.file_name or media_caption.url
-                    if file_name:
-                        content_type, _ = mimetypes.guess_type(file_name)
-                    if not content_type:
-                        if media_caption.media_type == "image":
-                            content_type = "image/jpeg"
-                        elif media_caption.media_type in ("audio", "voice"):
-                            content_type = "audio/mpeg"
-            except Exception as e:
-                logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
-
-            if not content_type or content_type == "application/octet-stream":
-                try:
-                    with open(cache_file, "rb") as f:
-                        header = f.read(12)
-                    if header.startswith(b"\x89PNG"):
-                        content_type = "image/png"
-                    elif header.startswith(b"\xff\xd8"):
-                        content_type = "image/jpeg"
-                    elif header.startswith(b"GIF8"):
-                        content_type = "image/gif"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-                        content_type = "image/webp"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
-                        content_type = "audio/wav"
-                    elif (
-                        header.startswith(b"ID3")
-                        or header.startswith(b"\xff\xfb")
-                        or header.startswith(b"\xff\xf3")
-                        or header.startswith(b"\xff\xf2")
-                    ):
-                        content_type = "audio/mpeg"
-                except Exception:
-                    pass
-
-            if not content_type:
-                content_type = "image/jpeg"
-
-            # Read file bytes and encode to base64
-            with open(cache_file, "rb") as f:
-                file_bytes = f.read()
-
-            b64_str = base64.b64encode(file_bytes).decode("utf-8")
-
-            return json_response(
-                {"status": "success", "base64": b64_str, "content_type": content_type}
-            )
-        except Exception as e:
-            logger.error(f"[Giftia API] get_media_file_b64 error: {e}")
-            return error_response(f"获取媒体 Base64 失败: {str(e)}")
-
-    async def get_media_file_thumbnail_b64(self, hash_val: str):
-        """Get cached media thumbnail as base64 string (JSON response).
-
-        Args:
-            hash_val: The hash of the media file.
-
-        Returns:
-            A dict containing the response status, base64 string, and content type.
-        """
-        try:
-            import base64
-            import mimetypes
-
-            from astrbot.core.star.star_tools import StarTools
-
-            cache_file = (
-                StarTools.get_data_dir("astrbot_plugin_giftia")
-                / "media_cache"
-                / hash_val
-            )
-            if not cache_file.exists():
-                return error_response("文件不存在或已被删除", status_code=404)
-
-            # Determine content type of original file
-            content_type = None
-            try:
-                media_caption = await self.giftia.db.get_media_caption_by_hash(hash_val)
-                if media_caption:
-                    file_name = media_caption.file_name or media_caption.url
-                    if file_name:
-                        content_type, _ = mimetypes.guess_type(file_name)
-                    if not content_type:
-                        if media_caption.media_type == "image":
-                            content_type = "image/jpeg"
-                        elif media_caption.media_type in ("audio", "voice"):
-                            content_type = "audio/mpeg"
-            except Exception as e:
-                logger.warning(f"[Giftia API] 无法从数据库获取媒体类型: {e}")
-
-            if not content_type or content_type == "application/octet-stream":
-                try:
-                    with open(cache_file, "rb") as f:
-                        header = f.read(12)
-                    if header.startswith(b"\x89PNG"):
-                        content_type = "image/png"
-                    elif header.startswith(b"\xff\xd8"):
-                        content_type = "image/jpeg"
-                    elif header.startswith(b"GIF8"):
-                        content_type = "image/gif"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
-                        content_type = "image/webp"
-                    elif header.startswith(b"RIFF") and header[8:12] == b"WAVE":
-                        content_type = "audio/wav"
-                    elif (
-                        header.startswith(b"ID3")
-                        or header.startswith(b"\xff\xfb")
-                        or header.startswith(b"\xff\xf3")
-                        or header.startswith(b"\xff\xf2")
-                    ):
-                        content_type = "audio/mpeg"
-                except Exception:
-                    pass
-
-            if not content_type:
-                content_type = "image/jpeg"
-
-            target_file = cache_file
-
-            # If it's an image, try to load/generate thumbnail
-            if content_type and content_type.startswith("image/"):
-                thumb_dir = cache_file.parent / "thumbnails"
-                thumb_file = thumb_dir / hash_val
-                use_thumbnail = False
-
-                try:
-                    thumb_dir.mkdir(parents=True, exist_ok=True)
-                    need_generate = True
-                    if thumb_file.exists():
-                        try:
-                            if cache_file.stat().st_mtime <= thumb_file.stat().st_mtime:
-                                need_generate = False
-                                use_thumbnail = True
-                                # Read magic bytes from cached thumbnail to determine correct content type
-                                with open(thumb_file, "rb") as f:
-                                    header = f.read(12)
-                                if b"WEBP" in header:
-                                    content_type = "image/webp"
-                                elif header.startswith(b"\xff\xd8"):
-                                    content_type = "image/jpeg"
-                                elif header.startswith(b"\x89PNG"):
-                                    content_type = "image/png"
-                        except Exception as mtime_err:
-                            logger.warning(
-                                f"[Giftia API] Error checking cached thumbnail {hash_val}: {mtime_err}"
-                            )
-
-                    if need_generate:
-                        from PIL import Image as PILImage
-
-                        with PILImage.open(cache_file) as img:
-                            # If animated (GIF, animated WebP, etc.), extract first frame
-                            if getattr(img, "is_animated", False):
-                                img.seek(0)
-                                img = img.copy()
-
-                            img.thumbnail((150, 150))
-
-                            temp_thumb_path = thumb_file.with_name(
-                                thumb_file.name + ".tmp"
-                            )
-                            try:
-                                img.save(temp_thumb_path, format="WEBP")
-                                content_type = "image/webp"
-                            except Exception:
-                                try:
-                                    img.save(temp_thumb_path, format="PNG")
-                                    content_type = "image/png"
-                                except Exception:
-                                    # Fallback to JPEG requires converting to RGB mode to support RGBA/P formats
-                                    rgb_img = img.convert("RGB")
-                                    rgb_img.save(temp_thumb_path, format="JPEG")
-                                    content_type = "image/jpeg"
-
-                            import os
-
-                            os.replace(temp_thumb_path, thumb_file)
-                            use_thumbnail = True
-                except Exception as img_err:
-                    logger.warning(
-                        f"[Giftia API] Failed to generate/load thumbnail for {hash_val}, falling back to original: {img_err}"
-                    )
-
-                target_file = thumb_file if use_thumbnail else cache_file
-
-            # Read target file bytes and encode to base64
-            with open(target_file, "rb") as f:
-                file_bytes = f.read()
-
-            b64_str = base64.b64encode(file_bytes).decode("utf-8")
-
-            return json_response(
-                {"status": "success", "base64": b64_str, "content_type": content_type}
-            )
-        except Exception as e:
-            logger.error(f"[Giftia API] get_media_file_thumbnail_b64 error: {e}")
-            return error_response(f"获取媒体缩略图 Base64 失败: {str(e)}")
-
-    async def get_media_genres(self) -> dict:
-        """Get distinct genres list from media_caption table.
-
-        Returns:
-            A dict containing the response status and the list of genres.
-        """
-        try:
-            genres = []
-            async with self.giftia.db.conn.execute(
-                "SELECT DISTINCT genre FROM media_caption WHERE genre IS NOT NULL AND genre != ''"
-            ) as cursor:
-                rows = await cursor.fetchall()
-                genres = [r["genre"] for r in rows if r["genre"]]
-            return json_response({"status": "success", "genres": genres})
-        except Exception as e:
-            logger.error(f"[Giftia API] get_media_genres error: {e}")
-            return error_response(f"获取风格列表失败: {str(e)}")
-
-    async def clean_media_cache(self) -> dict:
-        """Clean media file cache by criteria (dry_run or actual).
-
-        Returns:
-            A dict containing the status, matching file count, total size freed in bytes,
-            dry_run flag, and a message.
-        """
-        try:
-            body = await request.json()
-            media_type = body.get("media_type", "all")
-            max_query_times = body.get("max_query_times")
-            dry_run = body.get("dry_run", False)
-
-            conditions = []
-            params = []
-
-            if media_type == "image":
-                conditions.append("media_type = 'image'")
-            elif media_type == "audio":
-                conditions.append("media_type IN ('audio', 'voice')")
-
-            genres = body.get("genres")
-            exclude_genres = body.get("exclude_genres", False)
-
-            if genres is not None:
-                if not exclude_genres and not genres:
-                    conditions.append("1 = 0")
-                elif genres:
-                    has_unspecified = "" in genres
-                    specified_genres = [g for g in genres if g != ""]
-
-                    if not exclude_genres:
-                        if specified_genres:
-                            placeholders = ",".join(["?"] * len(specified_genres))
-                            if has_unspecified:
-                                conditions.append(
-                                    f"(genre IN ({placeholders}) OR genre IS NULL OR genre = '')"
-                                )
-                            else:
-                                conditions.append(f"genre IN ({placeholders})")
-                            params.extend(specified_genres)
-                        else:
-                            conditions.append("(genre IS NULL OR genre = '')")
-                    else:
-                        if specified_genres:
-                            placeholders = ",".join(["?"] * len(specified_genres))
-                            if has_unspecified:
-                                conditions.append(
-                                    f"(genre NOT IN ({placeholders}) AND genre IS NOT NULL AND genre != '')"
-                                )
-                            else:
-                                conditions.append(
-                                    f"(genre NOT IN ({placeholders}) OR genre IS NULL OR genre = '')"
-                                )
-                            params.extend(specified_genres)
-                        else:
-                            conditions.append("genre IS NOT NULL AND genre != ''")
-
-            if max_query_times is not None:
-                try:
-                    max_query_times = int(max_query_times)
-                    conditions.append("query_times <= ?")
-                    params.append(max_query_times)
-                except ValueError:
-                    pass
-
-            where_clause = ""
-            if conditions:
-                where_clause = "WHERE " + " AND ".join(conditions)
-
-            sql = f"SELECT hash_val FROM media_caption {where_clause}"
-
-            matching_hashes = []
-            async with self.giftia.db.conn.execute(sql, params) as cursor:
-                rows = await cursor.fetchall()
-                matching_hashes = [r["hash_val"] for r in rows if r["hash_val"]]
-
-            from astrbot.core.star.star_tools import StarTools
-
-            cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
-
-            cleaned_count = 0
-            freed_bytes = 0
-
-            for hash_val in matching_hashes:
-                cache_file = cache_dir / hash_val
-                if cache_file.exists():
-                    file_size = cache_file.stat().st_size
-                    cleaned_count += 1
-                    freed_bytes += file_size
-                    if not dry_run:
-                        try:
-                            cache_file.unlink()
-                        except Exception as file_err:
-                            logger.error(
-                                f"[Giftia API] Failed to delete cache file {hash_val}: {file_err}"
-                            )
-                        # Also delete thumbnail if exists
-                        try:
-                            thumb_file = cache_dir / "thumbnails" / hash_val
-                            if thumb_file.exists():
-                                thumb_file.unlink()
-                        except Exception as thumb_err:
-                            logger.error(
-                                f"[Giftia API] Failed to delete thumbnail file {hash_val}: {thumb_err}"
-                            )
-
-            action_msg = "预估" if dry_run else "成功"
-            return json_response(
-                {
-                    "status": "success",
-                    "count": cleaned_count,
-                    "size_bytes": freed_bytes,
-                    "dry_run": dry_run,
-                    "message": f"{action_msg}清理了 {cleaned_count} 个媒体文件，释放空间 {freed_bytes} 字节",
-                }
-            )
-        except Exception as e:
-            logger.error(f"[Giftia API] clean_media_cache error: {e}")
-            return error_response(f"清理媒体文件缓存失败: {str(e)}")
