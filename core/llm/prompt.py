@@ -64,6 +64,83 @@ def build_decision_prompt(
     return "\n\n".join(user_prompt)
 
 
+def process_media_captions_for_prompt(
+    messages: list[MessageData],
+    media_captions: list[MediaCaption],
+    threshold: int = 100,
+) -> tuple[list[MessageData], list[MediaCaption]]:
+    """
+    分析消息列表与媒体转述，进行内联判定与替换。
+    返回: (修改后的消息副本列表, 剩余未内联的媒体转述列表)
+    """
+    import copy
+    from collections import Counter
+
+    copied_messages = [copy.copy(msg) for msg in messages] if messages else []
+
+    # 统计所有消息中媒体 ID 的出现频次
+    hash_counts = Counter()
+    for msg in copied_messages:
+        if msg.media_id_list:
+            hash_counts.update(msg.media_id_list)
+
+    # 建立 hash_val -> MediaCaption 映射
+    caption_map = {}
+    if media_captions:
+        for c in media_captions:
+            if c and c.hash_val:
+                caption_map[c.hash_val] = c
+
+    # 过滤和替换逻辑
+    inline_hashes = set()
+    for hash_val, caption in caption_map.items():
+        # 计算非空描述性字段的总长度
+        raw_text = "".join(
+            getattr(caption, f, "")
+            for f in ["genre", "character", "source", "text", "caption"]
+            if getattr(caption, f, "")
+        )
+        # 只有在非空描述长度在 (0, threshold] 之间，且频次为 1 时才内联
+        if 0 < len(raw_text) <= threshold and hash_counts[hash_val] == 1:
+            inline_hashes.add(hash_val)
+
+    # 对可内联媒体进行内容格式化和占位符替换
+    def format_inline_caption(c: MediaCaption) -> str:
+        parts = []
+        if c.caption:
+            parts.append(f"画面: {c.caption}")
+        if c.text:
+            parts.append(f"文字: {c.text}")
+        if c.genre:
+            parts.append(f"类型: {c.genre}")
+        if c.character:
+            parts.append(f"人物: {c.character}")
+        if c.source:
+            parts.append(f"来源: {c.source}")
+        return "; ".join(parts)
+
+    for msg in copied_messages:
+        if msg.media_id_list:
+            for hash_val in msg.media_id_list:
+                if hash_val in inline_hashes:
+                    formatted = format_inline_caption(caption_map[hash_val])
+                    msg.content = msg.content.replace(f"[图片:{hash_val}]", f"[图片: {formatted}]")
+                    msg.content = msg.content.replace(f"[语音:{hash_val}]", f"[语音: {formatted}]")
+                elif hash_val not in caption_map:
+                    # 缺失的媒体替换为 generic 占位符
+                    msg.content = msg.content.replace(f"[图片:{hash_val}]", "[图片]")
+                    msg.content = msg.content.replace(f"[语音:{hash_val}]", "[语音]")
+
+    # 剩余未内联的媒体
+    remaining_captions = []
+    if media_captions:
+        for caption in media_captions:
+            if caption and caption.hash_val not in inline_hashes:
+                remaining_captions.append(caption)
+
+    return copied_messages, remaining_captions
+
+
 def build_reply_prompt(
     recent_messages: list[MessageData],
     media_captions: list[MediaCaption],
@@ -82,6 +159,23 @@ def build_reply_prompt(
     other_data: list[str] | None = None,
     bot_sticker: str | None = None,
 ) -> str:
+    # 合并近期消息与当前消息进行统一的频次与内联处理
+    all_messages = []
+    if recent_messages:
+        all_messages.extend(recent_messages)
+    if current_message:
+        all_messages.append(current_message)
+
+    processed_messages, remaining_captions = process_media_captions_for_prompt(
+        messages=all_messages,
+        media_captions=media_captions,
+        threshold=100,
+    )
+
+    # 拆分回 recent_messages 和 current_message
+    copied_recent = processed_messages[:len(recent_messages)] if recent_messages else []
+    copied_current = processed_messages[len(recent_messages):][0] if current_message else None
+
     user_prompt = []
     # 时间
     user_prompt.append(
@@ -90,10 +184,6 @@ def build_reply_prompt(
     # 群数据
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
-    # 预设提示词
-    #     user_prompt.append("""# 请基于以下指示生成回复
-    # - 严格遵循角色设定进行扮演
-    # - 综合分析上下文，结合角色知识和状态生成回复""")
     # 群画像
     if group_profile:
         user_prompt.append(f"<group_profile>\n{group_profile}\n</group_profile>")
@@ -111,23 +201,23 @@ def build_reply_prompt(
             f"<long_memories>\n{build_long_memories(long_memories)}\n</long_memories>"
         )
     # 媒体转述
-    if media_captions:
+    if remaining_captions:
         media_captions_block = "\n".join(
-            parse_caption_to_str(caption) for caption in media_captions
+            parse_caption_to_str(caption) for caption in remaining_captions
         )
         user_prompt.append(f"<media_content>\n{media_captions_block}\n</media_content>")
     # 近期消息
-    if recent_messages:
+    if copied_recent:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg) for msg in recent_messages
+            parse_message_to_str(msg) for msg in copied_recent
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
         )
     # 当前消息
-    if current_message:
+    if copied_current:
         user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(current_message)}\n</current_message>"
+            f"<current_message>\n{parse_message_to_str(copied_current)}\n</current_message>"
         )
     # 机器人状态
     if bot_status:
@@ -149,29 +239,6 @@ def build_reply_prompt(
     # 其他数据
     if other_data:
         user_prompt.append("\n\n".join(other_data))
-
-    #     user_prompt.append("""# 请按以下格式输出，包含空行
-    # <status>
-    # 更新后的状态
-    # </status>
-
-    # <other_tags...>
-
-    # <message>消息内容</message>
-
-    # # 提示
-    # - 综合分析上下文，结合角色知识和状态生成回复
-    # - 请一次性输出所有需要的操作，除非需要分步调用获取信息
-    # """)
-
-    #     user_prompt.append("""# 提示
-    # - 并非每一条消息都需要回复：
-    #   - 有时候引用你的消息的人只是在跟别人说话，这种情况下不要回复
-    #   - 当一条消息已经过去十分钟以上时，最好不回复，因为已经错过最佳时机
-    # - 请在输出前仔细思考：
-    #   - 你需要哪些信息？你是否记得它们？如果不记得，仔细遍历**整个聊天记录**去找到它们。
-    #   - 你的输出是否符合**所有的要求、设定**？如果不符合，需要修正。
-    #   - 完成后，才能输出正式的结果。""")
 
     return "\n\n".join(user_prompt)
 

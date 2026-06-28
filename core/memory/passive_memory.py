@@ -3,65 +3,23 @@ import json
 import asyncio
 from datetime import datetime
 from astrbot.api import logger
+from ..llm.prompt import parse_caption_to_str
+
+def format_time_to_seconds(db_value: str) -> str:
+    if not db_value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(db_value)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return db_value[:19] if len(db_value) >= 19 else db_value
 
 class PassiveMemoryManager:
     def __init__(self, plugin):
         self.plugin = plugin
         self.initialized_keys = set()
 
-    async def _format_message_content_for_summary(self, msg) -> str:
-        """清洗消息中的媒体占位符，并补充适合总结的媒体转述文本"""
-        content = msg.content or ""
-        if not msg.media_id_list:
-            return content
 
-        media_lines = []
-        for media_id in msg.media_id_list:
-            media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
-            if not media_caption:
-                content = content.replace(f"[图片:{media_id}]", "[图片]")
-                content = content.replace(f"[语音:{media_id}]", "[语音]")
-                continue
-
-            media_type = (media_caption.media_type or "").lower()
-            caption_text = (media_caption.caption or "").strip()
-            transcript_text = (media_caption.text or "").strip()
-
-            if media_type == "audio":
-                content = content.replace(
-                    f"[语音:{media_id}]",
-                    "" if (transcript_text or caption_text) else "[语音]",
-                )
-                if transcript_text:
-                    media_lines.append(f"[语音转写:{transcript_text}]")
-                if caption_text:
-                    media_lines.append(f"[语音总结:{caption_text}]")
-                elif not transcript_text:
-                    media_lines.append("[语音]")
-                continue
-
-            if media_type == "image":
-                content = content.replace(
-                    f"[图片:{media_id}]",
-                    "" if caption_text else "[图片]",
-                )
-                if caption_text:
-                    media_lines.append(f"[图片转述:{caption_text}]")
-                else:
-                    media_lines.append("[图片]")
-                continue
-
-            content = content.replace(f"[图片:{media_id}]", "")
-            content = content.replace(f"[语音:{media_id}]", "")
-            if caption_text:
-                media_lines.append(f"[媒体转述:{caption_text}]")
-            elif transcript_text:
-                media_lines.append(f"[媒体内容:{transcript_text}]")
-
-        if media_lines:
-            content = f"{content} {' '.join(media_lines)}".strip()
-
-        return re.sub(r"\s{2,}", " ", content).strip()
 
     async def mark_silence_summary_armed(
         self, bot_name: str, group_or_user_id: str, trigger_msg_id: str = None
@@ -347,23 +305,46 @@ class PassiveMemoryManager:
                 group_or_user_id=group_or_user_id,
             )
 
-            # 格式化聊天记录
-            chat_history_lines = []
+            # 1. 搜集并分类媒体转述
+            # 1. 搜集媒体转述并调用共享的辅助函数处理
+            all_media_ids = []
             for msg in db_messages:
-                content = await self._format_message_content_for_summary(msg)
+                if msg.media_id_list:
+                    all_media_ids.extend(msg.media_id_list)
+            unique_media_ids = list(dict.fromkeys(all_media_ids))
+
+            media_captions = []
+            for media_id in unique_media_ids:
+                media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
+                if media_caption:
+                    media_captions.append(media_caption)
+
+            from ..llm.prompt import process_media_captions_for_prompt
+            processed_messages, remaining_captions = process_media_captions_for_prompt(
+                messages=db_messages,
+                media_captions=media_captions,
+                threshold=100,
+            )
+
+            # 2. 格式化聊天记录
+            chat_history_lines = []
+            for msg in processed_messages:
                 chat_history_lines.append(
-                    f"[{msg.time}] {msg.nickname}({msg.user_id}): {content}"
+                    f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {msg.content or ''}"
                 )
             chat_history_text = "\n".join(chat_history_lines)
 
-            # 构建 User Prompt
+            # 3. 构建 User Prompt，将 <media_content> 与 <chat_history> 并列
             user_prompt_parts = [
                 f"<session_id>{group_or_user_id}</session_id>",
                 f"<current_user_profiles>\n{'\n---\n'.join(user_profiles_str) if user_profiles_str else '无'}\n</current_user_profiles>",
                 f"<current_relations>\n{'\n'.join(user_relations_str) if user_relations_str else '无'}\n</current_relations>",
                 f"<current_group_profile>\n{group_profile or '无'}\n</current_group_profile>",
-                f"<chat_history>\n{chat_history_text}\n</chat_history>"
             ]
+            if remaining_captions:
+                media_captions_block = "\n".join(parse_caption_to_str(c) for c in remaining_captions)
+                user_prompt_parts.append(f"<media_content>\n{media_captions_block}\n</media_content>")
+            user_prompt_parts.append(f"<chat_history>\n{chat_history_text}\n</chat_history>")
             user_prompt = "\n\n".join(user_prompt_parts)
 
             bot_conf = self.plugin.bot_map.get(bot_name, {})
@@ -388,7 +369,7 @@ class PassiveMemoryManager:
                         logger.debug(
                             f"[Giftia Passive Memory] 开始总结记忆的 system_prompt:\n{sys_prompt}"
                         )
-                        logger.info(
+                        logger.debug(
                             f"[Giftia Passive Memory] 开始总结记忆的 user_prompt:\n{user_prompt}"
                         )
                         llm_resp = await self.plugin.context.llm_generate(
@@ -533,3 +514,74 @@ class PassiveMemoryManager:
             await self.plugin.db.upsert_kv_data(
                 f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}", start_id - 1
             )
+
+    async def force_trigger_passive_memory(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        self_id: str,
+    ) -> str:
+        """手动强制总结，并返回处理结果状态"""
+        if not self.plugin.passive_memory_enabled:
+            return "被动记忆功能未启用"
+
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+
+        if not hasattr(self, "passive_memory_locks"):
+            self.passive_memory_locks = {}
+        if fmt_key not in self.passive_memory_locks:
+            self.passive_memory_locks[fmt_key] = asyncio.Lock()
+
+        if self.passive_memory_locks[fmt_key].locked():
+            return "当前会话正在进行总结，请稍后再试..."
+
+        async with self.passive_memory_locks[fmt_key]:
+            max_id = await self.plugin.db.get_max_message_id(bot_name, group_or_user_id)
+            last_summarized_id = await self.plugin.db.get_kv_data(
+                f"passive_memory:last_summarized_id:{fmt_key}", 0
+            )
+
+            if max_id <= last_summarized_id or max_id == 0:
+                return "当前会话暂无未总结的消息！"
+
+            start_id = last_summarized_id + 1
+            end_id = max_id
+
+            db_messages = await self.plugin.db.get_messages_by_id_range(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                start_id=start_id,
+                end_id=end_id,
+            )
+            if not db_messages:
+                return "无有效消息内容。"
+
+            # 遵循发言检测
+            bot_participated = any(str(msg.user_id) == str(self_id) for msg in db_messages)
+            if not bot_participated:
+                # 依然推进边界，跳过该区间
+                await self.plugin.db.upsert_kv_data(f"passive_memory:last_summarized_id:{fmt_key}", end_id)
+                await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{fmt_key}", 0)
+                await self.plugin.db.upsert_kv_data(f"passive_memory:silence_armed:{fmt_key}", 0)
+                return f"该区间内机器人未参与发言（消息范围: id {start_id} 到 {end_id}），跳过提炼。"
+
+            # 推进状态边界，避免重入
+            await self.plugin.db.upsert_kv_data(f"passive_memory:silent_count:{fmt_key}", 0)
+            await self.plugin.db.upsert_kv_data(f"passive_memory:silence_armed:{fmt_key}", 0)
+            await self.plugin.db.upsert_kv_data(f"passive_memory:last_summarized_id:{fmt_key}", end_id)
+
+            try:
+                # 同步调用 _run_background_summarize 以同步获取反馈
+                await self._run_background_summarize(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    self_id=self_id,
+                    start_id=start_id,
+                    end_id=end_id,
+                )
+                return f"成功提炼了 {len(db_messages)} 条消息的记忆（消息范围: id {start_id} 到 {end_id}）。"
+            except Exception as e:
+                # 失败时回滚边界
+                await self.plugin.db.upsert_kv_data(f"passive_memory:last_summarized_id:{fmt_key}", last_summarized_id)
+                logger.error(f"强制提炼记忆执行失败: {e}", exc_info=True)
+                return f"提炼记忆失败: {e}"

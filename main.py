@@ -328,6 +328,18 @@ class Giftia(Star):
         async for chunk in self.cmd_handler.delete_table(event, table_name):
             yield chunk
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("强制总结")
+    async def force_summarize(self, event: AstrMessageEvent):
+        """强制总结当前会话的未处理聊天记录"""
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        bot_name = self.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
+            return
+        async for chunk in self.cmd_handler.force_summarize(event, bot_name, group_or_user_id):
+            yield chunk
+
     # ==================== 消息事件接收 ====================
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)

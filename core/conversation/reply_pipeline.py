@@ -129,6 +129,7 @@ class ReplyPipeline:
             user_relation=user_relation,
             bot_sticker=bot_sticker_cache,
         )
+        logger.debug(f"[Giftia] 触发大模型回复,构造回复提示词：{user_prompt}")
 
         llm_reply_conf = bot_conf.get("llm_reply_conf", {})
         provider_ids = llm_reply_conf.get("provider_ids")

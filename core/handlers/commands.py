@@ -381,3 +381,15 @@ caption: {media_caption.caption}"""
             )
         else:
             yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
+
+    async def force_summarize(self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str):
+        """手动强制总结当前会话的未处理消息记录"""
+        yield await event.send(MessageChain([Plain("开始分析并提炼当前会话记忆，请稍候...（同步执行中）")]))
+
+        result = await self.plugin.passive_memory_manager.force_trigger_passive_memory(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            self_id=event.get_self_id()
+        )
+
+        yield await event.send(MessageChain([Plain(result)]))
