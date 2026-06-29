@@ -318,22 +318,22 @@ class MediaApi:
 
             # 音频文件 < 1KB 视为不完整（基本只剩头部）
             media_type = getattr(media_caption, "media_type", None)
-            is_too_small = (
-                media_type in ("audio", "voice") and file_size < 1024
-            )
+            is_too_small = media_type in ("audio", "voice") and file_size < 1024
 
             with open(cache_file, "rb") as f:
                 file_bytes = f.read()
 
             b64_str = base64.b64encode(file_bytes).decode("utf-8")
 
-            return json_response({
-                "status": "success",
-                "base64": b64_str,
-                "content_type": content_type,
-                "file_size": file_size,
-                "warning": "audio_too_small" if is_too_small else None,
-            })
+            return json_response(
+                {
+                    "status": "success",
+                    "base64": b64_str,
+                    "content_type": content_type,
+                    "file_size": file_size,
+                    "warning": "audio_too_small" if is_too_small else None,
+                }
+            )
         except Exception as e:
             logger.error(f"[Giftia API] get_media_file_b64 error: {e}")
             return error_response(f"获取媒体 Base64 失败: {str(e)}")
@@ -588,8 +588,13 @@ class MediaApi:
         """获取自动清理缓存的配置"""
         try:
             import json
+
             raw_cfg = await self.giftia.db.get_kv_data("auto_clean_media_config")
-            cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
+            cfg = (
+                json.loads(raw_cfg)
+                if raw_cfg
+                else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
+            )
             return json_response({"status": "success", "config": cfg})
         except Exception as e:
             logger.error(f"[Giftia API] get_auto_clean_config error: {e}")
@@ -599,16 +604,19 @@ class MediaApi:
         """更新并保存自动清理缓存的配置"""
         try:
             import json
+
             body = await request.json()
             enabled = bool(body.get("enabled", False))
             keep_genres = list(body.get("keep_genres", ["表情包", "sticker"]))
-            
+
             cfg = {"enabled": enabled, "keep_genres": keep_genres}
-            await self.giftia.db.upsert_kv_data("auto_clean_media_config", json.dumps(cfg))
-            
+            await self.giftia.db.upsert_kv_data(
+                "auto_clean_media_config", json.dumps(cfg)
+            )
+
             # 动态更新调度器任务
             self.giftia.tools_func.update_auto_clean_media_job()
-            
+
             return json_response({"status": "success", "message": "配置保存成功"})
         except Exception as e:
             logger.error(f"[Giftia API] set_auto_clean_config error: {e}")
@@ -622,4 +630,3 @@ class MediaApi:
         except Exception as e:
             logger.error(f"[Giftia API] trigger_auto_clean error: {e}")
             return error_response(f"执行自动清理失败: {str(e)}")
-

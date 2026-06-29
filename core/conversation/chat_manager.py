@@ -1,5 +1,4 @@
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 from aiocqhttp import CQHttp
@@ -59,6 +58,73 @@ class ChatManager:
             logger.debug(f"{event.platform_meta.id} 消息为机器人自己的消息，跳过处理")
             return
 
+        # Intercept event.send to capture bot replies (non-LLM responses/tool messages)
+        original_send = event.send
+
+        async def intercepted_send(message: MessageChain):
+            logger.debug(f"[Giftia] intercepted_send triggered for message: {message}")
+            bypass = getattr(event, "_giftia_bypass_logging", False)
+            ret = await original_send(message)
+            if getattr(self.plugin, "_terminated", False):
+                return ret
+            if bypass:
+                logger.debug("[Giftia] intercepted_send bypass=True, skipping log")
+                return ret
+
+            try:
+                from datetime import datetime
+
+                from ..utils.schemas import MessageData
+
+                bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
+                group_or_user_id = event.get_group_id() or event.get_sender_id()
+                logger.debug(
+                    f"[Giftia] intercepted_send: bot_name={bot_name}, group_or_user_id={group_or_user_id}"
+                )
+                if bot_name:
+                    bot_conf = self.plugin.bot_map.get(bot_name, {})
+                    nickname = bot_conf.get("nickname", bot_name)
+
+                    # 动态判定活跃窗口状态
+                    fmt_key = f"{bot_name}:{group_or_user_id}"
+                    active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
+                    is_active_window = active_counter > 0
+                    defer_caption = not is_active_window
+
+                    (
+                        msg_str,
+                        media_id_list,
+                    ) = await self.plugin.message_parser.chain_to_str(
+                        message.chain, defer_caption=defer_caption
+                    )
+                    logger.debug(
+                        f"[Giftia] intercepted_send logging message content: {msg_str}"
+                    )
+                    await self.plugin.data_cache.add_message(
+                        bot_name,
+                        group_or_user_id,
+                        MessageData(
+                            nickname=nickname,
+                            user_id=event.get_self_id(),
+                            group_or_user_id=group_or_user_id,
+                            time=datetime.now().isoformat(),
+                            message_id="",
+                            content=msg_str,
+                            is_recalled=0,
+                        ),
+                    )
+                    logger.debug(
+                        "[Giftia] intercepted_send successfully logged to database"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[Giftia] Error logging intercepted bot message: {e}",
+                    exc_info=True,
+                )
+            return ret
+
+        event.send = intercepted_send
+
         # 4. 创建后台回复任务
         task = asyncio.create_task(self.job(event))
         task_id = str(id(task))
@@ -67,7 +133,9 @@ class ChatManager:
             await task
 
             # 被动记忆后台触发检查
-            if self.plugin.passive_memory_enabled and self.plugin.embedding_conf.get("enabled", False):
+            if self.plugin.passive_memory_enabled and self.plugin.embedding_conf.get(
+                "enabled", False
+            ):
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
                 group_or_user_id = event.get_group_id() or event.get_sender_id()
                 if bot_name:
@@ -123,8 +191,34 @@ class ChatManager:
                 event, bot_name, defer_caption=should_defer
             )
 
+        # Check if the message is a command-type message
+        is_command = False
+        activated_handlers = event.get_extra("activated_handlers", [])
+        for handler in activated_handlers:
+            if handler.handler_name == "on_message":
+                continue
+            for filter_obj in handler.event_filters:
+                if filter_obj.__class__.__name__ in (
+                    "CommandFilter",
+                    "CommandGroupFilter",
+                ):
+                    is_command = True
+                    break
+            if is_command:
+                break
+
+        if is_command:
+            logger.debug(
+                f"{bot_name} command message detected, logged to database, skipping LLM reply"
+            )
+            return
+
         # 5. 调用决策引擎进行发言判断
-        should_reply, relevant_memories, is_just_at = await self.decision_engine.evaluate_decision(
+        (
+            should_reply,
+            relevant_memories,
+            is_just_at,
+        ) = await self.decision_engine.evaluate_decision(
             event=event,
             bot_name=bot_name,
             nickname=nickname,
@@ -139,7 +233,9 @@ class ChatManager:
 
         # 6. 进入 LLM 回复流水线
         reply_key = f"{bot_name}:{group_or_user_id}"
-        self.plugin.replying_status[reply_key] = self.plugin.replying_status.get(reply_key, 0) + 1
+        self.plugin.replying_status[reply_key] = (
+            self.plugin.replying_status.get(reply_key, 0) + 1
+        )
 
         try:
             has_sent_reply = False
@@ -174,11 +270,15 @@ class ChatManager:
                 decision_conf = bot_conf.get("decision_conf", {})
                 window_size = decision_conf.get("reply_active_window", 10)
                 self.plugin.active_reply_counters[fmt_key] = window_size
-                
+
                 trigger_msg_id = None
-                if active_counter == 0 and "current_message" in locals() and current_message:
+                if (
+                    active_counter == 0
+                    and "current_message" in locals()
+                    and current_message
+                ):
                     trigger_msg_id = current_message.message_id
-                
+
                 await self.plugin.passive_memory_manager.mark_silence_summary_armed(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,

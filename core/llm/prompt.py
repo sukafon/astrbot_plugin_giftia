@@ -124,8 +124,12 @@ def process_media_captions_for_prompt(
             for hash_val in msg.media_id_list:
                 if hash_val in inline_hashes:
                     formatted = format_inline_caption(caption_map[hash_val])
-                    msg.content = msg.content.replace(f"[图片:{hash_val}]", f"[图片: {formatted}]")
-                    msg.content = msg.content.replace(f"[语音:{hash_val}]", f"[语音: {formatted}]")
+                    msg.content = msg.content.replace(
+                        f"[图片:{hash_val}]", f"[图片: {formatted}]"
+                    )
+                    msg.content = msg.content.replace(
+                        f"[语音:{hash_val}]", f"[语音: {formatted}]"
+                    )
                 elif hash_val not in caption_map:
                     # 缺失的媒体替换为 generic 占位符
                     msg.content = msg.content.replace(f"[图片:{hash_val}]", "[图片]")
@@ -173,8 +177,12 @@ def build_reply_prompt(
     )
 
     # 拆分回 recent_messages 和 current_message
-    copied_recent = processed_messages[:len(recent_messages)] if recent_messages else []
-    copied_current = processed_messages[len(recent_messages):][0] if current_message else None
+    copied_recent = (
+        processed_messages[: len(recent_messages)] if recent_messages else []
+    )
+    copied_current = (
+        processed_messages[len(recent_messages) :][0] if current_message else None
+    )
 
     user_prompt = []
     # 时间

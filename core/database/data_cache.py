@@ -9,10 +9,10 @@ from cachetools import LRUCache
 
 from astrbot.api import logger
 
-from .database import Database
-from ..utils.http_manager import HttpManager
 from ..memory.memory import LTM
+from ..utils.http_manager import HttpManager
 from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status
+from .database import Database
 
 MAX_CAPTION_CACHE_SIZE = 500
 
@@ -105,6 +105,30 @@ class DataCache:
         self, bot_name: str, group_id: str, msg_data: MessageData
     ) -> None:
         """添加消息，先加入缓存，再写入数据库"""
+        import time
+
+        now = time.time()
+        if not hasattr(self, "_recent_adds"):
+            self._recent_adds = []
+
+        # Clean entries older than 2 seconds
+        self._recent_adds = [x for x in self._recent_adds if now - x[0] < 2.0]
+
+        # Check for duplicate
+        for ts, b, g, c in self._recent_adds:
+            if b == bot_name and g == group_id and c == msg_data.content:
+                logger.debug(
+                    f"[Giftia] Duplicate message write bypassed: {msg_data.content}"
+                )
+                return
+
+        # Record this write
+        self._recent_adds.append((now, bot_name, group_id, msg_data.content))
+
+        if not msg_data.message_id:
+            import uuid
+
+            msg_data.message_id = f"local_{uuid.uuid4().hex}"
         fmt_key = f"{bot_name}:{group_id}"
         self.recent_messages[fmt_key].append(msg_data)
         # 将消息写入数据库
@@ -366,7 +390,12 @@ class DataCache:
         return db_memories
 
     async def add_memory(
-        self, bot_name: str, group_or_user_id: str, text: str, user_id: str, associated_user_ids: list[str] = None
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        text: str,
+        user_id: str,
+        associated_user_ids: list[str] = None,
     ) -> str | None:
         """添加记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
@@ -375,7 +404,7 @@ class DataCache:
         if associated_user_ids:
             meta_dict["associated_user_ids"] = associated_user_ids
         meta_str = json.dumps(meta_dict)
-        
+
         result = await self.ltm.add_memory(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,

@@ -1,28 +1,31 @@
 import asyncio
-import time
 from collections import defaultdict
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
 
-from .core.database.database import Database
+from .core.conversation.chat_manager import ChatManager
 from .core.database.data_cache import DataCache
-from .core.utils.emoji_manager import EmojiManager
-from .core.llm.xml_parse import XmlParse
+from .core.database.database import Database
+from .core.handlers.commands import CommandHandler
 from .core.llm.call_llm import CallLLM
+from .core.llm.llm_tools import (
+    GetMessageContextTool,
+    SearchChatHistoryTool,
+    remove_tools,
+)
+from .core.llm.xml_parse import XmlParse
+from .core.memory.memory import LTM
+from .core.memory.passive_memory import PassiveMemoryManager
+from .core.utils.aiocqhttp_action import AIoCQHTTPAction
+from .core.utils.emoji_manager import EmojiManager
+from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
 from .core.utils.scheduler import Scheduler
 from .core.utils.tools_func import ToolsFunc
-from .core.memory.memory import LTM
-from .core.utils.http_manager import HttpManager
-from .core.utils.aiocqhttp_action import AIoCQHTTPAction
-from .core.llm.llm_tools import SearchChatHistoryTool, GetMessageContextTool, remove_tools
-
-from .core.handlers.commands import CommandHandler
-from .core.memory.passive_memory import PassiveMemoryManager
-from .core.conversation.chat_manager import ChatManager
 from .core.web.webui_manager import WebUIManager
 
 
@@ -107,10 +110,18 @@ class Giftia(Star):
         self.embedding_conf = memory_config.get("embedding_conf", {})
         self.rerank_conf = memory_config.get("rerank_conf", {})
         self.passive_memory_enabled = memory_config.get("passive_memory_enabled", False)
-        self.passive_memory_provider_ids = memory_config.get("passive_memory_provider_ids", [])
-        self.passive_memory_silence_threshold = memory_config.get("passive_memory_silence_threshold", 10)
-        self.passive_memory_overflow_threshold = memory_config.get("passive_memory_overflow_threshold", 100)
-        self.passive_memory_summary_prompt = memory_config.get("passive_memory_summary_prompt", "")
+        self.passive_memory_provider_ids = memory_config.get(
+            "passive_memory_provider_ids", []
+        )
+        self.passive_memory_silence_threshold = memory_config.get(
+            "passive_memory_silence_threshold", 10
+        )
+        self.passive_memory_overflow_threshold = memory_config.get(
+            "passive_memory_overflow_threshold", 100
+        )
+        self.passive_memory_summary_prompt = memory_config.get(
+            "passive_memory_summary_prompt", ""
+        )
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
@@ -138,6 +149,8 @@ class Giftia(Star):
 
         # 正在回复的状态映射
         self.replying_status: dict[str, int] = {}
+
+        self._original_send_message = self.context.send_message
 
     async def initialize(self):
         """插件初始化方法"""
@@ -204,6 +217,88 @@ class Giftia(Star):
         self.webui_manager.register_routes()
         self.web_api = self.webui_manager.web_api
 
+        # Intercept context.send_message to capture bot replies sent via context
+        original_context_send_message = self._original_send_message
+
+        async def intercepted_context_send_message(session, message_chain) -> bool:
+            ret = await original_context_send_message(session, message_chain)
+            if getattr(self, "_terminated", False):
+                return ret
+            try:
+                from datetime import datetime
+
+                from astrbot.core.platform.message_session import MessageSesion
+
+                from .core.utils.schemas import MessageData
+
+                if isinstance(session, str):
+                    session_obj = MessageSesion.from_str(session)
+                else:
+                    session_obj = session
+
+                bot_name = None
+                for b_name, b_conf in self.bot_map.items():
+                    if session_obj.platform_name in b_conf.get("adapter_ids", []):
+                        bot_name = b_name
+                        break
+
+                if bot_name:
+                    bot_conf = self.bot_map.get(bot_name, {})
+                    nickname = bot_conf.get("nickname", bot_name)
+                    msg_str, media_id_list = await self.message_parser.chain_to_str(
+                        message_chain.chain, defer_caption=False
+                    )
+
+                    self_id = ""
+                    for adapter_id in bot_conf.get("adapter_ids", []):
+                        if ":" in adapter_id and adapter_id.startswith(
+                            session_obj.platform_name + ":"
+                        ):
+                            self_id = adapter_id.split(":", 1)[1]
+                            break
+
+                    if not self_id:
+                        for platform in self.context.platform_manager.platform_insts:
+                            if platform.meta().id == session_obj.platform_name:
+                                for attr in (
+                                    "self_id",
+                                    "bot_self_id",
+                                    "client_self_id",
+                                ):
+                                    if hasattr(platform, attr):
+                                        val = getattr(platform, attr)
+                                        if (
+                                            val
+                                            and isinstance(val, str)
+                                            and not callable(val)
+                                            and not hasattr(val, "func")
+                                        ):
+                                            self_id = val
+                                            break
+
+                    await self.data_cache.add_message(
+                        bot_name,
+                        session_obj.session_id,
+                        MessageData(
+                            nickname=nickname,
+                            user_id=self_id or "bot",
+                            group_or_user_id=session_obj.session_id,
+                            time=datetime.now().isoformat(),
+                            message_id="",
+                            content=msg_str,
+                            is_recalled=0,
+                            media_id_list=media_id_list,
+                        ),
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[Giftia] Error logging intercepted context send_message: {e}",
+                    exc_info=True,
+                )
+            return ret
+
+        self.context.send_message = intercepted_context_send_message
+
     # ==================== 命令监听与分发 ====================
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -242,7 +337,9 @@ class Giftia(Star):
         rag_queries: str,
     ):
         """根据ID获取记忆"""
-        async for chunk in self.cmd_handler.get_memory(event, bot_name, group_or_user_id, rag_queries):
+        async for chunk in self.cmd_handler.get_memory(
+            event, bot_name, group_or_user_id, rag_queries
+        ):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -255,7 +352,9 @@ class Giftia(Star):
         limit: int = 10,
     ):
         """根据ID获取记忆"""
-        async for chunk in self.cmd_handler.get_early_memory(event, bot_name, group_or_user_id, limit):
+        async for chunk in self.cmd_handler.get_early_memory(
+            event, bot_name, group_or_user_id, limit
+        ):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -278,7 +377,9 @@ class Giftia(Star):
         self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
     ):
         """删除全部记忆"""
-        async for chunk in self.cmd_handler.delete_all_memories(event, bot_name, group_or_user_id):
+        async for chunk in self.cmd_handler.delete_all_memories(
+            event, bot_name, group_or_user_id
+        ):
             yield chunk
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -337,14 +438,22 @@ class Giftia(Star):
         if not bot_name:
             yield await event.send(MessageChain([Plain("未找到对应的 Bot 实例。")]))
             return
-        async for chunk in self.cmd_handler.force_summarize(event, bot_name, group_or_user_id):
+        async for chunk in self.cmd_handler.force_summarize(
+            event, bot_name, group_or_user_id
+        ):
             yield chunk
 
     # ==================== 消息事件接收 ====================
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
     async def on_message(self, event: AstrMessageEvent):
         """接收消息事件"""
+        # 忽略机器人自身发送的消息（例如平台回显/echo事件）
+        try:
+            if event.get_sender_id() == event.get_self_id():
+                return
+        except Exception:
+            pass
         await self.chat_manager.handle_message(event)
 
     async def remind_task(
@@ -378,12 +487,16 @@ class Giftia(Star):
 
     async def terminate(self):
         """销毁方法"""
+        self._terminated = True
+        if hasattr(self, "_original_send_message"):
+            self.context.send_message = self._original_send_message
+
         for task in list(self.running_tasks.values()):
             if not task.done():
                 task.cancel()
         await asyncio.gather(*self.running_tasks.values(), return_exceptions=True)
         self.running_tasks.clear()
-        
+
         await self.http_manager.close_session()
         await self.db.close()
         self.task_manager.shutdown()

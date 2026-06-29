@@ -1,6 +1,5 @@
 import json
 import time
-from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
@@ -94,7 +93,8 @@ class DataApi:
             last_summarized_id = 0
             if bot_name and group_or_user_id:
                 last_summarized_id = await self.giftia.db.get_kv_data(
-                    f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}", 0
+                    f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}",
+                    0,
                 )
 
             return json_response(
@@ -134,7 +134,9 @@ class DataApi:
                 rows = await cursor.fetchall()
                 bots = [row["bot_name"] for row in rows if row["bot_name"]]
 
-            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+            selected_bot_name = (
+                bot_name if bot_name in bots else (bots[0] if bots else "")
+            )
 
             sessions = []
             if selected_bot_name:
@@ -288,7 +290,9 @@ class DataApi:
                 rows = await cursor.fetchall()
                 bots = [row["bot_name"] for row in rows if row["bot_name"]]
 
-            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+            selected_bot_name = (
+                bot_name if bot_name in bots else (bots[0] if bots else "")
+            )
 
             sessions = []
             if selected_bot_name:
@@ -347,7 +351,9 @@ class DataApi:
             associated_user_ids = body.get("associated_user_ids")
 
             if isinstance(associated_user_ids, str):
-                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
+                associated_user_ids = [
+                    uid.strip() for uid in associated_user_ids.split(",") if uid.strip()
+                ]
 
             if not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数 (bot_name, group_or_user_id, text)")
@@ -386,7 +392,9 @@ class DataApi:
             associated_user_ids = body.get("associated_user_ids")
 
             if isinstance(associated_user_ids, str):
-                associated_user_ids = [uid.strip() for uid in associated_user_ids.split(",") if uid.strip()]
+                associated_user_ids = [
+                    uid.strip() for uid in associated_user_ids.split(",") if uid.strip()
+                ]
 
             if not memory_id or not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数")
@@ -638,7 +646,9 @@ class DataApi:
                 rows = await cursor.fetchall()
                 bots = [row["bot_name"] for row in rows if row["bot_name"]]
 
-            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+            selected_bot_name = (
+                bot_name if bot_name in bots else (bots[0] if bots else "")
+            )
 
             sessions = []
             if selected_bot_name:
@@ -859,7 +869,9 @@ class DataApi:
                 rows = await cursor.fetchall()
                 bots = [row["bot_name"] for row in rows if row["bot_name"]]
 
-            selected_bot_name = bot_name if bot_name in bots else (bots[0] if bots else "")
+            selected_bot_name = (
+                bot_name if bot_name in bots else (bots[0] if bots else "")
+            )
 
             sessions = []
             if selected_bot_name:

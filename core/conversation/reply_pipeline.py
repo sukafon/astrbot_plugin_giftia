@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import random
 from datetime import datetime
 
@@ -8,7 +7,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image
 
 from ..llm.prompt import build_reply_prompt
-from ..utils.schemas import MessageData, XmlLlmResult
+from ..utils.schemas import MessageData
 from .media_captioner import MediaCaptioner
 from .tool_executor import ToolExecutor
 
@@ -104,7 +103,9 @@ class ReplyPipeline:
             )
 
         # 获取表情包池并抽取随机样本
-        bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(bot_name)
+        bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(
+            bot_name
+        )
 
         # 3. 构造回复提示词 Prompt
         user_prompt = build_reply_prompt(
@@ -147,7 +148,9 @@ class ReplyPipeline:
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
 
-        provider_selection_mode = llm_reply_conf.get("provider_selection_mode", "fallback")
+        provider_selection_mode = llm_reply_conf.get(
+            "provider_selection_mode", "fallback"
+        )
         if provider_selection_mode == "random":
             random.shuffle(provider_ids)
 
@@ -160,7 +163,9 @@ class ReplyPipeline:
             user_prompt=user_prompt,
             use_source_tools=self.plugin.tools_config.get("use_source_tools", False),
             force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
-            enabled_features=self.plugin.tools_config.get("enabled_interactive_features"),
+            enabled_features=self.plugin.tools_config.get(
+                "enabled_interactive_features"
+            ),
             image_urls=image_urls,
             audio_urls=audio_urls,
             timeout=self.plugin.tools_config.get("timeout", 120),
