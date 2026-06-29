@@ -190,6 +190,28 @@ class DataApi:
             logger.error(f"[Giftia API] get_chat_history_filter_options error: {e}")
             return error_response(f"获取决策审计筛选项失败: {str(e)}")
 
+    async def delete_chat_history(self):
+        """Delete chat history for a session."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+
+            if not bot_name or not group_or_user_id:
+                return error_response("缺少 bot_name 或 group_or_user_id 参数")
+
+            await self.giftia.db.delete_chat_history(bot_name, group_or_user_id)
+
+            # Reset last_summarized_id
+            await self.giftia.db.delete_kv_data(
+                f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}"
+            )
+
+            return json_response({"status": "success", "message": "清空当前会话消息成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] delete_chat_history error: {e}")
+            return error_response(f"清空当前会话消息失败: {str(e)}")
+
     # ── Memory APIs ─────────────────────────────────────────────────────
 
     async def get_memories(self):
