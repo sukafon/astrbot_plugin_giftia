@@ -12,7 +12,7 @@ from astrbot.core.message.components import BaseMessageComponent
 
 from ..database.data_cache import DataCache
 from ..utils.emoji_manager import EmojiManager
-from ..utils.schemas import Decision, MediaCaption, XmlLlmResult
+from ..utils.schemas import Decision, XmlLlmResult
 
 
 class XmlParse:
@@ -146,8 +146,8 @@ class XmlParse:
                                                 sticker_id
                                             )
                                         )
-                                        if media_caption and media_caption.get(url):
-                                            img = Image.fromURL(media_caption.get(url))
+                                        if media_caption and media_caption.url:
+                                            img = Image.fromURL(media_caption.url)
                                             sub_chain.append(img)
                                         else:
                                             logger.error(
@@ -184,8 +184,8 @@ class XmlParse:
                             media_caption = await self.data_cache.get_caption_by_hash(
                                 sticker_id
                             )
-                            if media_caption and media_caption.get(url):
-                                img = Image.fromURL(media_caption.get(url))
+                            if media_caption and media_caption.url:
+                                img = Image.fromURL(media_caption.url)
                                 result.msg_chains.append([img])
                             else:
                                 logger.error(
@@ -329,8 +329,6 @@ class XmlParse:
                             f"Delete memory数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
-
-
                 elif tag_name == "tool_call":
                     tool_name = self._attr_str(child, "name", "")
                     text = self._attr_str(child, "arguments", "") or child.get_text(
@@ -390,8 +388,6 @@ class XmlParse:
         except Exception as e:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
             return None
-
-
 
     def parse_str_json(self, response_text: str) -> dict | None:
         """把AI回复的json字符串解析成字典"""

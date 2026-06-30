@@ -136,6 +136,12 @@ class WebUIManager:
             desc="Get chat history filter options",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/delete",
+            view_handler=self.web_api.delete_chat_history,
+            methods=["POST"],
+            desc="Delete chat history for a session",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user",
             view_handler=self.web_api.get_user_profiles,
             methods=["GET"],

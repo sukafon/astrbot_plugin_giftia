@@ -11,13 +11,13 @@ from ..utils.schemas import (
     Sticker,
     XmlLlmResult,
 )
-from .xml_parse import XmlParse
+from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
-    build_xml_instructions,
-    DEFAULT_IMAGE_CAPTION_PROMPT,
     DEFAULT_AUDIO_CAPTION_PROMPT,
+    DEFAULT_IMAGE_CAPTION_PROMPT,
+    build_xml_instructions,
 )
-from .json_parse import decode_media_caption_json, decode_media_audio_json
+from .xml_parse import XmlParse
 
 
 class CallLLM:
@@ -152,9 +152,7 @@ class CallLLM:
                             ):
                                 if (
                                     builtin_name in existing_names
-                                    or not tool_manager.is_builtin_tool(
-                                        builtin_name
-                                    )
+                                    or not tool_manager.is_builtin_tool(builtin_name)
                                 ):
                                     continue
                                 builtin_tool = tool_manager.get_builtin_tool(
@@ -183,17 +181,11 @@ class CallLLM:
                         )
                         target_tool_name = "web_search_tavily"
                         target_tool = next(
-                            (
-                                t
-                                for t in tools_set.tools
-                                if t.name == target_tool_name
-                            ),
+                            (t for t in tools_set.tools if t.name == target_tool_name),
                             None,
                         )
                         if target_tool is None:
-                            is_builtin = tool_manager.is_builtin_tool(
-                                target_tool_name
-                            )
+                            is_builtin = tool_manager.is_builtin_tool(target_tool_name)
                             logger.debug(
                                 f"<native_tool_probe>\n"
                                 f"  target: {target_tool_name}\n"
@@ -210,22 +202,25 @@ class CallLLM:
                                 f"  active: {target_tool.active}\n"
                                 f"</native_tool_probe>"
                             )
-                        
+
                         if force_xml_tools and tools_set and tools_set.tools:
                             import json
+
                             xml_tools_str = "\n".join(
                                 f'  - <tool_call name="{t.name}" description="{t.description}">{json.dumps(t.parameters, ensure_ascii=False)}</tool_call>'
                                 for t in tools_set.tools
                             )
                             xml_tools_instruction = (
                                 "\n\n# 可用工具 (强制使用 XML 标签调用)\n"
-                                "如果你需要使用工具，必须通过输出并列的 <tool_call name=\"工具名\">参数JSON</tool_call> 标签来调用。不要使用原生的 function calling 功能。若没有需要调用的工具，则不要输出任何 tool_call 标签。\n"
+                                '如果你需要使用工具，必须通过输出并列的 <tool_call name="工具名">参数JSON</tool_call> 标签来调用。不要使用原生的 function calling 功能。若没有需要调用的工具，则不要输出任何 tool_call 标签。\n'
                                 "注意：参数部分必须是正确的 JSON 格式对象，例如：\n"
                                 "<status>...</status>\n"
-                                "<tool_call name=\"search_chat_history\">{\"keyword\": \"查询词\"}</tool_call>\n\n"
+                                '<tool_call name="search_chat_history">{"keyword": "查询词"}</tool_call>\n\n'
                                 "当前可用的工具列表：\n"
                             ) + xml_tools_str
-                            actual_system_prompt = actual_system_prompt + xml_tools_instruction
+                            actual_system_prompt = (
+                                actual_system_prompt + xml_tools_instruction
+                            )
 
                     logger.debug(
                         f"[Giftia] 触发大模型回复，最终系统提示词 (system_prompt):\n{actual_system_prompt}"
@@ -335,9 +330,7 @@ class CallLLM:
                             f"[Giftia] LLM转述响应片段: "
                             f"{llm_resp.completion_text[:120]!r}"
                         )
-                        parsed = decode_media_caption_json(
-                            llm_resp.completion_text
-                        )
+                        parsed = decode_media_caption_json(llm_resp.completion_text)
                         if parsed:
                             return parsed
                         logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
@@ -370,9 +363,7 @@ class CallLLM:
                         audio_urls=audio_urls,
                     )
                     if llm_resp.completion_text:
-                        parsed = decode_media_audio_json(
-                            llm_resp.completion_text
-                        )
+                        parsed = decode_media_audio_json(llm_resp.completion_text)
                         if parsed:
                             return parsed
                         logger.warning("解析音频转述 JSON 失败，准备重试或降级...")

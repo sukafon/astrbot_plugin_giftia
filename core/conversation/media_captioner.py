@@ -55,10 +55,8 @@ class MediaCaptioner:
                                     else [media_caption.url]
                                 )
                                 if audio_urls and audio_urls[0]:
-                                    transcribed = (
-                                        await self.plugin.call_llm.call_llm_audio_caption(
-                                            audio_urls
-                                        )
+                                    transcribed = await self.plugin.call_llm.call_llm_audio_caption(
+                                        audio_urls
                                     )
                                     if transcribed:
                                         media_caption.genre = transcribed.genre
@@ -85,13 +83,12 @@ class MediaCaptioner:
                                     )
                                 if image_bytes:
                                     base64s, is_animated = await asyncio.to_thread(
-                                        self.plugin.http_manager.handle_image, image_bytes
+                                        self.plugin.http_manager.handle_image,
+                                        image_bytes,
                                     )
                                     if base64s:
-                                        transcribed = (
-                                            await self.plugin.call_llm.call_llm_image_caption(
-                                                base64s
-                                            )
+                                        transcribed = await self.plugin.call_llm.call_llm_image_caption(
+                                            base64s
                                         )
                                         if transcribed:
                                             media_caption.genre = transcribed.genre
@@ -169,7 +166,9 @@ class MediaCaptioner:
 
                 if target_url:
                     # 先将图片下载并转为 base64，防止大模型无法访问本地/内网 URL
-                    image_bytes = await self.plugin.http_manager.download_media(target_url)
+                    image_bytes = await self.plugin.http_manager.download_media(
+                        target_url
+                    )
                     if image_bytes:
                         base64s, _ = await asyncio.to_thread(
                             self.plugin.http_manager.handle_image, image_bytes

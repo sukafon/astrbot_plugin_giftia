@@ -1,8 +1,19 @@
 import json
+
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Plain, Reply, Image, Record, File, Node, Nodes
+from astrbot.api.message_components import (
+    File,
+    Image,
+    Node,
+    Nodes,
+    Plain,
+    Record,
+    Reply,
+)
+
 from ..utils.schemas import Status
+
 
 class CommandHandler:
     def __init__(self, plugin):
@@ -11,7 +22,9 @@ class CommandHandler:
     async def tool_list(self, event: AstrMessageEvent, index: int = 1):
         """工具列表"""
         tool_set = (
-            self.plugin.context.get_llm_tool_manager().get_full_tool_set().get_light_tool_set()
+            self.plugin.context.get_llm_tool_manager()
+            .get_full_tool_set()
+            .get_light_tool_set()
         )
         # 分页
         total_pages = (len(tool_set) + 10 - 1) // 10
@@ -57,7 +70,11 @@ class CommandHandler:
 
     async def tool_xml(self, event: AstrMessageEvent, name: str):
         """将函数调用工具解析成xml格式"""
-        tool = self.plugin.context.get_llm_tool_manager().get_full_tool_set().get_tool(name)
+        tool = (
+            self.plugin.context.get_llm_tool_manager()
+            .get_full_tool_set()
+            .get_tool(name)
+        )
         if not tool:
             yield await event.send(MessageChain([Plain(f"未找到工具: {name}")]))
             return
@@ -352,7 +369,9 @@ class CommandHandler:
             media_caption = await self.plugin.data_cache.get_caption_by_hash(media_hash)
 
         if not media_caption and file_name:
-            _, media_caption = await self.plugin.data_cache.get_caption_by_filename(file_name)
+            _, media_caption = await self.plugin.data_cache.get_caption_by_filename(
+                file_name
+            )
 
         if media_caption:
             msg = f"""hash_val: {media_caption.hash_val}
@@ -382,14 +401,18 @@ caption: {media_caption.caption}"""
         else:
             yield await event.send(MessageChain([Plain(f"数据表 {table_name} 不存在")]))
 
-    async def force_summarize(self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str):
+    async def force_summarize(
+        self, event: AstrMessageEvent, bot_name: str, group_or_user_id: str
+    ):
         """手动强制总结当前会话的未处理消息记录"""
-        yield await event.send(MessageChain([Plain("开始分析并提炼当前会话记忆，请稍候...（同步执行中）")]))
+        yield await event.send(
+            MessageChain([Plain("开始分析并提炼当前会话记忆，请稍候...（同步执行中）")])
+        )
 
         result = await self.plugin.passive_memory_manager.force_trigger_passive_memory(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
-            self_id=event.get_self_id()
+            self_id=event.get_self_id(),
         )
 
         yield await event.send(MessageChain([Plain(result)]))

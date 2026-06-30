@@ -1,5 +1,6 @@
-import mcp
 from datetime import datetime
+
+import mcp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -47,15 +48,19 @@ class ToolExecutor:
                     other_data.append("# 查询到的定时任务\n" + "\n".join(tasks))
 
         # 2. 处理 RAG 检索
-        if llm_result.search_memories and self.plugin.embedding_conf.get("enabled", False):
+        if llm_result.search_memories and self.plugin.embedding_conf.get(
+            "enabled", False
+        ):
             for target_group_or_user_id, query in llm_result.search_memories:
-                embedding_memories = await self.plugin.passive_memory_manager.search_and_filter_memories(
-                    bot_name=bot_name,
-                    group_or_user_id=target_group_or_user_id,
-                    query=query,
-                    recent_messages=recent_messages,
-                    limit=self.plugin.embedding_conf.get("limit", 5),
-                    threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                embedding_memories = (
+                    await self.plugin.passive_memory_manager.search_and_filter_memories(
+                        bot_name=bot_name,
+                        group_or_user_id=target_group_or_user_id,
+                        query=query,
+                        recent_messages=recent_messages,
+                        limit=self.plugin.embedding_conf.get("limit", 5),
+                        threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                    )
                 )
                 if embedding_memories and self.plugin.rerank_conf.get("enabled", False):
                     rerank_memories = await self.plugin.ltm.rerank_memories(
@@ -131,9 +136,13 @@ class ToolExecutor:
                 clean_tool_name = (
                     tool_name.split(":")[-1] if ":" in tool_name else tool_name
                 )
-                tool = self.plugin.context.get_llm_tool_manager().get_func(clean_tool_name)
+                tool = self.plugin.context.get_llm_tool_manager().get_func(
+                    clean_tool_name
+                )
                 if tool is None:
-                    tool = self.plugin.context.get_llm_tool_manager().get_func(tool_name)
+                    tool = self.plugin.context.get_llm_tool_manager().get_func(
+                        tool_name
+                    )
 
                 if tool is None:
                     logger.error(f"{bot_name} 工具 {tool_name} 不存在")
@@ -175,8 +184,9 @@ class ToolExecutor:
                     "results": "\n".join(result),
                 }
                 tool_results.append(result_dict)
+                tool_output = result_dict["results"]
                 success_logs.append(
-                    f"<tool_call name={tool_name} args={tool_args} status='finished' />"
+                    f"<tool_call name={tool_name} args={tool_args} status='finished'>\n{tool_output}\n</tool_call>"
                 )
 
         # 6. 写入操作日志

@@ -42,9 +42,13 @@ class ActionDispatcher:
             iso_string = datetime.now().isoformat()
 
             # 1. 删除长期记忆
-            if llm_result.delete_memories and self.plugin.embedding_conf.get("enabled", False):
+            if llm_result.delete_memories and self.plugin.embedding_conf.get(
+                "enabled", False
+            ):
                 for memory_id in llm_result.delete_memories:
-                    result = await self.plugin.data_cache.delete_memory(memory_id=memory_id)
+                    result = await self.plugin.data_cache.delete_memory(
+                        memory_id=memory_id
+                    )
                     if result:
                         success_logs.append(
                             f"<delete_memory memory_id={memory_id} result='success'/>"
@@ -147,13 +151,6 @@ class ActionDispatcher:
                         logger.error(
                             f"{bot_name} 禁言数据格式错误: {group_id}, {user_id}, {duration}"
                         )
-
-            # 7. 记录工具分发状态
-            if llm_result.tools_to_call:
-                for tool_name, tool_args in llm_result.tools_to_call:
-                    success_logs.append(
-                        f"<tool_call name={tool_name} args={tool_args} status='dispatched' info='The system has received the call and is processing it.'/>"
-                    )
 
             # 8. 添加定时任务
             if llm_result.schedule_tasks:
@@ -295,11 +292,16 @@ class ActionDispatcher:
                     )
                     await asyncio.sleep(interval)
                 try:
-                    await event.send(MessageChain(msg_chain))
+                    try:
+                        event._giftia_bypass_logging = True
+                        await event.send(MessageChain(msg_chain))
+                    finally:
+                        event._giftia_bypass_logging = False
                     iso_string = datetime.now().isoformat()
-                    msg_str, media_id_list = await self.plugin.message_parser.chain_to_str(
-                        msg_chain
-                    )
+                    (
+                        msg_str,
+                        media_id_list,
+                    ) = await self.plugin.message_parser.chain_to_str(msg_chain)
                     msg_data = MessageData(
                         nickname=nickname,
                         user_id=event.get_self_id(),

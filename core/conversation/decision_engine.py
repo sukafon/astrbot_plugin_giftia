@@ -197,7 +197,9 @@ class DecisionEngine:
             if debounce_key not in self.plugin.debounce_start_map:
                 self.plugin.debounce_start_map[debounce_key] = current_time
 
-            time_since_start = current_time - self.plugin.debounce_start_map[debounce_key]
+            time_since_start = (
+                current_time - self.plugin.debounce_start_map[debounce_key]
+            )
 
             if time_since_start >= self.plugin.user_max_debounce_time:
                 logger.debug(

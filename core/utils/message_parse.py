@@ -12,6 +12,8 @@ from astrbot.api.message_components import (
     File,
     Image,
     Json,
+    Node,
+    Nodes,
     Plain,
     Record,
     Reply,
@@ -19,11 +21,10 @@ from astrbot.api.message_components import (
 )
 from astrbot.core.message.components import BaseMessageComponent
 
-from ..llm.call_llm import CallLLM
 from ..database.data_cache import DataCache, is_temp_or_local_path
+from ..llm.call_llm import CallLLM
 from .http_manager import HttpManager
-from .schemas import MessageData
-from ..llm.xml_parse import MediaCaption
+from .schemas import MediaCaption, MessageData
 
 # 支持的图片文件格式
 SUPPORTED_FILE_FORMATS_WITH_DOT = (
@@ -154,9 +155,18 @@ class MessageParser:
                                     file_name
                                 )
 
-                            if not media_caption and quote.url:
+                            if not media_caption and (
+                                quote.url
+                                or (
+                                    file_name
+                                    and (
+                                        file_name.startswith("file://")
+                                        or file_name.startswith("base64://")
+                                    )
+                                )
+                            ):
                                 hash_val, media_caption = await self._get_image_caption(
-                                    quote.url, file_name, defer_caption
+                                    quote.url or "", file_name, defer_caption
                                 )
                             if hash_val and media_caption:
                                 quote_parts.append(f"[图片:{hash_val}]")
@@ -185,11 +195,14 @@ class MessageParser:
 
                             if (
                                 not media_caption
-                                and quote.url
+                                and (
+                                    quote.url
+                                    or (file_name and file_name.startswith("file://"))
+                                )
                                 and self.audio_caption_enabled
                             ):
                                 hash_val, media_caption = await self._get_audio_caption(
-                                    quote.url, file_name, defer_caption
+                                    quote.url or "", file_name, defer_caption
                                 )
                             if hash_val and media_caption:
                                 quote_parts.append(f"[语音:{hash_val}]")
@@ -215,6 +228,7 @@ class MessageParser:
                 file_name = comp.file
                 media_caption = None
                 hash_val = None
+                custom_desc = getattr(comp, "meme_desc", None)
 
                 if file_name and not is_temp_or_local_path(file_name):
                     (
@@ -222,9 +236,18 @@ class MessageParser:
                         media_caption,
                     ) = await self.data_cache.get_caption_by_filename(file_name)
 
-                if not media_caption and comp.url:
+                if not media_caption and (
+                    comp.url
+                    or (
+                        file_name
+                        and (
+                            file_name.startswith("file://")
+                            or file_name.startswith("base64://")
+                        )
+                    )
+                ):
                     hash_val, media_caption = await self._get_image_caption(
-                        comp.url, file_name, defer_caption
+                        comp.url or "", file_name, defer_caption, custom_desc=custom_desc
                     )
                 if hash_val and media_caption:
                     msg_parts.append(f"[图片:{hash_val}]")
@@ -250,9 +273,13 @@ class MessageParser:
                         media_caption,
                     ) = await self.data_cache.get_caption_by_filename(file_name)
 
-                if not media_caption and comp.url and self.audio_caption_enabled:
+                if (
+                    not media_caption
+                    and (comp.url or (file_name and file_name.startswith("file://")))
+                    and self.audio_caption_enabled
+                ):
                     hash_val, media_caption = await self._get_audio_caption(
-                        comp.url, file_name, defer_caption
+                        comp.url or "", file_name, defer_caption
                     )
                 if hash_val and media_caption:
                     msg_parts.append(f"[语音:{hash_val}]")
@@ -271,12 +298,34 @@ class MessageParser:
             elif isinstance(comp, File):
                 # 暂不支持文件转述
                 msg_parts.append(f"[文件:{comp.name}]")
+            elif isinstance(comp, Node):
+                sub_content = ""
+                if comp.content:
+                    sub_content, sub_media = await self.chain_to_str(
+                        comp.content, defer_caption
+                    )
+                    media_id_list.extend(sub_media)
+                msg_parts.append(f"[{comp.name or 'bot'}]: {sub_content}")
+            elif isinstance(comp, Nodes):
+                sub_parts = []
+                if comp.nodes:
+                    for node in comp.nodes:
+                        sub_content = ""
+                        if node.content:
+                            sub_content, sub_media = await self.chain_to_str(
+                                node.content, defer_caption
+                            )
+                            media_id_list.extend(sub_media)
+                        sub_parts.append(f"[{node.name or 'bot'}]: {sub_content}")
+                msg_parts.append("\n".join(sub_parts))
         return " ".join(msg_parts), media_id_list
 
     async def _get_image_caption(
-        self, url: str, file_name: str | None = None, defer_caption: bool = False
+        self, url: str, file_name: str | None = None, defer_caption: bool = False, custom_desc: str | None = None
     ) -> tuple[str | None, MediaCaption | None]:
         """获取图片描述"""
+        if not url and file_name:
+            url = file_name
         async with self.url_locks[url]:
             if file_name and not is_temp_or_local_path(file_name):
                 # 检查缓存
@@ -311,11 +360,50 @@ class MessageParser:
                         return stable_hash, media_caption
 
             # 下载图片
-            image_bytes = await self.http_manager.download_media(url)
+            image_bytes = None
+            if file_name and file_name.startswith("file://"):
+                import urllib.parse
+                from pathlib import Path
+
+                clean_path = urllib.parse.unquote(file_name[7:])
+                local_path = Path(clean_path)
+                if local_path.is_file():
+                    try:
+                        image_bytes = local_path.read_bytes()
+                    except Exception as e:
+                        file_name_disp = (
+                            (file_name[:100] + "...")
+                            if file_name and len(file_name) > 100
+                            else file_name
+                        )
+                        logger.error(f"[Giftia] 读取本地图片失败 {file_name_disp}: {e}")
+            elif file_name and file_name.startswith("base64://"):
+                import base64 as b64_module
+
+                try:
+                    b64_data = file_name[9:]
+                    if "," in b64_data:
+                        b64_data = b64_data.split(",", 1)[1]
+                    image_bytes = b64_module.b64decode(b64_data)
+                except Exception as e:
+                    logger.error(f"[Giftia] 解码 base64 图片失败: {e}")
+
+            if not image_bytes:
+                image_bytes = await self.http_manager.download_media(url)
+
             if not image_bytes:
                 return None, None
             # 生成hash
             hash_val = stable_hash or xxh3_64_hexdigest(image_bytes)
+
+            # If the URL/file_name is a base64 string, replace it with a clean placeholder to avoid bloated DB columns
+            db_url = url
+            if db_url and db_url.startswith("base64://"):
+                db_url = f"base64://{hash_val}"
+
+            db_file_name = file_name
+            if db_file_name and db_file_name.startswith("base64://"):
+                db_file_name = f"base64://{hash_val}"
 
             # 保存到本地持久缓存目录，以便网页端可以永久预览
             try:
@@ -332,12 +420,26 @@ class MessageParser:
                 logger.error(f"[Giftia] 保存媒体缓存失败: {e}")
 
         async with self.hash_locks[hash_val]:
+            if custom_desc:
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    url=db_url,
+                    media_type="image",
+                    caption=custom_desc,
+                    genre="表情包",
+                    is_captioned=True,
+                )
+                if file_name:
+                    media_caption.file_name = db_file_name
+                await self.data_cache.set_caption(media_caption)
+                return hash_val, media_caption
+
             # 检查缓存
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
-                media_caption.url = url
+                media_caption.url = db_url
                 if file_name:
-                    media_caption.file_name = file_name
+                    media_caption.file_name = db_file_name
                 if getattr(media_caption, "is_captioned", True) or defer_caption:
                     await self.data_cache.set_caption(media_caption)
                     return hash_val, media_caption
@@ -346,24 +448,24 @@ class MessageParser:
             if defer_caption:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
-                    url=url,
+                    url=db_url,
                     media_type="image",
                     is_captioned=False,
                 )
                 if file_name:
-                    media_caption.file_name = file_name
+                    media_caption.file_name = db_file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
 
             if not self.image_caption_enabled:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
-                    url=url,
+                    url=db_url,
                     media_type="image",
                     is_captioned=True,
                 )
                 if file_name:
-                    media_caption.file_name = file_name
+                    media_caption.file_name = db_file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
 
@@ -374,39 +476,40 @@ class MessageParser:
             if not base64s:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
-                    url=url,
+                    url=db_url,
                     media_type="image",
                     is_captioned=True,
                 )
                 if file_name:
-                    media_caption.file_name = file_name
+                    media_caption.file_name = db_file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
             # Log key identifiers so we can detect if two different URLs produce the
             # same image content (which would indicate a stale-temp-file read).
+            url_disp = (url[:100] + "...") if url and len(url) > 100 else url
             logger.info(
                 f"[Giftia] 调用LLM转述图片: hash={hash_val} "
                 f"size={len(image_bytes)}B "
                 f"head={image_bytes[:8].hex()} "
-                f"url={url!r}"
+                f"url={url_disp!r}"
             )
             # 调用LLM生成图片描述
             media_caption = await self.call_llm.call_llm_image_caption(base64s)
             if not media_caption:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
-                    url=url,
+                    url=db_url,
                     media_type="image",
                     is_captioned=True,
                 )
                 if file_name:
-                    media_caption.file_name = file_name
+                    media_caption.file_name = db_file_name
                 await self.data_cache.set_caption(media_caption)
                 return hash_val, media_caption
             media_caption.hash_val = hash_val
-            media_caption.url = url
+            media_caption.url = db_url
             if file_name:
-                media_caption.file_name = file_name
+                media_caption.file_name = db_file_name
             media_caption.media_type = "image"
             media_caption.is_captioned = True
             # 缓存
@@ -417,6 +520,8 @@ class MessageParser:
         self, url: str, file_name: str | None = None, defer_caption: bool = False
     ) -> tuple[str | None, MediaCaption | None]:
         """获取语音描述"""
+        if not url and file_name:
+            url = file_name
         async with self.url_locks[url]:
             if file_name and not is_temp_or_local_path(file_name):
                 # 检查缓存
@@ -427,8 +532,29 @@ class MessageParser:
                     if getattr(media_caption, "is_captioned", True) or defer_caption:
                         return hash_val, media_caption
 
-            # 语音的hash_val用url生成
-            hash_val = xxh3_64_hexdigest(url.encode())
+            # 语音的hash_val用url生成，如果是本地文件，使用本地内容生成hash
+            audio_bytes = None
+            if file_name and file_name.startswith("file://"):
+                import urllib.parse
+                from pathlib import Path
+
+                clean_path = urllib.parse.unquote(file_name[7:])
+                local_path = Path(clean_path)
+                if local_path.is_file():
+                    try:
+                        audio_bytes = local_path.read_bytes()
+                    except Exception as e:
+                        file_name_disp = (
+                            (file_name[:100] + "...")
+                            if file_name and len(file_name) > 100
+                            else file_name
+                        )
+                        logger.error(f"[Giftia] 读取本地音频失败 {file_name_disp}: {e}")
+
+            if audio_bytes:
+                hash_val = xxh3_64_hexdigest(audio_bytes)
+            else:
+                hash_val = xxh3_64_hexdigest(url.encode())
 
             # 检查缓存
             media_caption = await self.data_cache.get_caption_by_hash(hash_val)
@@ -441,10 +567,15 @@ class MessageParser:
                     return hash_val, media_caption
 
             # 下载并保存语音文件，以便永久播放
-            audio_bytes = None
-            try:
-                audio_bytes = await self.http_manager.download_media(url)
-                if audio_bytes:
+            if not audio_bytes:
+                try:
+                    audio_bytes = await self.http_manager.download_media(url)
+                except Exception as e:
+                    url_disp = (url[:100] + "...") if url and len(url) > 100 else url
+                    logger.error(f"[Giftia] 下载音频失败 {url_disp}: {e}")
+
+            if audio_bytes:
+                try:
                     from astrbot.core.star.star_tools import StarTools
 
                     cache_dir = (
@@ -454,8 +585,8 @@ class MessageParser:
                     cache_file = cache_dir / hash_val
                     if not cache_file.exists():
                         cache_file.write_bytes(audio_bytes)
-            except Exception as e:
-                logger.error(f"[Giftia] 保存音频缓存失败: {e}")
+                except Exception as e:
+                    logger.error(f"[Giftia] 保存音频缓存失败: {e}")
 
             if defer_caption:
                 media_caption = MediaCaption(

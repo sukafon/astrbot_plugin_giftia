@@ -1,5 +1,4 @@
 import asyncio
-import copy
 import random
 from datetime import datetime
 
@@ -8,7 +7,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image
 
 from ..llm.prompt import build_reply_prompt
-from ..utils.schemas import MessageData, XmlLlmResult
+from ..utils.schemas import MessageData
 from .media_captioner import MediaCaptioner
 from .tool_executor import ToolExecutor
 
@@ -33,10 +32,13 @@ class ReplyPipeline:
         tool_results: list[dict[str, str]] | None = None,
         other_data: list[str] | None = None,
         times: int = 0,
+        sent_messages: list[str] | None = None,
     ):
         """
         集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
         """
+        if sent_messages is None:
+            sent_messages = []
         bot_conf = self.plugin.bot_map[bot_name]
         iso_string = datetime.now().isoformat()
         max_loop = self.plugin.tools_config.get("max_loop", 10)
@@ -104,7 +106,9 @@ class ReplyPipeline:
             )
 
         # 获取表情包池并抽取随机样本
-        bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(bot_name)
+        bot_sticker_cache = await self.plugin.emoji_manager.get_random_stickers(
+            bot_name
+        )
 
         # 3. 构造回复提示词 Prompt
         user_prompt = build_reply_prompt(
@@ -147,7 +151,9 @@ class ReplyPipeline:
             logger.error(f"{bot_name} 未配置回复模型ID")
             return
 
-        provider_selection_mode = llm_reply_conf.get("provider_selection_mode", "fallback")
+        provider_selection_mode = llm_reply_conf.get(
+            "provider_selection_mode", "fallback"
+        )
         if provider_selection_mode == "random":
             random.shuffle(provider_ids)
 
@@ -160,7 +166,9 @@ class ReplyPipeline:
             user_prompt=user_prompt,
             use_source_tools=self.plugin.tools_config.get("use_source_tools", False),
             force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
-            enabled_features=self.plugin.tools_config.get("enabled_interactive_features"),
+            enabled_features=self.plugin.tools_config.get(
+                "enabled_interactive_features"
+            ),
             image_urls=image_urls,
             audio_urls=audio_urls,
             timeout=self.plugin.tools_config.get("timeout", 120),
@@ -169,6 +177,28 @@ class ReplyPipeline:
         if not llm_result:
             logger.error(f"{bot_name} LLM回复失败")
             return
+
+        # Anti-drooling optimization for low-intelligence models:
+        # Filter out messages that have already been sent in the current XML tool calling loop.
+        if llm_result and llm_result.msg_chains:
+            filtered_chains = []
+            filtered_logs = []
+            filtered_texts = []
+            for i, chain in enumerate(llm_result.msg_chains):
+                log = llm_result.msg_logs[i] if i < len(llm_result.msg_logs) else ""
+                text = llm_result.msg_texts[i] if i < len(llm_result.msg_texts) else ""
+                normalized = log.strip()
+                if normalized:
+                    if normalized in sent_messages:
+                        logger.info(f"[Giftia] 防流口水：拦截到重复的会话消息: {normalized}")
+                        continue
+                    sent_messages.append(normalized)
+                filtered_chains.append(chain)
+                filtered_logs.append(log)
+                filtered_texts.append(text)
+            llm_result.msg_chains = filtered_chains
+            llm_result.msg_logs = filtered_logs
+            llm_result.msg_texts = filtered_texts
 
         # 5. 空回复拦截处理
         if not remind_message and times == 0 and not llm_result.msg_chains:
@@ -254,5 +284,6 @@ class ReplyPipeline:
                 image_urls=image_base64,
                 times=times + 1,
                 other_data=other_data,
+                sent_messages=sent_messages,
             ):
                 yield chunk

@@ -733,3 +733,33 @@ window.triggerAutoCleanImmediately = async function() {
     });
 };
 
+window.clearChatHistory = async function() {
+    const botName = document.getElementById("history-bot-name").value;
+    const groupOrUserId = document.getElementById("history-group-id").value;
+    if (!botName || !groupOrUserId) {
+        window.showToast("当前没有选中的会话");
+        return;
+    }
+
+    window.showConfirm("确认清空会话消息", `确定要清空 Bot [${botName}] 在会话 [${groupOrUserId}] 中的所有决策审计消息吗？此操作无法撤销。`, async () => {
+        try {
+            const res = await window.apiPost("/chat_history/delete", {
+                bot_name: botName,
+                group_or_user_id: groupOrUserId
+            });
+            if (res && res.status === "success") {
+                window.showToast("会话消息清空成功");
+                // Reset page to 1
+                window.GiftiaApp.resetPagination("history");
+                // Refresh filters and reload data
+                await window.GiftiaApp.initializeScopedView("history");
+            } else {
+                window.showToast(`清空失败: ${res.message || "未知错误"}`);
+            }
+        } catch (e) {
+            console.error("Failed to clear chat history:", e);
+            window.showToast("清空会话消息出错");
+        }
+    });
+};
+
