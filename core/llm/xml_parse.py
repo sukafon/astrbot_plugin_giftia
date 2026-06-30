@@ -13,6 +13,7 @@ from astrbot.core.message.components import BaseMessageComponent
 from ..database.data_cache import DataCache
 from ..utils.emoji_manager import EmojiManager
 from ..utils.schemas import Decision, XmlLlmResult
+from ..utils.anti_drool import clean_llm_completion
 
 
 class XmlParse:
@@ -496,9 +497,12 @@ class XmlParse:
         if not xml_raw:
             return ""
 
+        # 先进行防流口水清洗（标签修正、JSON修复、哈希表示清洗、重复标签去重等）
+        clean_raw = clean_llm_completion(xml_raw)
+
         # 移除首尾的 ```xml 等代码块标记
         clean_str = re.sub(
-            r"```[a-zA-Z]*\s*|\s*```", "", xml_raw, flags=re.IGNORECASE
+            r"```[a-zA-Z]*\s*|\s*```", "", clean_raw, flags=re.IGNORECASE
         ).strip()
 
         # 自动闭合未闭合的同级标签
