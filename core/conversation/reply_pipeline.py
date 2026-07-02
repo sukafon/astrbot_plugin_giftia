@@ -7,6 +7,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image
 
 from ..llm.prompt import build_reply_prompt
+from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MessageData
 from .media_captioner import MediaCaptioner
 from .tool_executor import ToolExecutor
@@ -37,6 +38,7 @@ class ReplyPipeline:
         """
         集成用户提示词构建、LLM调用、生成表情包与工具执行，支持递归的工具执行循环。
         """
+        is_first_turn = sent_messages is None
         if sent_messages is None:
             sent_messages = []
         bot_conf = self.plugin.bot_map[bot_name]
@@ -68,6 +70,11 @@ class ReplyPipeline:
         recent_messages = await self.plugin.data_cache.get_recent_message(
             bot_name, group_or_user_id, self.plugin.msg_number
         )
+        if is_first_turn:
+            self_id = str(event.get_self_id())
+            for msg in recent_messages:
+                if msg.user_id and str(msg.user_id) == self_id and msg.content:
+                    sent_messages.append(msg.content)
 
         caption_config = bot_conf.get("caption_config", {})
         media_captions = await self.media_captioner.transcribe_media_if_deferred(
@@ -180,25 +187,7 @@ class ReplyPipeline:
 
         # Anti-drooling optimization for low-intelligence models:
         # Filter out messages that have already been sent in the current XML tool calling loop.
-        if llm_result and llm_result.msg_chains:
-            filtered_chains = []
-            filtered_logs = []
-            filtered_texts = []
-            for i, chain in enumerate(llm_result.msg_chains):
-                log = llm_result.msg_logs[i] if i < len(llm_result.msg_logs) else ""
-                text = llm_result.msg_texts[i] if i < len(llm_result.msg_texts) else ""
-                normalized = log.strip()
-                if normalized:
-                    if normalized in sent_messages:
-                        logger.info(f"[Giftia] 防流口水：拦截到重复的会话消息: {normalized}")
-                        continue
-                    sent_messages.append(normalized)
-                filtered_chains.append(chain)
-                filtered_logs.append(log)
-                filtered_texts.append(text)
-            llm_result.msg_chains = filtered_chains
-            llm_result.msg_logs = filtered_logs
-            llm_result.msg_texts = filtered_texts
+        filter_duplicate_replies(llm_result, sent_messages)
 
         # 5. 空回复拦截处理
         if not remind_message and times == 0 and not llm_result.msg_chains:
