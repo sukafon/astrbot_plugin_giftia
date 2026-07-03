@@ -657,13 +657,6 @@ class PassiveMemoryManager:
             resolved_user_id = context["nickname_to_user_id"].get(
                 target_user, target_user
             )
-            if not resolved_user_id or not profile_content or profile_content == "无":
-                continue
-
-            profile_fields = self._parse_user_profile_fields(profile_content)
-            legacy_profile = None
-            if not profile_fields:
-                legacy_profile = profile_content
 
             relation = None
             for relation_key in ("relation", "score", "favorability", "affinity"):
@@ -677,6 +670,19 @@ class PassiveMemoryManager:
             title = attrs.get("title")
             if title is not None:
                 title = title.strip()
+
+            has_profile_content = bool(profile_content and profile_content != "无")
+            if not resolved_user_id or (
+                not has_profile_content and relation is None and title is None
+            ):
+                continue
+
+            profile_fields = {}
+            legacy_profile = None
+            if has_profile_content:
+                profile_fields = self._parse_user_profile_fields(profile_content)
+                if not profile_fields:
+                    legacy_profile = profile_content
 
             await self.plugin.data_cache.set_user_profile(
                 bot_name=bot_name,
