@@ -133,9 +133,7 @@ class ChatManager:
             await task
 
             # 被动记忆后台触发检查
-            if self.plugin.passive_memory_enabled and self.plugin.embedding_conf.get(
-                "enabled", False
-            ):
+            if self.plugin.passive_memory_enabled:
                 bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id)
                 group_or_user_id = event.get_group_id() or event.get_sender_id()
                 if bot_name:

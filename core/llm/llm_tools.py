@@ -7,10 +7,12 @@ from astrbot.api.star import Context, StarTools
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
+from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
+
 if TYPE_CHECKING:
     from ...main import Giftia
 
-TOOLS_NAMESPACE = ["search_chat_history", "get_message_context"]
+TOOLS_NAMESPACE = ["search_chat_history", "get_message_context", "search_user_profile"]
 
 
 @dataclass
@@ -146,6 +148,89 @@ class GetMessageContextTool(FunctionTool):
             prefix = "=> " if str(m.message_id) == str(message_id) else "   "
             lines.append(f"{prefix}[{m.time}] {m.nickname}({m.user_id}): {m.content}")
         return f"消息 {message_id} 的上下文:\n" + "\n".join(lines)
+
+
+@dataclass
+class SearchUserProfileTool(FunctionTool):
+    plugin: Any = None
+    name: str = "search_user_profile"
+    description: str = "在当前会话内模糊搜索成员画像。可用 user_id、昵称、你的称呼、其他外号等关键词定位成员。"
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，可填写用户ID、昵称、你的称呼、其他外号或画像关键词。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回数量，默认5，最大20。",
+                },
+            },
+            "required": ["query"],
+        }
+    )
+
+    def _format_profile_result(self, item: dict) -> str:
+        header = f"用户 {item.get('user_id', '')}"
+        nickname = normalize_profile_value(item.get("nickname"))
+        if nickname:
+            header += f" ({nickname})"
+
+        lines = [header]
+        relation = item.get("relation")
+        if relation not in (None, "", 0):
+            lines.append(f"- 好感度：{relation}")
+        title = normalize_profile_value(item.get("title"))
+        if title:
+            lines.append(f"- 关系头衔：{title}")
+
+        for field, label in USER_PROFILE_FIELDS:
+            value = normalize_profile_value(item.get(field))
+            if value:
+                lines.append(f"- {label}：{value}")
+
+        legacy_profile = normalize_profile_text(item.get("profile"))
+        if legacy_profile:
+            lines.append("- 旧画像参考：")
+            lines.extend(f"  {line}" for line in legacy_profile.splitlines())
+
+        return "\n".join(lines)
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        query: str,
+        limit: int = 5,
+    ):
+        if self.plugin is None:
+            logger.warning("SearchUserProfileTool 未绑定插件实例")
+            return "检索失败：未找到插件实例"
+        plugin: Giftia = self.plugin
+        event: AstrMessageEvent = context.context.event
+        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            logger.warning("SearchUserProfileTool 未找到对应的 bot_name")
+            return "检索失败：未找到对应的 bot_name"
+
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        try:
+            clean_limit = min(max(1, int(limit or 5)), 20)
+        except (TypeError, ValueError):
+            clean_limit = 5
+        results = await plugin.db.search_user_profiles(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            query=query,
+            limit=clean_limit,
+        )
+        if not results:
+            return f"未在当前会话找到与「{query}」相关的成员画像"
+
+        return "查询到的成员画像:\n" + "\n\n".join(
+            self._format_profile_result(item) for item in results
+        )
 
 
 def remove_tools(context: Context):

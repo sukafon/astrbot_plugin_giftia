@@ -15,6 +15,7 @@ from .core.llm.call_llm import CallLLM
 from .core.llm.llm_tools import (
     GetMessageContextTool,
     SearchChatHistoryTool,
+    SearchUserProfileTool,
     remove_tools,
 )
 from .core.llm.xml_parse import XmlParse
@@ -122,6 +123,9 @@ class Giftia(Star):
         self.passive_memory_summary_prompt = memory_config.get(
             "passive_memory_summary_prompt", ""
         )
+        self.passive_profile_summary_prompt = memory_config.get(
+            "passive_profile_summary_prompt", ""
+        )
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
@@ -212,6 +216,9 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("get_message_context_enabled", True):
             self.context.add_llm_tools(GetMessageContextTool(plugin=self))
             logger.info("已注册函数调用工具: get_message_context")
+        if self.conf.get("tools_config", {}).get("search_user_profile_enabled", True):
+            self.context.add_llm_tools(SearchUserProfileTool(plugin=self))
+            logger.info("已注册函数调用工具: search_user_profile")
         # 注册 Web UI 及 API 路由
         self.webui_manager = WebUIManager(self)
         self.webui_manager.register_routes()

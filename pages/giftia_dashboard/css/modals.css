@@ -23,6 +23,9 @@
 .modal-card {
     width: 90%;
     max-width: 500px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
     padding: 24px;
     transform: scale(0.9);
     transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -57,10 +60,14 @@
 }
 
 .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
     margin-bottom: 24px;
+    padding-right: 4px;
 }
 
 .form-group {
@@ -389,6 +396,32 @@ html[data-theme="dark"] .edit-media-tab-header {
     background-color: transparent;
     border-bottom-color: var(--primary);
     color: var(--primary);
+}
+
+/* Edit User Profile Modal Custom Width */
+.edit-user-profile-modal-card {
+    max-width: 800px;
+}
+
+/* Mobile Responsiveness Overrides for Modals */
+@media (max-width: 768px) {
+    .modal-card {
+        width: 95% !important;
+        max-width: 100% !important;
+        padding: 16px !important;
+        margin: 10px !important;
+        max-height: 92vh !important;
+    }
+    
+    .form-row {
+        flex-direction: column !important;
+        gap: 12px !important;
+        margin-bottom: 12px !important;
+    }
+    
+    .form-row .form-group {
+        width: 100% !important;
+    }
 }
 
 

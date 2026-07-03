@@ -88,7 +88,7 @@ class ReplyPipeline:
             bot_name=bot_name,
             group_id=group_or_user_id,
         )
-        user_profile = await self.plugin.data_cache.get_user_profile(
+        user_profile = await self.plugin.data_cache.get_user_profile_record(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             user_id=event.get_sender_id(),
@@ -101,6 +101,14 @@ class ReplyPipeline:
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
             user_id=event.get_sender_id(),
+        )
+        active_user_briefs = await self.plugin.data_cache.build_active_user_briefs(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            recent_messages=recent_messages,
+            current_user_id=event.get_sender_id(),
+            self_id=event.get_self_id(),
+            limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
         )
 
         # 读取长期记忆
@@ -136,6 +144,7 @@ class ReplyPipeline:
             relevant_memories=relevant_memories,
             user_profile=user_profile,
             group_profile=group_profile,
+            active_user_briefs=active_user_briefs,
             other_data=other_data,
             user_relation=user_relation,
             bot_sticker=bot_sticker_cache,

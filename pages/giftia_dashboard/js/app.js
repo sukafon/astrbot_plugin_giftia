@@ -788,6 +788,28 @@ window.GiftiaApp = {
 
         container.innerHTML = items.map(item => {
             const encodedProfile = encodeURIComponent(item.profile || "");
+            const structured = {
+                call_name: item.call_name || "",
+                aliases: item.aliases || "",
+                personality: item.personality || "",
+                interests: item.interests || "",
+                attitude: item.attitude || "",
+                agreements: item.agreements || "",
+                extra: item.extra || ""
+            };
+            const encodedStructured = encodeURIComponent(JSON.stringify(structured));
+            const structuredRows = [
+                ["你的称呼", item.call_name],
+                ["其他外号", item.aliases],
+                ["性格风格", item.personality],
+                ["兴趣话题", item.interests],
+                ["互动态度", item.attitude],
+                ["关键约定", item.agreements],
+                ["其他补充", item.extra]
+            ].filter(([, value]) => value && String(value).trim());
+            const profileHtml = structuredRows.length > 0
+                ? structuredRows.map(([label, value]) => `<div><strong>${label}：</strong>${window.escapeHtml(value)}</div>`).join("")
+                : `<div style="color: var(--font-secondary);">旧画像参考</div><div>${window.escapeHtml(item.profile || "")}</div>`;
             
             let relationBadge = "";
             const rel = parseInt(item.relation) || 0;
@@ -807,11 +829,11 @@ window.GiftiaApp = {
                     <td data-label="好感度">${relationBadge}</td>
                     <td data-label="关系头衔">${titleHtml}</td>
                     <td data-label="画像总结内容 (Profile)">
-                        <div style="max-width: 500px; word-break: break-all; white-space: pre-wrap;">${window.escapeHtml(item.profile || "")}</div>
+                        <div style="max-width: 500px; word-break: break-all; white-space: pre-wrap;">${profileHtml}</div>
                     </td>
                     <td data-label="更新时间">${window.formatDate(item.updated_at || item.created_at)}</td>
                     <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
                     </td>
                 </tr>
