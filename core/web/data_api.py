@@ -7,7 +7,6 @@ from astrbot.api.web import error_response, json_response, request
 
 USER_PROFILE_FIELD_KEYS = (
     "call_name",
-    "aliases",
     "personality",
     "interests",
     "attitude",
@@ -21,6 +20,12 @@ class DataApi:
 
     def __init__(self, giftia):
         self.giftia = giftia
+
+    def _invalidate_user_profile_record_cache(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> None:
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
 
     async def get_chat_history(self):
         """Get chat logs with pagination and filters."""
@@ -760,7 +765,7 @@ class DataApi:
             # Query data
             data_sql = f"""
                 SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id,
-                       up.profile, up.call_name, up.aliases, up.personality,
+                       up.profile, up.call_name, up.personality,
                        up.interests, up.attitude, up.agreements, up.extra,
                        up.created_at, up.updated_at,
                        COALESCE(up.relation, r.relation) AS relation,
@@ -974,6 +979,141 @@ class DataApi:
         except Exception as e:
             logger.error(f"[Giftia API] delete_user_profile error: {e}")
             return error_response(f"删除用户画像失败: {str(e)}")
+
+    async def get_user_aliases(self):
+        """Get all aliases for a user profile."""
+        try:
+            bot_name = request.query.get("bot_name")
+            group_or_user_id = request.query.get("group_or_user_id")
+            user_id = request.query.get("user_id")
+            limit_raw = request.query.get("limit")
+
+            if not bot_name or not group_or_user_id or not user_id:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+
+            limit = int(limit_raw) if limit_raw else None
+            aliases = await self.giftia.db.get_user_aliases(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                limit=limit,
+            )
+            return json_response(
+                {
+                    "status": "success",
+                    "data": {
+                        "items": aliases,
+                    },
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] get_user_aliases error: {e}")
+            return error_response(f"获取用户外号失败: {str(e)}")
+
+    async def add_user_alias(self):
+        """Add one or more aliases for a user without increasing existing counts."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            user_id = body.get("user_id")
+            alias = str(body.get("alias") or "").strip()
+
+            if not bot_name or not group_or_user_id or not user_id:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+            if not alias:
+                return error_response("外号不能为空")
+
+            await self.giftia.db.upsert_user_aliases(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                aliases=alias,
+                increment_count=False,
+            )
+            self._invalidate_user_profile_record_cache(
+                bot_name, group_or_user_id, user_id
+            )
+            return json_response({"status": "success", "message": "新增外号成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] add_user_alias error: {e}")
+            return error_response(f"新增用户外号失败: {str(e)}")
+
+    async def update_user_alias_count(self):
+        """Update alias count for a user."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            user_id = body.get("user_id")
+            alias = str(body.get("alias") or "").strip()
+            alias_count = body.get("alias_count")
+
+            if not bot_name or not group_or_user_id or not user_id:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+            if not alias:
+                return error_response("外号不能为空")
+            try:
+                parsed_count = int(alias_count)
+            except (TypeError, ValueError):
+                return error_response("统计次数必须是正整数")
+            if parsed_count < 1:
+                return error_response("统计次数必须大于 0")
+
+            updated = await self.giftia.db.set_user_alias_count(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                alias=alias,
+                alias_count=parsed_count,
+            )
+            if not updated:
+                return error_response("外号不存在")
+            self._invalidate_user_profile_record_cache(
+                bot_name, group_or_user_id, user_id
+            )
+            return json_response({"status": "success", "message": "更新外号次数成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] update_user_alias_count error: {e}")
+            return error_response(f"更新用户外号次数失败: {str(e)}")
+
+    async def delete_user_alias(self):
+        """Delete one alias for a user."""
+        try:
+            body = await request.json()
+            bot_name = body.get("bot_name")
+            group_or_user_id = body.get("group_or_user_id")
+            user_id = body.get("user_id")
+            alias = str(body.get("alias") or "").strip()
+
+            if not bot_name or not group_or_user_id or not user_id:
+                return error_response(
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
+                )
+            if not alias:
+                return error_response("外号不能为空")
+
+            deleted = await self.giftia.db.delete_user_alias(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                alias=alias,
+            )
+            if not deleted:
+                return error_response("外号不存在")
+            self._invalidate_user_profile_record_cache(
+                bot_name, group_or_user_id, user_id
+            )
+            return json_response({"status": "success", "message": "删除外号成功"})
+        except Exception as e:
+            logger.error(f"[Giftia API] delete_user_alias error: {e}")
+            return error_response(f"删除用户外号失败: {str(e)}")
 
     # ── Group Profile APIs ──────────────────────────────────────────────
 

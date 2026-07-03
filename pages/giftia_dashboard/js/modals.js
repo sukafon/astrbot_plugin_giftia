@@ -628,7 +628,6 @@ window.openEditUserProfileModal = function(bot, group, user, profileEncoded, rel
     document.getElementById("edit-user-prof-relation").value = relation !== undefined ? relation : 0;
     document.getElementById("edit-user-prof-title").value = title;
     document.getElementById("edit-user-prof-call-name").value = structured.call_name || "";
-    document.getElementById("edit-user-prof-aliases").value = structured.aliases || "";
     document.getElementById("edit-user-prof-personality").value = structured.personality || "";
     document.getElementById("edit-user-prof-interests").value = structured.interests || "";
     document.getElementById("edit-user-prof-attitude").value = structured.attitude || "";
@@ -646,7 +645,6 @@ window.submitEditUserProfile = async function() {
     const title = document.getElementById("edit-user-prof-title").value.trim();
     const profile = document.getElementById("edit-user-prof-text").value.trim();
     const callName = document.getElementById("edit-user-prof-call-name").value.trim();
-    const aliases = document.getElementById("edit-user-prof-aliases").value.trim();
     const personality = document.getElementById("edit-user-prof-personality").value.trim();
     const interests = document.getElementById("edit-user-prof-interests").value.trim();
     const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
@@ -664,7 +662,6 @@ window.submitEditUserProfile = async function() {
             relation: relation,
             title: title,
             call_name: callName,
-            aliases: aliases,
             personality: personality,
             interests: interests,
             attitude: attitude,
@@ -681,6 +678,134 @@ window.submitEditUserProfile = async function() {
     } catch (e) {
         window.showToast(`发生错误: ${e.message}`);
     }
+};
+
+function getUserAliasScope() {
+    return {
+        bot_name: document.getElementById("user-alias-bot").value,
+        group_or_user_id: document.getElementById("user-alias-group").value,
+        user_id: document.getElementById("user-alias-user").value
+    };
+}
+
+window.openUserAliasesModal = async function(bot, group, user) {
+    document.getElementById("user-alias-bot").value = bot;
+    document.getElementById("user-alias-group").value = group;
+    document.getElementById("user-alias-user").value = user;
+    document.getElementById("user-alias-user-display").value = user;
+    document.getElementById("user-alias-new").value = "";
+    window.openModal("user-aliases-modal");
+    await window.loadUserAliases();
+};
+
+window.loadUserAliases = async function() {
+    const scope = getUserAliasScope();
+    const list = document.getElementById("user-alias-list");
+    list.innerHTML = `<tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+    try {
+        const res = await window.apiGet("/profiles/user/aliases", scope);
+        if (res.status !== "success") {
+            throw new Error(res.message || "请求失败");
+        }
+        const items = (res.data && res.data.items) || [];
+        if (items.length === 0) {
+            list.innerHTML = `<tr><td colspan="5" class="no-data-row">暂无外号记录</td></tr>`;
+            return;
+        }
+        list.innerHTML = items.map(item => {
+            const alias = item.alias || "";
+            const encodedAlias = encodeURIComponent(alias);
+            const aliasCount = Math.max(1, parseInt(item.alias_count) || 1);
+            return `
+                <tr>
+                    <td data-label="外号">${window.escapeHtml(alias)}</td>
+                    <td data-label="次数">
+                        <input type="number" class="alias-count-input" min="1" step="1" value="${aliasCount}">
+                    </td>
+                    <td data-label="首次出现">${window.formatDate(item.first_seen_at)}</td>
+                    <td data-label="最近出现">${window.formatDate(item.last_seen_at)}</td>
+                    <td data-label="操作" class="text-right">
+                        <button class="btn btn-secondary btn-small" onclick="window.saveUserAliasCount('${encodedAlias}', this)">保存次数</button>
+                        <button class="btn btn-danger btn-small" onclick="window.deleteUserAlias('${encodedAlias}')">删除</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    } catch (e) {
+        list.innerHTML = `<tr><td colspan="5" class="no-data-row">加载数据失败: ${window.escapeHtml(e.message)}</td></tr>`;
+    }
+};
+
+window.submitAddUserAlias = async function() {
+    const aliasInput = document.getElementById("user-alias-new");
+    const alias = aliasInput.value.trim();
+    if (!alias) {
+        window.showToast("外号不能为空");
+        return;
+    }
+    try {
+        const res = await window.apiPost("/profiles/user/aliases/add", {
+            ...getUserAliasScope(),
+            alias: alias
+        });
+        if (res.status === "success") {
+            aliasInput.value = "";
+            window.showToast("外号已新增");
+            await window.loadUserAliases();
+            window.GiftiaApp.loadUserProfiles();
+        } else {
+            window.showToast(`新增失败: ${res.message}`);
+        }
+    } catch (e) {
+        window.showToast(`发生错误: ${e.message}`);
+    }
+};
+
+window.saveUserAliasCount = async function(aliasEncoded, button) {
+    const alias = decodeURIComponent(aliasEncoded || "");
+    const input = button.closest("tr").querySelector(".alias-count-input");
+    const aliasCount = Number(input.value);
+    if (!Number.isInteger(aliasCount) || aliasCount < 1) {
+        window.showToast("统计次数必须是正整数");
+        return;
+    }
+    try {
+        const res = await window.apiPost("/profiles/user/aliases/count", {
+            ...getUserAliasScope(),
+            alias: alias,
+            alias_count: aliasCount
+        });
+        if (res.status === "success") {
+            window.showToast("统计次数已保存");
+            await window.loadUserAliases();
+            window.GiftiaApp.loadUserProfiles();
+        } else {
+            window.showToast(`保存失败: ${res.message}`);
+        }
+    } catch (e) {
+        window.showToast(`发生错误: ${e.message}`);
+    }
+};
+
+window.deleteUserAlias = function(aliasEncoded) {
+    const alias = decodeURIComponent(aliasEncoded || "");
+    window.showConfirm("确认删除外号", `确定要删除外号「${alias}」吗？`, async () => {
+        try {
+            const res = await window.apiPost("/profiles/user/aliases/delete", {
+                ...getUserAliasScope(),
+                alias: alias
+            });
+            if (res.status === "success") {
+                window.showToast("外号已删除");
+                await window.loadUserAliases();
+                window.GiftiaApp.loadUserProfiles();
+            } else {
+                window.showToast(`删除失败: ${res.message}`);
+            }
+        } catch (e) {
+            window.showToast(`发生错误: ${e.message}`);
+        }
+    });
 };
 
 window.deleteUserProfile = function(bot, group, user) {

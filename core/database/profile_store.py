@@ -23,19 +23,23 @@ class ProfileStoreMixin:
         bot_name: str,
         group_or_user_id: str,
         user_id: str,
-        limit: int = 6,
+        limit: int | None = 6,
     ) -> list[dict]:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
-        limit = max(1, int(limit or 6))
+        params: list = [bot_name, group_or_user_id, user_id]
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            params.append(max(1, int(limit or 6)))
         async with self.conn.execute(
-            """
+            f"""
             SELECT alias, alias_count, first_seen_at, last_seen_at
             FROM user_aliases
             WHERE bot_name = ? AND group_or_user_id = ? AND user_id = ?
             ORDER BY alias_count DESC, first_seen_at ASC, id ASC
-            LIMIT ?
+            {limit_clause}
             """,
-            (bot_name, group_or_user_id, user_id, limit),
+            params,
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -182,6 +186,57 @@ class ProfileStoreMixin:
         )
         await self.conn.commit()
 
+    async def delete_user_alias(
+        self, bot_name: str, group_or_user_id: str, user_id: str, alias: str
+    ) -> bool:
+        clean_alias = str(alias or "").strip()
+        if not clean_alias:
+            return False
+        cursor = await self.conn.execute(
+            """
+            DELETE FROM user_aliases
+            WHERE bot_name = ? AND group_or_user_id = ? AND user_id = ? AND alias = ?
+            """,
+            (bot_name, group_or_user_id, user_id, clean_alias),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def set_user_alias_count(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        alias: str,
+        alias_count: int,
+    ) -> bool:
+        clean_alias = str(alias or "").strip()
+        try:
+            clean_count = int(alias_count)
+        except (TypeError, ValueError):
+            return False
+        if not clean_alias or clean_count < 1:
+            return False
+
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor = await self.conn.execute(
+            """
+            UPDATE user_aliases
+            SET alias_count = ?, updated_at = ?
+            WHERE bot_name = ? AND group_or_user_id = ? AND user_id = ? AND alias = ?
+            """,
+            (
+                clean_count,
+                update_time,
+                bot_name,
+                group_or_user_id,
+                user_id,
+                clean_alias,
+            ),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
     async def get_user_profile_record(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict | None:
@@ -243,7 +298,6 @@ class ProfileStoreMixin:
                 up.bot_name,
                 up.profile,
                 up.call_name,
-                up.aliases,
                 up.personality,
                 up.interests,
                 up.attitude,
@@ -271,7 +325,6 @@ class ProfileStoreMixin:
               AND (
                 up.user_id LIKE ?
                 OR up.call_name LIKE ?
-                OR up.aliases LIKE ?
                 OR EXISTS (
                     SELECT 1
                     FROM user_aliases ua
@@ -308,7 +361,6 @@ class ProfileStoreMixin:
                           AND ua.user_id = up.user_id
                           AND ua.alias = ?
                     ) THEN 2
-                    WHEN up.aliases = ? THEN 3
                     ELSE 4
                 END,
                 up.updated_at DESC
@@ -328,8 +380,6 @@ class ProfileStoreMixin:
                 like,
                 like,
                 like,
-                like,
-                query,
                 query,
                 query,
                 query,
@@ -640,4 +690,3 @@ class ProfileStoreMixin:
             (group_or_user_id, bot_name),
         )
         await self.conn.commit()
-
