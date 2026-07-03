@@ -74,6 +74,14 @@ def build_xml_instructions(enabled_features: list[str] | None) -> str:
             '  * **查询任务**: `<all_task group_id="群号，留空默认当前群聊"/>`。列出当前已注册的定时任务。'
         )
 
+    if is_enabled("task_board"):
+        interactive_lines.append(
+            "- **短期任务看板**:\n"
+            '  * **创建任务**: `<task_board action="create">一句自然语言任务</task_board>`。用于记录短期待办，例如“下次看到 123456 时提醒他交作业”。任务数量达到会话上限时系统会拒绝创建。\n'
+            '  * **完成任务**: `<task_board action="complete" task_id="任务ID">完成原因</task_board>`。当你已经按任务要求完成提醒、确认或处理后使用。\n'
+            '  * **取消任务**: `<task_board action="cancel" task_id="任务ID">取消原因</task_board>`。当用户明确要求取消，或任务已经不再需要时使用。'
+        )
+
     if is_enabled("memory_query_delete"):
         interactive_lines.append(
             "- **记忆检索与删除**:\n"

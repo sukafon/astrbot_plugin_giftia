@@ -26,6 +26,7 @@ from .core.utils.emoji_manager import EmojiManager
 from .core.utils.http_manager import HttpManager
 from .core.utils.message_parse import MessageParser
 from .core.utils.scheduler import Scheduler
+from .core.utils.task_board import TaskBoardManager
 from .core.utils.tools_func import ToolsFunc
 from .core.web.webui_manager import WebUIManager
 
@@ -202,6 +203,7 @@ class Giftia(Star):
         )
 
         # 实例化逻辑管理器
+        self.task_board = TaskBoardManager(self)
         self.passive_memory_manager = PassiveMemoryManager(self)
         self.cmd_handler = CommandHandler(self)
         self.chat_manager = ChatManager(self)

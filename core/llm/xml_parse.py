@@ -376,6 +376,32 @@ class XmlParse:
                     group_id = self._attr_str(child, "group_id", group_or_user_id)
                     result.all_tasks.append(group_id)
 
+                elif tag_name in ("task_board", "short_task"):
+                    action = self._attr_str(child, "action", "").lower().strip()
+                    task_id = self._attr_str(child, "task_id", "")
+                    expires_at = self._attr_str(child, "expires_at", "")
+                    text = child.get_text(strip=True)
+                    if action == "create" and text:
+                        result.task_board_actions.append(
+                            {
+                                "action": "create",
+                                "content": text,
+                                "expires_at": expires_at,
+                            }
+                        )
+                    elif action in ("complete", "cancel") and task_id:
+                        result.task_board_actions.append(
+                            {
+                                "action": action,
+                                "task_id": task_id,
+                                "reason": text,
+                            }
+                        )
+                    else:
+                        logger.error(
+                            f"Task board数据不完整: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
                 elif tag_name == "add_sticker":
                     media_id = self._attr_str(child, "media_id", "")
                     if media_id:
@@ -449,6 +475,8 @@ class XmlParse:
             "schedule_task",
             "delete_task",
             "all_task",
+            "task_board",
+            "short_task",
             "add_sticker",
             "decision",
             "caption",

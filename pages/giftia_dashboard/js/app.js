@@ -403,6 +403,24 @@ window.GiftiaApp = {
             const action = item.action || "无";
             const botArg = encodeStatusArg(item.bot_name);
             const groupArg = encodeStatusArg(item.group_or_user_id);
+            const taskBoard = item.task_board || null;
+            const taskStats = taskBoard?.stats || {};
+            const taskLimit = taskBoard?.limit || 0;
+            const showTaskBoard = taskBoard?.enabled && (taskLimit > 0 || (taskStats.total || 0) > 0);
+            const taskBoardHtml = showTaskBoard ? `
+                    <button class="status-task-board" onclick="window.openTaskBoardModal('${botArg}', '${groupArg}')" title="查看短期任务">
+                        <div class="status-task-header">
+                            <span class="status-task-title">短期任务</span>
+                            <span class="status-task-count">${taskStats.active || 0}/${taskLimit}</span>
+                        </div>
+                        <div class="status-task-stats">
+                            <span>活跃 ${taskStats.active || 0}</span>
+                            <span>完成 ${taskStats.completed || 0}</span>
+                            <span>取消 ${taskStats.canceled || 0}</span>
+                            <span>过期 ${taskStats.expired || 0}</span>
+                        </div>
+                    </button>
+            ` : "";
             
             return `
                 <div class="status-card card">
@@ -450,6 +468,8 @@ window.GiftiaApp = {
                         </div>
                         <div class="status-thought-content">${window.escapeHtml(memory)}</div>
                     </div>
+
+                    ${taskBoardHtml}
 
                     <div class="status-actions">
                         <button class="btn btn-secondary btn-small" onclick="window.openEditStatusModal('${botArg}', '${groupArg}', '${encodeStatusArg(mood)}', '${encodeStatusArg(state)}', '${encodeStatusArg(memory)}', '${encodeStatusArg(action)}')">调整状态</button>

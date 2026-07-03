@@ -110,6 +110,14 @@ class ReplyPipeline:
             self_id=event.get_self_id(),
             limit=self.plugin.tools_config.get("active_user_brief_limit", 10),
         )
+        short_tasks = []
+        short_task_limit = self.plugin.tools_config.get("task_board_max_active", 3)
+        if hasattr(self.plugin, "task_board"):
+            short_tasks = await self.plugin.task_board.get_active_tasks(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+            )
+            short_task_limit = self.plugin.task_board.max_active_tasks()
 
         # 读取长期记忆
         long_memories = []
@@ -145,6 +153,8 @@ class ReplyPipeline:
             user_profile=user_profile,
             group_profile=group_profile,
             active_user_briefs=active_user_briefs,
+            short_tasks=short_tasks,
+            short_task_limit=short_task_limit,
             other_data=other_data,
             user_relation=user_relation,
             bot_sticker=bot_sticker_cache,

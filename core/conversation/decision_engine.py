@@ -329,6 +329,16 @@ class DecisionEngine:
                         ),
                     )
                 )
+                short_tasks = []
+                short_task_limit = self.plugin.tools_config.get(
+                    "task_board_max_active", 3
+                )
+                if hasattr(self.plugin, "task_board"):
+                    short_tasks = await self.plugin.task_board.get_active_tasks(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                    )
+                    short_task_limit = self.plugin.task_board.max_active_tasks()
 
                 user_prompt = build_decision_prompt(
                     user_id=event.get_sender_id(),
@@ -344,6 +354,8 @@ class DecisionEngine:
                     user_profile=user_profile,
                     user_relation=user_relation,
                     active_user_briefs=active_user_briefs,
+                    short_tasks=short_tasks,
+                    short_task_limit=short_task_limit,
                 )
 
                 provider_ids = decision_conf.get("provider_ids")

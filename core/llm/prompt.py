@@ -1,7 +1,7 @@
 from datetime import datetime
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
-from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status
 
 # 构造消息的XML标签的属性，属性按顺序添加。MessageData对象的属性若不在这或者值为空，将不添加该属性
 MSG_PROPS = [
@@ -34,6 +34,8 @@ def build_decision_prompt(
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
     active_user_briefs: list[dict] | None = None,
+    short_tasks: list[ShortTask] | None = None,
+    short_task_limit: int = 3,
 ) -> str:
     user_prompt = []
     # 时间
@@ -62,6 +64,10 @@ def build_decision_prompt(
     active_user_briefs_block = build_active_user_briefs(active_user_briefs)
     if active_user_briefs_block:
         user_prompt.append(active_user_briefs_block)
+    # 短期任务看板
+    task_board_block = build_short_task_board(short_tasks, short_task_limit)
+    if task_board_block:
+        user_prompt.append(task_board_block)
     # 近期消息
     if recent_messages:
         recent_messages_str = "\n".join(
@@ -176,6 +182,8 @@ def build_reply_prompt(
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
     active_user_briefs: list[dict] | None = None,
+    short_tasks: list[ShortTask] | None = None,
+    short_task_limit: int = 3,
     other_data: list[str] | None = None,
     bot_sticker: str | None = None,
 ) -> str:
@@ -224,6 +232,10 @@ def build_reply_prompt(
     active_user_briefs_block = build_active_user_briefs(active_user_briefs)
     if active_user_briefs_block:
         user_prompt.append(active_user_briefs_block)
+    # 短期任务看板
+    task_board_block = build_short_task_board(short_tasks, short_task_limit)
+    if task_board_block:
+        user_prompt.append(task_board_block)
     # 长期记忆
     if long_memories:
         user_prompt.append(
@@ -457,6 +469,39 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
     if not user_blocks:
         return ""
     return "<active_user_briefs>\n" + "\n".join(user_blocks) + "\n</active_user_briefs>"
+
+
+def build_short_task_board(
+    short_tasks: list[ShortTask] | None, short_task_limit: int = 3
+) -> str:
+    if not short_tasks:
+        return ""
+
+    task_blocks = []
+    for task in short_tasks:
+        if not task or task.status != "active":
+            continue
+
+        props = f" id={quoteattr(str(task.task_id))}"
+        props += f" creator_user_id={quoteattr(str(task.creator_user_id))}"
+        if task.creator_nickname:
+            props += f" creator_nickname={quoteattr(str(task.creator_nickname))}"
+        if task.created_at:
+            props += f" created_at={quoteattr(str(task.created_at))}"
+        if task.expires_at:
+            props += f" expires_at={quoteattr(str(task.expires_at))}"
+
+        task_blocks.append(f"<task{props}>{escape(task.content)}</task>")
+
+    if not task_blocks:
+        return ""
+
+    return (
+        f"<task_board active_count={quoteattr(str(len(task_blocks)))} "
+        f"limit={quoteattr(str(short_task_limit))}>\n"
+        + "\n".join(task_blocks)
+        + "\n</task_board>"
+    )
 
 
 def format_time_to_hhmmss(db_value: str) -> str:

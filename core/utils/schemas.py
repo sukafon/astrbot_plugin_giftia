@@ -68,6 +68,22 @@ class Sticker:
 
 
 @dataclass(repr=False, slots=True)
+class ShortTask:
+    task_id: str
+    bot_name: str
+    group_or_user_id: str
+    creator_user_id: str
+    creator_nickname: str
+    content: str
+    status: str = "active"
+    closed_by_user_id: str = ""
+    close_reason: str = ""
+    expires_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(repr=False, slots=True)
 class BotSticker:
     timestamp: float  # 缓存时间戳
     sticker_list: list[str]  # 完整的sticker_id列表
@@ -117,3 +133,5 @@ class XmlLlmResult:
     search_histories: list[dict] = field(default_factory=list)
     # 消息上下文查询
     get_message_contexts: list[dict] = field(default_factory=list)
+    # 短期任务看板操作
+    task_board_actions: list[dict] = field(default_factory=list)

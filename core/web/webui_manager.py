@@ -124,6 +124,24 @@ class WebUIManager:
             desc="Update bot mood/state",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/task_board",
+            view_handler=self.web_api.get_task_board,
+            methods=["GET"],
+            desc="Get short task board",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/task_board/update",
+            view_handler=self.web_api.update_task_board,
+            methods=["POST"],
+            desc="Update short task",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/task_board/delete",
+            view_handler=self.web_api.delete_task_board,
+            methods=["POST"],
+            desc="Delete short task",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/chat_history",
             view_handler=self.web_api.get_chat_history,
             methods=["GET"],

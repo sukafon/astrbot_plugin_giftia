@@ -378,6 +378,18 @@
                 "default": 10,
                 "hint": "回复和决策提示词中最多注入多少个消息窗口内其他活跃用户的轻量画像摘要"
             },
+            "task_board_default_expire_hours": {
+                "description": "短期任务默认过期小时数",
+                "type": "int",
+                "default": 24,
+                "hint": "模型创建短期任务时若没有指定过期时间，任务会在创建后多少小时自动过期。默认 24 小时。"
+            },
+            "task_board_max_active": {
+                "description": "每会话活跃任务上限",
+                "type": "int",
+                "default": 3,
+                "hint": "同一个 Bot 在同一会话中最多保留多少条进行中的短期任务。达到上限后系统会拒绝继续创建。"
+            },
             "enabled_interactive_features": {
                 "description": "启用的内置交互功能",
                 "hint": "勾选表示启用对应的内置互动/功能 XML 标签，大模型将只能输出勾选的标签。",
@@ -389,6 +401,7 @@
                     "delete(撤回自身消息)",
                     "group_admin(群管禁言/踢人)",
                     "schedule_task(设置/查看/删除定时任务)",
+                    "task_board(短期任务看板)",
                     "leave(退群)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)"
@@ -400,6 +413,7 @@
                     "delete(撤回自身消息)",
                     "group_admin(群管禁言/踢人)",
                     "schedule_task(设置/查看/删除定时任务)",
+                    "task_board(短期任务看板)",
                     "sticker(表情包发送与收集)",
                     "memory_query_delete(记忆查询与删除)"
                 ]

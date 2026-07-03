@@ -351,6 +351,103 @@ html[data-theme="dark"] .status-thought-box {
     word-break: break-all;
 }
 
+.status-task-board {
+    width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background-color: var(--bg-secondary);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.status-task-board:hover {
+    border-color: var(--primary);
+    background-color: var(--primary-light);
+}
+
+.status-task-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.status-task-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--font-color);
+}
+
+.status-task-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background-color: var(--info-bg);
+    color: var(--info);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.status-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.status-task-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.status-task-content {
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--font-color);
+    word-break: break-word;
+}
+
+.status-task-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--font-secondary);
+}
+
+.status-task-empty {
+    font-size: 12px;
+    color: var(--font-secondary);
+}
+
+.status-task-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border-color);
+}
+
+.status-task-stats span {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background-color: rgba(107, 114, 128, 0.08);
+    color: var(--font-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
 .status-actions {
     display: flex;
     justify-content: flex-end;

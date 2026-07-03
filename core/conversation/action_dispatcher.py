@@ -3,6 +3,7 @@ import random
 import re
 import uuid
 from datetime import datetime
+from xml.sax.saxutils import quoteattr
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
@@ -16,6 +17,69 @@ from ..utils.schemas import MessageData, XmlLlmResult
 class ActionDispatcher:
     def __init__(self, plugin):
         self.plugin = plugin
+
+    async def _dispatch_task_board_actions(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        group_or_user_id: str,
+        llm_result: XmlLlmResult,
+    ) -> list[str]:
+        if not llm_result.task_board_actions:
+            return []
+
+        if not hasattr(self.plugin, "task_board"):
+            return [
+                "<task_board action='unknown' result='failed' reason='task board unavailable'/>"
+            ]
+
+        logs = []
+        actor_user_id = str(event.get_sender_id() or "")
+        actor_name = event.get_sender_name() or ""
+
+        for item in llm_result.task_board_actions:
+            action = str(item.get("action") or "").strip().lower()
+            if action == "create":
+                ok, message, task = await self.plugin.task_board.create_task(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    creator_user_id=actor_user_id,
+                    creator_nickname=actor_name,
+                    content=item.get("content") or "",
+                    expires_at=item.get("expires_at") or "",
+                )
+                task_id = task.task_id if task else ""
+                logs.append(
+                    f"<task_board action='create' task_id={quoteattr(task_id)} "
+                    f"result={quoteattr('success' if ok else 'failed')} "
+                    f"message={quoteattr(message)}/>"
+                )
+                continue
+
+            if action in {"complete", "cancel"}:
+                status = "completed" if action == "complete" else "canceled"
+                ok, message, task = await self.plugin.task_board.close_task(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    task_id=item.get("task_id") or "",
+                    status=status,
+                    actor_user_id=actor_user_id,
+                    reason=item.get("reason") or "",
+                )
+                task_id = task.task_id if task else str(item.get("task_id") or "")
+                logs.append(
+                    f"<task_board action={quoteattr(action)} task_id={quoteattr(task_id)} "
+                    f"result={quoteattr('success' if ok else 'failed')} "
+                    f"message={quoteattr(message)}/>"
+                )
+                continue
+
+            logs.append(
+                f"<task_board action={quoteattr(action)} result='failed' "
+                "message='不支持的任务操作'/>"
+            )
+
+        return logs
 
     async def dispatch_actions(
         self,
@@ -34,11 +98,18 @@ class ActionDispatcher:
             )
             return
 
+        task_board_logs = await self._dispatch_task_board_actions(
+            event=event,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            llm_result=llm_result,
+        )
+
         # 区分 aiocqhttp 平台与其它通用平台
         if event.get_platform_name() == "aiocqhttp" and isinstance(
             event, AiocqhttpMessageEvent
         ):
-            success_logs = []
+            success_logs = list(task_board_logs)
             iso_string = datetime.now().isoformat()
 
             # 1. 删除长期记忆
@@ -317,3 +388,20 @@ class ActionDispatcher:
                     )
                 except Exception as e:
                     logger.error(f"{bot_name} 通用平台发送消息失败: {e}")
+
+        if task_board_logs:
+            await self.plugin.data_cache.add_message(
+                bot_name,
+                group_or_user_id,
+                MessageData(
+                    nickname=nickname,
+                    user_id=event.get_self_id(),
+                    group_or_user_id=group_or_user_id,
+                    time=datetime.now().isoformat(),
+                    message_id="",
+                    content="\n".join(task_board_logs),
+                    is_recalled=False,
+                    media_id_list=[],
+                    role="operation_log",
+                ),
+            )
