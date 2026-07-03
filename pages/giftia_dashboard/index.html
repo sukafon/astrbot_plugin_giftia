@@ -443,7 +443,7 @@
 
     <!-- MODAL: Edit User Profile -->
     <div id="edit-user-profile-modal" class="modal-overlay">
-        <div class="modal-card card">
+        <div class="modal-card card edit-user-profile-modal-card">
             <div class="modal-header">
                 <h2>修改用户画像</h2>
                 <button class="modal-close-btn" onclick="closeModal('edit-user-profile-modal')">&times;</button>
@@ -462,9 +462,43 @@
                         <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
                     </div>
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>你的称呼</label>
+                        <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
+                    </div>
+                    <div class="form-group flex-2">
+                        <label>其他外号</label>
+                        <input type="text" id="edit-user-prof-aliases" placeholder="其他群友使用的称呼或外号">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>性格风格</label>
+                        <input type="text" id="edit-user-prof-personality" placeholder="性格特征与说话风格">
+                    </div>
+                    <div class="form-group">
+                        <label>兴趣话题</label>
+                        <input type="text" id="edit-user-prof-interests" placeholder="兴趣爱好与关注事物">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>互动态度</label>
+                        <input type="text" id="edit-user-prof-attitude" placeholder="该成员对机器人的态度">
+                    </div>
+                    <div class="form-group">
+                        <label>关键约定</label>
+                        <input type="text" id="edit-user-prof-agreements" placeholder="承诺、约定或共同回忆">
+                    </div>
+                </div>
                 <div class="form-group">
-                    <label>画像总结内容 <span class="required">*</span></label>
-                    <textarea id="edit-user-prof-text" rows="8" placeholder="输入用户性格特点、偏好、昵称关系等描述..."></textarea>
+                    <label>其他补充</label>
+                    <textarea id="edit-user-prof-extra" rows="3" placeholder="无法归类但长期有用的信息"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>旧画像参考</label>
+                    <textarea id="edit-user-prof-text" rows="6" placeholder="兼容旧版本的自由文本画像，可留空"></textarea>
                 </div>
             </div>
             <div class="modal-footer">

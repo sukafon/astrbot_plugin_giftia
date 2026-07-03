@@ -329,14 +329,29 @@ window.submitEditStatus = async function() {
 };
 
 // 8. Edit User Profile
-window.openEditUserProfileModal = function(bot, group, user, profileEncoded, relation, titleEncoded) {
-    const profile = decodeURIComponent(profileEncoded);
+window.openEditUserProfileModal = function(bot, group, user, profileEncoded, relation, titleEncoded, structuredEncoded) {
+    const profile = decodeURIComponent(profileEncoded || "");
     const title = decodeURIComponent(titleEncoded || "");
+    let structured = {};
+    if (structuredEncoded) {
+        try {
+            structured = JSON.parse(decodeURIComponent(structuredEncoded));
+        } catch (e) {
+            structured = {};
+        }
+    }
     document.getElementById("edit-user-prof-bot").value = bot;
     document.getElementById("edit-user-prof-group").value = group;
     document.getElementById("edit-user-prof-user").value = user;
     document.getElementById("edit-user-prof-relation").value = relation !== undefined ? relation : 0;
     document.getElementById("edit-user-prof-title").value = title;
+    document.getElementById("edit-user-prof-call-name").value = structured.call_name || "";
+    document.getElementById("edit-user-prof-aliases").value = structured.aliases || "";
+    document.getElementById("edit-user-prof-personality").value = structured.personality || "";
+    document.getElementById("edit-user-prof-interests").value = structured.interests || "";
+    document.getElementById("edit-user-prof-attitude").value = structured.attitude || "";
+    document.getElementById("edit-user-prof-agreements").value = structured.agreements || "";
+    document.getElementById("edit-user-prof-extra").value = structured.extra || "";
     document.getElementById("edit-user-prof-text").value = profile;
     window.openModal("edit-user-profile-modal");
 };
@@ -348,11 +363,13 @@ window.submitEditUserProfile = async function() {
     const relationVal = document.getElementById("edit-user-prof-relation").value;
     const title = document.getElementById("edit-user-prof-title").value.trim();
     const profile = document.getElementById("edit-user-prof-text").value.trim();
-
-    if (!profile) {
-        window.showToast("画像内容不能为空！");
-        return;
-    }
+    const callName = document.getElementById("edit-user-prof-call-name").value.trim();
+    const aliases = document.getElementById("edit-user-prof-aliases").value.trim();
+    const personality = document.getElementById("edit-user-prof-personality").value.trim();
+    const interests = document.getElementById("edit-user-prof-interests").value.trim();
+    const attitude = document.getElementById("edit-user-prof-attitude").value.trim();
+    const agreements = document.getElementById("edit-user-prof-agreements").value.trim();
+    const extra = document.getElementById("edit-user-prof-extra").value.trim();
 
     const relation = relationVal !== "" ? parseInt(relationVal) : 0;
 
@@ -363,7 +380,14 @@ window.submitEditUserProfile = async function() {
             user_id: user,
             profile: profile,
             relation: relation,
-            title: title
+            title: title,
+            call_name: callName,
+            aliases: aliases,
+            personality: personality,
+            interests: interests,
+            attitude: attitude,
+            agreements: agreements,
+            extra: extra
         });
         if (res.status === "success") {
             window.showToast("保存成功！");
@@ -762,4 +786,3 @@ window.clearChatHistory = async function() {
         }
     });
 };
-

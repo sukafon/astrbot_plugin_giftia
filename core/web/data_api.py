@@ -5,6 +5,17 @@ from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
 
+USER_PROFILE_FIELD_KEYS = (
+    "call_name",
+    "aliases",
+    "personality",
+    "interests",
+    "attitude",
+    "agreements",
+    "extra",
+)
+
+
 class DataApi:
     """Data management APIs: chat history, memories, bot status, profiles."""
 
@@ -590,8 +601,13 @@ class DataApi:
                 conditions.append("up.user_id = ?")
                 params.append(user_id)
             if search:
-                conditions.append("up.profile LIKE ?")
-                params.append(f"%{search}%")
+                like_fields = ["up.profile"] + [
+                    f"up.{field}" for field in USER_PROFILE_FIELD_KEYS
+                ]
+                conditions.append(
+                    "(" + " OR ".join(f"{field} LIKE ?" for field in like_fields) + ")"
+                )
+                params.extend([f"%{search}%"] * len(like_fields))
 
             where_clause = ""
             if conditions:
@@ -605,8 +621,12 @@ class DataApi:
 
             # Query data
             data_sql = f"""
-                SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id, up.profile, up.created_at, up.updated_at,
-                       r.relation, r.title
+                SELECT up.id, up.bot_name, up.group_or_user_id, up.user_id,
+                       up.profile, up.call_name, up.aliases, up.personality,
+                       up.interests, up.attitude, up.agreements, up.extra,
+                       up.created_at, up.updated_at,
+                       COALESCE(up.relation, r.relation) AS relation,
+                       CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
                 FROM user_profiles up
                 LEFT JOIN relations r ON up.bot_name = r.bot_name AND up.group_or_user_id = r.group_or_user_id AND up.user_id = r.user_id
                 {where_clause}
@@ -625,6 +645,13 @@ class DataApi:
                             "group_or_user_id": r["group_or_user_id"],
                             "user_id": r["user_id"],
                             "profile": r["profile"],
+                            "call_name": r["call_name"] or "",
+                            "aliases": r["aliases"] or "",
+                            "personality": r["personality"] or "",
+                            "interests": r["interests"] or "",
+                            "attitude": r["attitude"] or "",
+                            "agreements": r["agreements"] or "",
+                            "extra": r["extra"] or "",
                             "relation": r["relation"]
                             if r["relation"] is not None
                             else 0,
@@ -680,8 +707,13 @@ class DataApi:
                     conditions.append("user_id = ?")
                     params.append(user_id)
                 if search:
-                    conditions.append("profile LIKE ?")
-                    params.append(f"%{search}%")
+                    like_fields = ["profile"] + list(USER_PROFILE_FIELD_KEYS)
+                    conditions.append(
+                        "("
+                        + " OR ".join(f"{field} LIKE ?" for field in like_fields)
+                        + ")"
+                    )
+                    params.extend([f"%{search}%"] * len(like_fields))
 
                 where_clause = "WHERE " + " AND ".join(conditions)
                 async with self.giftia.db.conn.execute(
@@ -728,48 +760,31 @@ class DataApi:
             profile = body.get("profile")
             relation = body.get("relation")
             title = body.get("title")
+            profile_fields = {
+                field: body.get(field)
+                for field in USER_PROFILE_FIELD_KEYS
+                if field in body
+            }
 
-            if not bot_name or not group_or_user_id or not user_id or profile is None:
+            if not bot_name or not group_or_user_id or not user_id:
                 return error_response(
-                    "缺少必要参数 (bot_name, group_or_user_id, user_id, profile)"
+                    "缺少必要参数 (bot_name, group_or_user_id, user_id)"
                 )
 
-            await self.giftia.db.upsert_user_profile(
+            parsed_relation = (
+                int(relation) if relation is not None and relation != "" else None
+            )
+            parsed_title = str(title) if title is not None else None
+
+            await self.giftia.data_cache.set_user_profile(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
                 profile=profile,
+                relation=parsed_relation,
+                title=parsed_title,
+                profile_fields=profile_fields,
             )
-
-            if relation is not None or title is not None:
-                fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-                (
-                    current_relation,
-                    current_title,
-                ) = await self.giftia.data_cache.get_user_relation(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    user_id=user_id,
-                )
-                new_rel = int(relation) if relation is not None else current_relation
-                new_title = str(title) if title is not None else current_title
-
-                if relation is not None:
-                    await self.giftia.db.upsert_relation(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        user_id=user_id,
-                        relation=new_rel,
-                    )
-                if title is not None:
-                    await self.giftia.db.upsert_relation_title(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        user_id=user_id,
-                        title=new_title,
-                    )
-
-                self.giftia.data_cache.relations[fmt_key] = (new_rel, new_title)
 
             return json_response({"status": "success", "message": "更新用户画像成功"})
         except Exception as e:
@@ -794,6 +809,10 @@ class DataApi:
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
             )
+            fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+            self.giftia.data_cache.user_profiles.pop(fmt_key, None)
+            self.giftia.data_cache.user_profile_records.pop(fmt_key, None)
+            self.giftia.data_cache.relations.pop(fmt_key, None)
             return json_response({"status": "success", "message": "删除用户画像成功"})
         except Exception as e:
             logger.error(f"[Giftia API] delete_user_profile error: {e}")

@@ -50,6 +50,7 @@ class DataCache:
         self.filename_to_hash = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
         # 用户画像缓存
         self.user_profiles: dict[str, str] = {}
+        self.user_profile_records: dict[str, dict] = {}
         # 群画像缓存
         self.group_profiles: dict[str, str] = {}
         self.bot_status: dict[str, Status] = {}
@@ -288,18 +289,88 @@ class DataCache:
             return profile_data
         return None
 
+    async def get_user_profile_record(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> dict | None:
+        """获取用户画像完整记录"""
+        fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
+        record = self.user_profile_records.get(fmt_key)
+        if record:
+            return record
+
+        record = await self.db.get_user_profile_record(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+        )
+        if record:
+            self.user_profile_records[fmt_key] = record
+            profile = record.get("profile")
+            if profile:
+                self.user_profiles[fmt_key] = profile
+        return record
+
     async def set_user_profile(
-        self, bot_name: str, group_or_user_id: str, user_id: str, profile: str
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        profile: str | None = None,
+        relation: int | None = None,
+        title: str | None = None,
+        profile_fields: dict[str, str | None] | None = None,
+        clamp_relation: bool = False,
     ) -> None:
         """设置用户画像"""
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        self.user_profiles[fmt_key] = profile
+        profile_fields = profile_fields or {}
+        if profile is not None:
+            self.user_profiles[fmt_key] = profile
+        db_relation = relation
+        db_title = title
+        if relation is not None or title is not None:
+            current_relation, current_title = await self.get_user_relation(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+            )
+            if relation is not None:
+                if clamp_relation:
+                    # 限制单次好感度变动的绝对值不超过 5
+                    diff = relation - current_relation
+                    if abs(diff) > 5:
+                        db_relation = current_relation + (5 if diff > 0 else -5)
+                    else:
+                        db_relation = relation
+                else:
+                    db_relation = relation
+            else:
+                db_relation = current_relation
+            db_title = title if title is not None else current_title
+            self.relations[fmt_key] = (
+                db_relation,
+                db_title,
+            )
         await self.db.upsert_user_profile(
             user_id=user_id,
             group_or_user_id=group_or_user_id,
             bot_name=bot_name,
             profile=profile,
+            relation=db_relation,
+            title=db_title,
+            profile_fields=profile_fields,
         )
+        current_record = self.user_profile_records.get(fmt_key, {}).copy()
+        if profile is not None:
+            current_record["profile"] = profile
+        for key, value in profile_fields.items():
+            current_record[key] = value
+        if db_relation is not None:
+            current_record["relation"] = db_relation
+        if db_title is not None:
+            current_record["title"] = db_title
+        if current_record:
+            self.user_profile_records[fmt_key] = current_record
 
     async def get_group_profile(
         self, bot_name: str, group_or_user_id: str
@@ -335,12 +406,15 @@ class DataCache:
     ) -> None:
         """更新关系"""
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        current_relation = self.relations.get(fmt_key, (0, ""))[0]
-        new_relation = current_relation + relation
-        self.relations[fmt_key] = (
-            new_relation,
-            self.relations.get(fmt_key, (0, ""))[1],
+        current_relation, current_title = await self.get_user_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
         )
+        new_relation = current_relation + relation
+        self.relations[fmt_key] = (new_relation, current_title)
+        if fmt_key in self.user_profile_records:
+            self.user_profile_records[fmt_key]["relation"] = new_relation
         await self.db.upsert_relation(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -353,8 +427,14 @@ class DataCache:
     ) -> None:
         """设置关系头衔"""
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        current_relation = self.relations.get(fmt_key, (0, ""))[0]
+        current_relation, _ = await self.get_user_relation(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+        )
         self.relations[fmt_key] = (current_relation, title)
+        if fmt_key in self.user_profile_records:
+            self.user_profile_records[fmt_key]["title"] = title
         await self.db.upsert_relation_title(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
@@ -380,6 +460,68 @@ class DataCache:
             self.relations[fmt_key] = relation_data
             return relation_data
         return 0, ""
+
+    async def build_active_user_briefs(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        recent_messages: list[MessageData],
+        current_user_id: str = "",
+        self_id: str = "",
+        limit: int = 10,
+    ) -> list[dict]:
+        """构建消息窗口内其他活跃用户的轻量画像摘要"""
+        current_user_id = str(current_user_id) if current_user_id else ""
+        self_id = str(self_id) if self_id else ""
+
+        active_users = []
+        seen = set()
+        for msg in reversed(recent_messages or []):
+            uid = str(msg.user_id) if msg.user_id else ""
+            if not uid or uid == current_user_id or uid == self_id or uid in seen:
+                continue
+            seen.add(uid)
+            active_users.append((uid, msg.nickname or ""))
+            if len(active_users) >= limit:
+                break
+
+        briefs = []
+        for uid, nickname in active_users:
+            record = await self.get_user_profile_record(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=uid,
+            )
+            relation, title = await self.get_user_relation(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=uid,
+            )
+
+            brief = {
+                "user_id": uid,
+                "nickname": nickname,
+                "relation": relation,
+                "title": title,
+                "call_name": "",
+                "aliases": "",
+            }
+            if record:
+                brief["call_name"] = record.get("call_name") or ""
+                brief["aliases"] = record.get("aliases") or ""
+                if not title and record.get("title"):
+                    brief["title"] = record.get("title") or ""
+                if relation == 0 and record.get("relation") is not None:
+                    brief["relation"] = record.get("relation")
+
+            has_content = any(
+                brief.get(key)
+                for key in ("relation", "title", "call_name", "aliases")
+            )
+            if has_content:
+                briefs.append(brief)
+
+        return briefs
 
     async def get_memories(
         self, bot_name: str, group_or_user_id: str, limit: int = 20
@@ -469,6 +611,11 @@ class DataCache:
             keys_to_delete = [k for k in cache_dict.keys() if k.startswith(prefix)]
             for k in keys_to_delete:
                 cache_dict.pop(k, None)
+        keys_to_delete = [
+            k for k in self.user_profile_records.keys() if k.startswith(prefix)
+        ]
+        for k in keys_to_delete:
+            self.user_profile_records.pop(k, None)
 
         await asyncio.gather(
             self.db.delete_group_user_profiles(

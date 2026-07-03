@@ -126,11 +126,41 @@ class Database:
                     user_id TEXT NOT NULL,
                     group_or_user_id TEXT NOT NULL,
                     profile TEXT,
+                    call_name TEXT,
+                    aliases TEXT,
+                    personality TEXT,
+                    interests TEXT,
+                    attitude TEXT,
+                    agreements TEXT,
+                    extra TEXT,
+                    relation INTEGER,
+                    title TEXT,
                     bot_name TEXT NOT NULL,
                     created_at DATETIME,
                     updated_at DATETIME
                 )
             """)
+            for column_sql in (
+                "ALTER TABLE user_profiles ADD COLUMN call_name TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN aliases TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN personality TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN interests TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN attitude TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN agreements TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN extra TEXT",
+                "ALTER TABLE user_profiles ADD COLUMN relation INTEGER",
+                "ALTER TABLE user_profiles ADD COLUMN title TEXT",
+            ):
+                try:
+                    await cursor.execute(column_sql)
+                except aiosqlite.OperationalError as e:
+                    if (
+                        "duplicate" not in str(e).lower()
+                        and "already exists" not in str(e).lower()
+                    ):
+                        logger.warning(
+                            f"Failed to migrate user_profiles column: {e}"
+                        )
             # 创建索引
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique ON user_profiles (user_id, group_or_user_id, bot_name)"
@@ -203,6 +233,89 @@ class Database:
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_relation_unique ON relations (user_id, group_or_user_id, bot_name)"
             )
+            # 检查关系数据回填的迁移是否已运行，避免每次启动都对全表进行重型更新与插入扫描
+            await cursor.execute(
+                "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
+                ("relations_migration_done",)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                logger.info("[Database] Running relations schema migration to user_profiles...")
+                await cursor.execute("""
+                    UPDATE user_profiles
+                    SET
+                        relation = COALESCE(
+                            relation,
+                            (
+                                SELECT r.relation
+                                FROM relations r
+                                WHERE r.user_id = user_profiles.user_id
+                                  AND r.group_or_user_id = user_profiles.group_or_user_id
+                                  AND r.bot_name = user_profiles.bot_name
+                                LIMIT 1
+                            )
+                        ),
+                        title = COALESCE(
+                            title,
+                            (
+                                SELECT r.title
+                                FROM relations r
+                                WHERE r.user_id = user_profiles.user_id
+                                  AND r.group_or_user_id = user_profiles.group_or_user_id
+                                  AND r.bot_name = user_profiles.bot_name
+                                LIMIT 1
+                            )
+                        )
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM relations r
+                        WHERE r.user_id = user_profiles.user_id
+                          AND r.group_or_user_id = user_profiles.group_or_user_id
+                          AND r.bot_name = user_profiles.bot_name
+                    )
+                """)
+                await cursor.execute("""
+                    INSERT INTO user_profiles (
+                        user_id,
+                        group_or_user_id,
+                        bot_name,
+                        profile,
+                        relation,
+                        title,
+                        created_at,
+                        updated_at
+                    )
+                    SELECT
+                        r.user_id,
+                        r.group_or_user_id,
+                        r.bot_name,
+                        '',
+                        r.relation,
+                        r.title,
+                        COALESCE(r.created_at, CURRENT_TIMESTAMP),
+                        COALESCE(r.updated_at, CURRENT_TIMESTAMP)
+                    FROM relations r
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM user_profiles up
+                        WHERE up.user_id = r.user_id
+                          AND up.group_or_user_id = r.group_or_user_id
+                          AND up.bot_name = r.bot_name
+                    )
+                """)
+                update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                await cursor.execute(
+                    """
+                    INSERT INTO kv_store (key, value, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value=excluded.value,
+                        updated_at=excluded.updated_at
+                    """,
+                    ("relations_migration_done", "1", update_time, update_time)
+                )
+                logger.info("[Database] Relations schema migration completed.")
+
             # 创建表情包表
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS stickers (
@@ -836,19 +949,207 @@ class Database:
             row = await cursor.fetchone()
         return row["profile"] if row else None
 
+    async def get_user_profile_record(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> dict | None:
+        """获取用户画像完整记录"""
+        async with self.conn.execute(
+            """
+            SELECT
+                up.profile,
+                up.call_name,
+                up.aliases,
+                up.personality,
+                up.interests,
+                up.attitude,
+                up.agreements,
+                up.extra,
+                COALESCE(up.relation, r.relation) AS relation,
+                CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title
+            FROM user_profiles up
+            LEFT JOIN relations r ON up.bot_name = r.bot_name
+                AND up.group_or_user_id = r.group_or_user_id
+                AND up.user_id = r.user_id
+            WHERE up.user_id = ? AND up.group_or_user_id = ? AND up.bot_name = ?
+            LIMIT 1
+            """,
+            (user_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def search_user_profiles(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict]:
+        """在当前会话内模糊搜索用户画像"""
+        query = (query or "").strip()
+        if not query:
+            return []
+
+        like = f"%{query}%"
+        limit = max(1, min(int(limit or 5), 20))
+        async with self.conn.execute(
+            """
+            SELECT
+                up.user_id,
+                up.group_or_user_id,
+                up.bot_name,
+                up.profile,
+                up.call_name,
+                up.aliases,
+                up.personality,
+                up.interests,
+                up.attitude,
+                up.agreements,
+                up.extra,
+                COALESCE(up.relation, r.relation) AS relation,
+                CASE WHEN up.title IS NOT NULL THEN up.title ELSE r.title END AS title,
+                (
+                    SELECT ch.nickname
+                    FROM chat_history ch
+                    WHERE ch.bot_name = up.bot_name
+                      AND ch.group_or_user_id = up.group_or_user_id
+                      AND ch.user_id = up.user_id
+                      AND ch.nickname IS NOT NULL
+                      AND ch.nickname != ''
+                    ORDER BY ch.created_at DESC
+                    LIMIT 1
+                ) AS nickname
+            FROM user_profiles up
+            LEFT JOIN relations r ON up.bot_name = r.bot_name
+                AND up.group_or_user_id = r.group_or_user_id
+                AND up.user_id = r.user_id
+            WHERE up.bot_name = ?
+              AND up.group_or_user_id = ?
+              AND (
+                up.user_id LIKE ?
+                OR up.call_name LIKE ?
+                OR up.aliases LIKE ?
+                OR up.title LIKE ?
+                OR up.profile LIKE ?
+                OR up.personality LIKE ?
+                OR up.interests LIKE ?
+                OR up.attitude LIKE ?
+                OR up.agreements LIKE ?
+                OR up.extra LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM chat_history ch
+                    WHERE ch.bot_name = up.bot_name
+                      AND ch.group_or_user_id = up.group_or_user_id
+                      AND ch.user_id = up.user_id
+                      AND ch.nickname LIKE ?
+                )
+              )
+            ORDER BY
+                CASE
+                    WHEN up.user_id = ? THEN 0
+                    WHEN up.call_name = ? THEN 1
+                    WHEN up.aliases = ? THEN 2
+                    ELSE 3
+                END,
+                up.updated_at DESC
+            LIMIT ?
+            """,
+            (
+                bot_name,
+                group_or_user_id,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                like,
+                query,
+                query,
+                query,
+                limit,
+            ),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def upsert_user_profile(
-        self, bot_name: str, group_or_user_id: str, user_id: str, profile: str
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        profile: str | None = None,
+        relation: int | None = None,
+        title: str | None = None,
+        profile_fields: dict[str, str | None] | None = None,
     ):
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        profile_columns = [
+            "call_name",
+            "aliases",
+            "personality",
+            "interests",
+            "attitude",
+            "agreements",
+            "extra",
+        ]
+        profile_fields = profile_fields or {}
+        update_fields = ["updated_at=excluded.updated_at"]
+        if profile is not None:
+            update_fields.insert(-1, "profile=excluded.profile")
+        for column in profile_columns:
+            if column in profile_fields:
+                update_fields.insert(-1, f"{column}=excluded.{column}")
+        if relation is not None:
+            update_fields.insert(-1, "relation=excluded.relation")
+        if title is not None:
+            update_fields.insert(-1, "title=excluded.title")
+        update_clause = ",\n                ".join(update_fields)
         await self.conn.execute(
-            """
-            INSERT INTO user_profiles (user_id, group_or_user_id, bot_name, profile, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            f"""
+            INSERT INTO user_profiles (
+                user_id,
+                group_or_user_id,
+                bot_name,
+                profile,
+                call_name,
+                aliases,
+                personality,
+                interests,
+                attitude,
+                agreements,
+                extra,
+                relation,
+                title,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
-                profile=excluded.profile,
-                updated_at=excluded.updated_at
+                {update_clause}
             """,
-            (user_id, group_or_user_id, bot_name, profile, update_time, update_time),
+            (
+                user_id,
+                group_or_user_id,
+                bot_name,
+                profile if profile is not None else "",
+                profile_fields.get("call_name"),
+                profile_fields.get("aliases"),
+                profile_fields.get("personality"),
+                profile_fields.get("interests"),
+                profile_fields.get("attitude"),
+                profile_fields.get("agreements"),
+                profile_fields.get("extra"),
+                relation,
+                title,
+                update_time,
+                update_time,
+            ),
         )
         await self.conn.commit()
 
@@ -863,6 +1164,13 @@ class Database:
             """,
             (user_id, group_or_user_id, bot_name),
         )
+        await self.conn.execute(
+            """
+            DELETE FROM relations WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (user_id, group_or_user_id, bot_name),
+        )
         await self.conn.commit()
 
     # 删除整个群的用户画像
@@ -871,6 +1179,12 @@ class Database:
         await self.conn.execute(
             """
             DELETE FROM user_profiles WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.execute(
+            """
+            DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (group_or_user_id, bot_name),
         )
@@ -1034,10 +1348,23 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT INTO relations (bot_name, group_or_user_id, user_id, relation, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, profile, relation, title, created_at, updated_at)
+            VALUES (
+                ?, ?, ?, '', ?,
+                (
+                    SELECT title
+                    FROM relations
+                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+                    LIMIT 1
+                ),
+                ?, ?
+            )
             ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
                 relation=excluded.relation,
+                title=CASE
+                    WHEN user_profiles.title IS NULL THEN excluded.title
+                    ELSE user_profiles.title
+                END,
                 updated_at=excluded.updated_at
             """,
             (
@@ -1045,6 +1372,9 @@ class Database:
                 group_or_user_id,
                 user_id,
                 relation,
+                user_id,
+                group_or_user_id,
+                bot_name,
                 update_time,
                 update_time,
             ),
@@ -1058,9 +1388,22 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         await self.conn.execute(
             """
-            INSERT INTO relations (bot_name, group_or_user_id, user_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO user_profiles (bot_name, group_or_user_id, user_id, profile, relation, title, created_at, updated_at)
+            VALUES (
+                ?, ?, ?, '',
+                (
+                    SELECT relation
+                    FROM relations
+                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+                    LIMIT 1
+                ),
+                ?, ?, ?
+            )
             ON CONFLICT(user_id, group_or_user_id, bot_name) DO UPDATE SET
+                relation=CASE
+                    WHEN user_profiles.relation IS NULL THEN excluded.relation
+                    ELSE user_profiles.relation
+                END,
                 title=excluded.title,
                 updated_at=excluded.updated_at
             """,
@@ -1068,6 +1411,9 @@ class Database:
                 bot_name,
                 group_or_user_id,
                 user_id,
+                user_id,
+                group_or_user_id,
+                bot_name,
                 title,
                 update_time,
                 update_time,
@@ -1079,6 +1425,17 @@ class Database:
     async def get_relation(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> tuple[int, str]:
+        async with self.conn.execute(
+            """
+            SELECT relation, title FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            LIMIT 1
+            """,
+            (user_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and (row["relation"] is not None or row["title"] is not None):
+            return row["relation"] if row["relation"] is not None else 0, row["title"] or ""
+
         async with self.conn.execute(
             """
             SELECT relation, title FROM relations WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
@@ -1093,6 +1450,18 @@ class Database:
 
     async def delete_all_relations(self, bot_name: str, group_or_user_id: str):
         """删除指定群或私聊的所有好感度和头衔数据"""
+        await self.conn.execute(
+            """
+            UPDATE user_profiles
+            SET relation = NULL, title = NULL, updated_at = ?
+            WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                group_or_user_id,
+                bot_name,
+            ),
+        )
         await self.conn.execute(
             """
             DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?

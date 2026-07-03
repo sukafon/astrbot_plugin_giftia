@@ -5,7 +5,82 @@ from datetime import datetime
 
 from astrbot.api import logger
 
-from ..llm.prompt import parse_caption_to_str
+from ..llm.prompt import (
+    USER_PROFILE_FIELDS,
+    normalize_profile_text,
+    normalize_profile_value,
+    parse_caption_to_str,
+)
+
+
+DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT = """# 角色与目标
+你是一个长期记忆提炼器。你需要分析以下群聊片段，只总结与机器人自身（昵称：{nickname}，ID：{self_id}）直接相关、未来值得召回的事件记忆。
+
+# 提炼规则
+- 只记录机器人参与、被提及、有互动的有价值事件，例如约定、承诺、共同经历、明确偏好或重要结论。
+- 每条记忆必须使用第一人称，从机器人的角度描述。
+- 每条记忆控制在 50 字以内，避免流水账和情绪泛化。
+- 必须使用 `users` 属性指出该记忆直接关联的群友 user_id，多用户用逗号分隔。
+- 与特定人无关但对机器人有意义时，可以省略 `users` 属性。
+
+# 输出格式
+请只输出 `<memory>` 标签：
+`<memory users="12345">小明约我周末一起打游戏，我答应提醒他。</memory>`
+
+如果没有值得记录的长期记忆，请只输出：
+`<memory>无</memory>`"""
+
+
+DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT = """# 角色与目标
+你是一个用户画像和群画像维护器。你需要分析以下群聊片段，结合已有画像，维护结构化用户画像、群画像、好感度和关系头衔。
+
+# 提供的现有状态
+- <current_user_profiles>：当前活跃成员的结构化画像、旧画像参考、好感度和关系头衔。
+- <current_group_profile>：当前群聊的现有画像。
+
+# 用户画像更新
+如果发现某位用户的新特征、新喜好、称呼关系或互动状态，请结合现有画像，输出该用户需要更新的字段。
+
+用户画像字段说明：
+- call_name：你对该成员的称呼。
+- aliases：其他群友对该成员的称呼或外号。
+- personality：性格特征与说话风格。
+- interests：兴趣爱好与关注事物。
+- attitude：该成员对你的态度。
+- agreements：与你达成的承诺或共同回忆。
+- extra：无法归入以上字段、但长期有助于理解用户的信息；不要重复已有字段；最多 3 条，每条 30 字以内。
+
+只输出需要更新的字段，不要为无变化字段输出标签。每个字段精炼在一句话、30 字以内。好感度使用最新绝对分数，不要输出增量。关系头衔如果没有变化可以省略 `title` 属性。
+
+格式：
+`<summary_user_profile user_id="12345" relation="12" title="挚友">
+<call_name>小草莓</call_name>
+<aliases>草莓酱</aliases>
+<personality>傲娇但友好</personality>
+<interests>喜欢动漫和游戏</interests>
+<attitude>经常调侃我</attitude>
+<agreements>周末一起打游戏</agreements>
+<extra>习惯深夜活跃</extra>
+</summary_user_profile>`
+
+# 群画像更新
+如果发现群聊的新特征，请结合现有群画像，输出最新完整群画像：
+- 群聊主题：<群聊定位与核心主题>
+- 氛围特征：<群内氛围与活跃特征>
+- 成员关系：<核心成员互动关系，50 字以内>
+- 核心规则与忌讳：<群规、敏感点或忌讳>
+
+格式：
+`<summary_group_profile>
+- 群聊主题：游戏讨论与日常吹水
+- 氛围特征：气氛轻松，经常开玩笑
+- 成员关系：流萤与爱丽丝关系亲密
+- 核心规则与忌讳：禁止刷屏和恶意复读
+</summary_group_profile>`
+
+# 输出要求
+只输出需要更新的 XML 标签。如果没有任何画像或关系需要更新，请只输出：
+`<profile>无</profile>`"""
 
 
 def format_time_to_seconds(db_value: str) -> str:
@@ -247,6 +322,450 @@ class PassiveMemoryManager:
                     )
                 )
 
+    def _looks_like_legacy_combined_prompt(self, prompt: str) -> bool:
+        legacy_markers = (
+            "summary_user_profile",
+            "summary_group_profile",
+            "update_relation",
+            "set_relation_title",
+            "current_relations",
+        )
+        return any(marker in prompt for marker in legacy_markers)
+
+    def _format_prompt_template(
+        self, prompt_template: str, nickname: str, self_id: str
+    ) -> str:
+        try:
+            return prompt_template.format(nickname=nickname, self_id=self_id)
+        except Exception as e:
+            logger.warning(
+                f"[Giftia Passive Memory] 提示词变量格式化失败，将使用原文: {e}"
+            )
+            return prompt_template
+
+    def _get_memory_summary_prompt(self) -> str:
+        prompt = getattr(self.plugin, "passive_memory_summary_prompt", "") or ""
+        if not prompt or self._looks_like_legacy_combined_prompt(prompt):
+            return DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT
+        return prompt
+
+    def _get_profile_summary_prompt(self) -> str:
+        prompt = getattr(self.plugin, "passive_profile_summary_prompt", "") or ""
+        return prompt or DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT
+
+    def _format_user_profile_record_for_summary(self, record: dict | None) -> str:
+        if not record:
+            return "无"
+
+        parts = []
+        structured_lines = []
+        for field, label in USER_PROFILE_FIELDS:
+            value = normalize_profile_value(record.get(field))
+            if value:
+                structured_lines.append(f"- {label}：{value}")
+        if structured_lines:
+            parts.append("结构化画像:\n" + "\n".join(structured_lines))
+
+        legacy_profile = normalize_profile_text(record.get("profile"))
+        if legacy_profile:
+            parts.append("历史画像参考:\n" + legacy_profile)
+
+        relation_parts = []
+        relation = record.get("relation")
+        title = record.get("title")
+        if relation not in (None, "", 0):
+            relation_parts.append(f"好感度: {relation}")
+        if title:
+            relation_parts.append(f"头衔: {title}")
+        if relation_parts:
+            parts.append("关系状态: " + "，".join(relation_parts))
+
+        return "\n".join(parts) if parts else "无"
+
+    def _parse_user_profile_fields(self, profile_content: str) -> dict[str, str]:
+        parsed = {}
+        for field, _ in USER_PROFILE_FIELDS:
+            match = re.search(
+                rf"<{field}>(.*?)</{field}>",
+                profile_content,
+                re.DOTALL,
+            )
+            if not match:
+                continue
+            value = normalize_profile_value(match.group(1))
+            if value:
+                parsed[field] = value
+        return parsed
+
+    async def _build_summary_context(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        self_id: str,
+        db_messages: list,
+    ) -> dict:
+        active_users_in_range = {
+            msg.user_id
+            for msg in db_messages
+            if msg.user_id and str(msg.user_id) != str(self_id)
+        }
+
+        nickname_to_user_id = {}
+        user_id_to_nickname = {}
+        for msg in db_messages:
+            if msg.user_id and msg.nickname:
+                nickname_to_user_id[msg.nickname] = msg.user_id
+                user_id_to_nickname[msg.user_id] = msg.nickname
+
+        all_media_ids = []
+        for msg in db_messages:
+            if msg.media_id_list:
+                all_media_ids.extend(msg.media_id_list)
+        unique_media_ids = list(dict.fromkeys(all_media_ids))
+
+        media_captions = []
+        for media_id in unique_media_ids:
+            media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
+            if media_caption:
+                media_captions.append(media_caption)
+
+        from ..llm.prompt import process_media_captions_for_prompt
+
+        processed_messages, remaining_captions = process_media_captions_for_prompt(
+            messages=db_messages,
+            media_captions=media_captions,
+            threshold=100,
+        )
+
+        chat_history_lines = []
+        for msg in processed_messages:
+            chat_history_lines.append(
+                f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {msg.content or ''}"
+            )
+        chat_history_text = "\n".join(chat_history_lines)
+
+        active_user_lines = []
+        user_profile_blocks = []
+        for uid in sorted(active_users_in_range):
+            nickname = user_id_to_nickname.get(uid, "")
+            profile_record = await self.plugin.data_cache.get_user_profile_record(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=uid,
+            )
+
+            # 获取 Bot 对用户的自定义称呼并注入到 active_users_text 中
+            call_name = profile_record.get("call_name") if profile_record else None
+            parts = [f"群内昵称: {nickname}" if nickname else None]
+            if call_name:
+                parts.append(f"你对他的称呼: {call_name}")
+            info_str = "，".join(p for p in parts if p)
+            active_user_lines.append(f"- {uid} ({info_str})" if info_str else f"- {uid}")
+
+            block_lines = [f"用户 {uid} ({nickname})" if nickname else f"用户 {uid}"]
+            block_lines.append(
+                "现有画像:\n" + self._format_user_profile_record_for_summary(
+                    profile_record
+                )
+            )
+            user_profile_blocks.append("\n".join(block_lines))
+
+        group_profile = await self.plugin.data_cache.get_group_profile(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+        )
+
+        media_captions_block = ""
+        if remaining_captions:
+            media_captions_block = "\n".join(
+                parse_caption_to_str(c) for c in remaining_captions
+            )
+
+        return {
+            "nickname_to_user_id": nickname_to_user_id,
+            "user_id_to_nickname": user_id_to_nickname,
+            "active_users_text": "\n".join(active_user_lines) or "无",
+            "user_profiles_text": "\n---\n".join(user_profile_blocks) or "无",
+            "group_profile": group_profile or "无",
+            "media_captions_block": media_captions_block,
+            "chat_history_text": chat_history_text,
+        }
+
+    def _build_memory_user_prompt(self, group_or_user_id: str, context: dict) -> str:
+        user_prompt_parts = [
+            f"<session_id>{group_or_user_id}</session_id>",
+            f"<active_users>\n{context['active_users_text']}\n</active_users>",
+        ]
+        if context["media_captions_block"]:
+            user_prompt_parts.append(
+                f"<media_content>\n{context['media_captions_block']}\n</media_content>"
+            )
+        user_prompt_parts.append(
+            f"<chat_history>\n{context['chat_history_text']}\n</chat_history>"
+        )
+        return "\n\n".join(user_prompt_parts)
+
+    def _build_profile_user_prompt(self, group_or_user_id: str, context: dict) -> str:
+        user_prompt_parts = [
+            f"<session_id>{group_or_user_id}</session_id>",
+            f"<current_user_profiles>\n{context['user_profiles_text']}\n</current_user_profiles>",
+            f"<current_group_profile>\n{context['group_profile']}\n</current_group_profile>",
+        ]
+        if context["media_captions_block"]:
+            user_prompt_parts.append(
+                f"<media_content>\n{context['media_captions_block']}\n</media_content>"
+            )
+        user_prompt_parts.append(
+            f"<chat_history>\n{context['chat_history_text']}\n</chat_history>"
+        )
+        return "\n\n".join(user_prompt_parts)
+
+    async def _call_summary_llm(
+        self,
+        task_name: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str | None:
+        provider_ids = self.plugin.passive_memory_provider_ids
+        if not provider_ids:
+            logger.warning(
+                "[Giftia Passive Memory] 未配置被动总结提供商(passive_memory_provider_ids)，跳过后台总结。"
+            )
+            return None
+
+        for provider_id in provider_ids:
+            for attempt in range(2):
+                try:
+                    logger.info(
+                        f"[Giftia Passive Memory] 尝试使用提供商 {provider_id} (第 {attempt + 1} 次) 进行{task_name}"
+                    )
+                    logger.debug(
+                        f"[Giftia Passive Memory] {task_name} system_prompt:\n{system_prompt}"
+                    )
+                    logger.debug(
+                        f"[Giftia Passive Memory] {task_name} user_prompt:\n{user_prompt}"
+                    )
+                    llm_resp = await self.plugin.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        system_prompt=system_prompt,
+                        prompt=user_prompt,
+                    )
+                    if llm_resp and llm_resp.completion_text:
+                        return llm_resp.completion_text
+                except Exception as e:
+                    logger.error(
+                        f"[Giftia Passive Memory] 提供商 {provider_id} 调用{task_name}报错: {e}"
+                    )
+
+        logger.error(
+            f"[Giftia Passive Memory] 所有配置的总结提供商均调用失败，{task_name}终止。"
+        )
+        return None
+
+    async def _run_memory_summary_task(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        self_id: str,
+        nickname: str,
+        context: dict,
+    ) -> bool | None:
+        if not self.plugin.embedding_conf.get("enabled", False):
+            logger.debug(
+                "[Giftia Passive Memory] 嵌入模型未启用，跳过长期记忆提炼，仅维护画像。"
+            )
+            return None
+
+        sys_prompt = self._format_prompt_template(
+            self._get_memory_summary_prompt(), nickname=nickname, self_id=self_id
+        )
+        user_prompt = self._build_memory_user_prompt(group_or_user_id, context)
+        completion_text = await self._call_summary_llm(
+            "长期记忆提炼", sys_prompt, user_prompt
+        )
+        if not completion_text:
+            return False
+
+        logger.info(
+            f"[Giftia Passive Memory] 长期记忆提炼返回内容:\n{completion_text}"
+        )
+
+        memory_matches = re.finditer(
+            r'<memory(?:\s+users=["\']([^"\']*)["\'])?>(.*?)</memory>',
+            completion_text,
+            re.DOTALL,
+        )
+        for match in memory_matches:
+            users_attr = match.group(1) or ""
+            text = match.group(2).strip()
+
+            if not text or text == "无":
+                continue
+
+            associated_ids = []
+            if users_attr:
+                for u in re.split(r"[,，]", users_attr):
+                    u = u.strip()
+                    resolved_uid = context["nickname_to_user_id"].get(u, u)
+                    if resolved_uid:
+                        associated_ids.append(resolved_uid)
+
+            primary_user = associated_ids[0] if associated_ids else self_id
+
+            await self.plugin.data_cache.add_memory(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                text=text,
+                user_id=primary_user,
+                associated_user_ids=associated_ids,
+            )
+            logger.info(
+                f"[Giftia Passive Memory] 已成功记录长期记忆: {text} (关联用户: {associated_ids})"
+            )
+        return True
+
+    async def _run_profile_summary_task(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        nickname: str,
+        self_id: str,
+        context: dict,
+    ) -> bool:
+        sys_prompt = self._format_prompt_template(
+            self._get_profile_summary_prompt(), nickname=nickname, self_id=self_id
+        )
+        user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
+        completion_text = await self._call_summary_llm(
+            "画像维护", sys_prompt, user_prompt
+        )
+        if not completion_text:
+            return False
+
+        logger.info(f"[Giftia Passive Memory] 画像维护返回内容:\n{completion_text}")
+
+        user_profile_matches = re.finditer(
+            r"<summary_user_profile\s+([^>]*)>(.*?)</summary_user_profile>",
+            completion_text,
+            re.DOTALL,
+        )
+        for match in user_profile_matches:
+            attr_str = match.group(1)
+            attrs = dict(re.findall(r'(\w+)=["\']([^"\']*)["\']', attr_str))
+            target_user = attrs.get("user_id", "").strip()
+            profile_content = match.group(2).strip()
+            resolved_user_id = context["nickname_to_user_id"].get(
+                target_user, target_user
+            )
+            if not resolved_user_id or not profile_content or profile_content == "无":
+                continue
+
+            profile_fields = self._parse_user_profile_fields(profile_content)
+            legacy_profile = None
+            if not profile_fields:
+                legacy_profile = profile_content
+
+            relation = None
+            for relation_key in ("relation", "score", "favorability", "affinity"):
+                if relation_key in attrs:
+                    try:
+                        relation = int(attrs[relation_key].strip())
+                    except ValueError:
+                        relation = None
+                    break
+
+            title = attrs.get("title")
+            if title is not None:
+                title = title.strip()
+
+            await self.plugin.data_cache.set_user_profile(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=resolved_user_id,
+                profile=legacy_profile,
+                relation=relation,
+                title=title,
+                profile_fields=profile_fields,
+                clamp_relation=True,
+            )
+            logger.info(
+                f"[Giftia Passive Memory] 已更新用户 {resolved_user_id} 画像"
+            )
+
+        group_profile_matches = re.finditer(
+            r"<summary_group_profile>(.*?)</summary_group_profile>",
+            completion_text,
+            re.DOTALL,
+        )
+        for match in group_profile_matches:
+            group_profile_content = match.group(1).strip()
+            if group_profile_content and group_profile_content != "无":
+                await self.plugin.data_cache.set_group_profile(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    profile=group_profile_content,
+                )
+                logger.info("[Giftia Passive Memory] 已更新群画像")
+
+        relation_matches = re.finditer(
+            r"<update_relation\s+([^>]*)>(.*?)</update_relation>",
+            completion_text,
+            re.DOTALL,
+        )
+        for match in relation_matches:
+            attr_str = match.group(1)
+            reason = match.group(2).strip()
+            attrs = dict(re.findall(r'(\w+)=["\']([^"\']*)["\']', attr_str))
+            target_user = attrs.get("user_id", "").strip()
+            score_change_str = (
+                attrs.get("score_change") or attrs.get("delta") or "0"
+            ).strip()
+
+            resolved_user_id = context["nickname_to_user_id"].get(
+                target_user, target_user
+            )
+            try:
+                score_change = int(score_change_str)
+            except ValueError:
+                score_change = 0
+
+            if resolved_user_id and score_change != 0:
+                await self.plugin.data_cache.update_relation(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=resolved_user_id,
+                    relation=score_change,
+                )
+                logger.info(
+                    f"[Giftia Passive Memory] 用户 {resolved_user_id} 好感度变动 {score_change}，原因: {reason}"
+                )
+
+        title_matches = re.finditer(
+            r"<set_relation_title\s+([^>]*)>(.*?)</set_relation_title>",
+            completion_text,
+            re.DOTALL,
+        )
+        for match in title_matches:
+            attr_str = match.group(1)
+            title = match.group(2).strip()
+            attrs = dict(re.findall(r'(\w+)=["\']([^"\']*)["\']', attr_str))
+            target_user = attrs.get("user_id", "").strip()
+
+            resolved_user_id = context["nickname_to_user_id"].get(
+                target_user, target_user
+            )
+            if resolved_user_id and title:
+                await self.plugin.data_cache.set_relation_title(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=resolved_user_id,
+                    title=title,
+                )
+                logger.info(
+                    f"[Giftia Passive Memory] 用户 {resolved_user_id} 关系头衔已设置为: {title}"
+                )
+        return True
+
     async def _run_background_summarize(
         self,
         bot_name: str,
@@ -275,286 +794,35 @@ class PassiveMemoryManager:
                 )
                 return
 
-            # 获取活跃的参与者
-            active_users_in_range = {
-                msg.user_id
-                for msg in db_messages
-                if msg.user_id and str(msg.user_id) != str(self_id)
-            }
-
-            # 建立两套映射：
-            # - nickname → user_id：用于把 LLM 输出里的昵称解析回 user_id
-            # - user_id → nickname：用于在 user_prompt 里按 user_id 取到对应昵称
-            nickname_to_user_id = {}
-            user_id_to_nickname = {}
-            for msg in db_messages:
-                if msg.user_id and msg.nickname:
-                    nickname_to_user_id[msg.nickname] = msg.user_id
-                    user_id_to_nickname[msg.user_id] = msg.nickname
-
-            # 读取现有画像与好感度/关系
-            user_profiles_str = []
-            user_relations_str = []
-            for uid in active_users_in_range:
-                profile = await self.plugin.data_cache.get_user_profile(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    user_id=uid,
-                )
-                if profile:
-                    user_profiles_str.append(
-                        f"用户 {uid} ({user_id_to_nickname.get(uid, '')}) 现有画像:\n{profile}"
-                    )
-
-                (
-                    relation_score,
-                    relation_title,
-                ) = await self.plugin.data_cache.get_user_relation(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    user_id=uid,
-                )
-                user_relations_str.append(
-                    f"用户 {uid} ({user_id_to_nickname.get(uid, '')}) 的好感度得分: {relation_score}, 头衔: {relation_title or '无'}"
-                )
-
-            group_profile = await self.plugin.data_cache.get_group_profile(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-            )
-
-            # 1. 搜集并分类媒体转述
-            # 1. 搜集媒体转述并调用共享的辅助函数处理
-            all_media_ids = []
-            for msg in db_messages:
-                if msg.media_id_list:
-                    all_media_ids.extend(msg.media_id_list)
-            unique_media_ids = list(dict.fromkeys(all_media_ids))
-
-            media_captions = []
-            for media_id in unique_media_ids:
-                media_caption = await self.plugin.data_cache.get_caption_by_hash(
-                    media_id
-                )
-                if media_caption:
-                    media_captions.append(media_caption)
-
-            from ..llm.prompt import process_media_captions_for_prompt
-
-            processed_messages, remaining_captions = process_media_captions_for_prompt(
-                messages=db_messages,
-                media_captions=media_captions,
-                threshold=100,
-            )
-
-            # 2. 格式化聊天记录
-            chat_history_lines = []
-            for msg in processed_messages:
-                chat_history_lines.append(
-                    f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {msg.content or ''}"
-                )
-            chat_history_text = "\n".join(chat_history_lines)
-
-            user_profiles_joined = (
-                "\n---\n".join(user_profiles_str) if user_profiles_str else "无"
-            )
-            user_relations_joined = (
-                "\n".join(user_relations_str) if user_relations_str else "无"
-            )
-            user_prompt_parts = [
-                f"<session_id>{group_or_user_id}</session_id>",
-                f"<current_user_profiles>\n{user_profiles_joined}\n</current_user_profiles>",
-                f"<current_relations>\n{user_relations_joined}\n</current_relations>",
-                f"<current_group_profile>\n{group_profile or '无'}\n</current_group_profile>",
-            ]
-            if remaining_captions:
-                media_captions_block = "\n".join(
-                    parse_caption_to_str(c) for c in remaining_captions
-                )
-                user_prompt_parts.append(
-                    f"<media_content>\n{media_captions_block}\n</media_content>"
-                )
-            user_prompt_parts.append(
-                f"<chat_history>\n{chat_history_text}\n</chat_history>"
-            )
-            user_prompt = "\n\n".join(user_prompt_parts)
-
             bot_conf = self.plugin.bot_map.get(bot_name, {})
             nickname = bot_conf.get("nickname", bot_name)
-
-            sys_prompt = self.plugin.passive_memory_summary_prompt.format(
-                nickname=nickname, self_id=self_id
+            summary_context = await self._build_summary_context(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                self_id=self_id,
+                db_messages=db_messages,
             )
 
-            provider_ids = self.plugin.passive_memory_provider_ids
-            if not provider_ids:
-                logger.warning(
-                    "[Giftia Passive Memory] 未配置被动总结提供商(passive_memory_provider_ids)，跳过后台总结。"
-                )
-                return
+            memory_ok = await self._run_memory_summary_task(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                self_id=self_id,
+                nickname=nickname,
+                context=summary_context,
+            )
+            profile_ok = await self._run_profile_summary_task(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                nickname=nickname,
+                self_id=self_id,
+                context=summary_context,
+            )
 
-            completion_text = None
-            for provider_id in provider_ids:
-                for attempt in range(2):
-                    try:
-                        logger.info(
-                            f"[Giftia Passive Memory] 尝试使用提供商 {provider_id} (第 {attempt + 1} 次) 进行后台总结"
-                        )
-                        logger.debug(
-                            f"[Giftia Passive Memory] 开始总结记忆的 system_prompt:\n{sys_prompt}"
-                        )
-                        logger.debug(
-                            f"[Giftia Passive Memory] 开始总结记忆的 user_prompt:\n{user_prompt}"
-                        )
-                        llm_resp = await self.plugin.context.llm_generate(
-                            chat_provider_id=provider_id,
-                            system_prompt=sys_prompt,
-                            prompt=user_prompt,
-                        )
-                        if llm_resp and llm_resp.completion_text:
-                            completion_text = llm_resp.completion_text
-                            break
-                    except Exception as e:
-                        logger.error(
-                            f"[Giftia Passive Memory] 提供商 {provider_id} 调用报错: {e}"
-                        )
-                if completion_text:
-                    break
-
-            if not completion_text:
-                logger.error(
-                    "[Giftia Passive Memory] 所有配置的总结提供商均调用失败，本次总结任务终止。"
-                )
+            if profile_ok is False and memory_ok is not True:
                 await self.plugin.db.upsert_kv_data(
                     f"passive_memory:last_summarized_id:{bot_name}:{group_or_user_id}",
                     start_id - 1,
                 )
-                return
-
-            logger.info(
-                f"[Giftia Passive Memory] 大模型总结返回内容:\n{completion_text}"
-            )
-
-            # 解析 XML 并写入数据库/缓存
-            memory_matches = re.finditer(
-                r'<memory(?:\s+users=["\']([^"\']*)["\'])?>(.*?)</memory>',
-                completion_text,
-                re.DOTALL,
-            )
-            for match in memory_matches:
-                users_attr = match.group(1) or ""
-                text = match.group(2).strip()
-
-                if not text or text == "无":
-                    continue
-
-                associated_ids = []
-                if users_attr:
-                    for u in re.split(r"[,，]", users_attr):
-                        u = u.strip()
-                        resolved_uid = nickname_to_user_id.get(u, u)
-                        if resolved_uid:
-                            associated_ids.append(resolved_uid)
-
-                primary_user = associated_ids[0] if associated_ids else self_id
-
-                await self.plugin.data_cache.add_memory(
-                    bot_name=bot_name,
-                    group_or_user_id=group_or_user_id,
-                    text=text,
-                    user_id=primary_user,
-                    associated_user_ids=associated_ids,
-                )
-                logger.info(
-                    f"[Giftia Passive Memory] 已成功记录长期记忆: {text} (关联用户: {associated_ids})"
-                )
-
-            user_profile_matches = re.finditer(
-                r'<summary_user_profile\s+user_id=["\']([^"\']*)["\']>(.*?)</summary_user_profile>',
-                completion_text,
-                re.DOTALL,
-            )
-            for match in user_profile_matches:
-                target_user = match.group(1).strip()
-                profile_content = match.group(2).strip()
-                resolved_user_id = nickname_to_user_id.get(target_user, target_user)
-                if resolved_user_id and profile_content:
-                    await self.plugin.data_cache.set_user_profile(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        user_id=resolved_user_id,
-                        profile=profile_content,
-                    )
-                    logger.info(
-                        f"[Giftia Passive Memory] 已更新用户 {resolved_user_id} 画像"
-                    )
-
-            group_profile_matches = re.finditer(
-                r"<summary_group_profile>(.*?)</summary_group_profile>",
-                completion_text,
-                re.DOTALL,
-            )
-            for match in group_profile_matches:
-                group_profile_content = match.group(1).strip()
-                if group_profile_content:
-                    await self.plugin.data_cache.set_group_profile(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        profile=group_profile_content,
-                    )
-                    logger.info("[Giftia Passive Memory] 已更新群画像")
-
-            relation_matches = re.finditer(
-                r"<update_relation\s+([^>]*)>(.*?)</update_relation>",
-                completion_text,
-                re.DOTALL,
-            )
-            for match in relation_matches:
-                attr_str = match.group(1)
-                reason = match.group(2).strip()
-                attrs = dict(re.findall(r'(\w+)=["\']([^"\']*)["\']', attr_str))
-                target_user = attrs.get("user_id", "").strip()
-                score_change_str = attrs.get("score_change", "0").strip()
-
-                resolved_user_id = nickname_to_user_id.get(target_user, target_user)
-                try:
-                    score_change = int(score_change_str)
-                except ValueError:
-                    score_change = 0
-
-                if resolved_user_id and score_change != 0:
-                    await self.plugin.data_cache.update_relation(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        user_id=resolved_user_id,
-                        relation=score_change,
-                    )
-                    logger.info(
-                        f"[Giftia Passive Memory] 用户 {resolved_user_id} 好感度变动 {score_change}，原因: {reason}"
-                    )
-
-            title_matches = re.finditer(
-                r"<set_relation_title\s+([^>]*)>(.*?)</set_relation_title>",
-                completion_text,
-                re.DOTALL,
-            )
-            for match in title_matches:
-                attr_str = match.group(1)
-                title = match.group(2).strip()
-                attrs = dict(re.findall(r'(\w+)=["\']([^"\']*)["\']', attr_str))
-                target_user = attrs.get("user_id", "").strip()
-
-                resolved_user_id = nickname_to_user_id.get(target_user, target_user)
-                if resolved_user_id and title:
-                    await self.plugin.data_cache.set_relation_title(
-                        bot_name=bot_name,
-                        group_or_user_id=group_or_user_id,
-                        user_id=resolved_user_id,
-                        title=title,
-                    )
-                    logger.info(
-                        f"[Giftia Passive Memory] 用户 {resolved_user_id} 关系头衔已设置为: {title}"
-                    )
 
         except Exception as e:
             logger.error(
@@ -652,7 +920,7 @@ class PassiveMemoryManager:
                     start_id=start_id,
                     end_id=end_id,
                 )
-                return f"成功提炼了 {len(db_messages)} 条消息的记忆（消息范围: id {start_id} 到 {end_id}）。"
+                return f"成功处理了 {len(db_messages)} 条消息的被动总结（消息范围: id {start_id} 到 {end_id}）。"
             except Exception as e:
                 # 失败时回滚边界
                 await self.plugin.db.upsert_kv_data(

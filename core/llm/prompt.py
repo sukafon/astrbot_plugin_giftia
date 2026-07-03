@@ -13,6 +13,15 @@ MSG_PROPS = [
 ]
 # 操作同上
 CAPTION_PROPS = ["genre", "character", "source", "text", "caption"]
+USER_PROFILE_FIELDS = [
+    ("call_name", "你的称呼"),
+    ("aliases", "其他外号"),
+    ("personality", "性格风格"),
+    ("interests", "兴趣话题"),
+    ("attitude", "互动态度"),
+    ("agreements", "关键约定"),
+    ("extra", "其他补充"),
+]
 
 
 def build_decision_prompt(
@@ -21,9 +30,10 @@ def build_decision_prompt(
     recent_messages: list[MessageData],
     current_message: MessageData,
     bot_status: Status,
-    user_relation: tuple[int, str],
-    user_profile: str | None = None,
+    user_relation: tuple[int, str] | None = None,
+    user_profile: str | dict | None = None,
     group_profile: str | None = None,
+    active_user_briefs: list[dict] | None = None,
 ) -> str:
     user_prompt = []
     # 时间
@@ -37,16 +47,21 @@ def build_decision_prompt(
     if bot_status:
         user_prompt.append(f"<status>\n{parse_status_to_str(bot_status)}\n</status>")
     # 群画像
-    if group_profile:
-        user_prompt.append(f"<group_profile>\n{group_profile}\n</group_profile>")
+    group_profile_text = normalize_profile_text(group_profile)
+    if group_profile_text:
+        user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
     # 用户画像
-    user_prompt.append(
-        f"<user_profile user_id={user_id}>\n{user_profile}\n</user_profile>"
+    user_profile_block = build_user_profile_block(
+        user_id=user_id,
+        user_profile=user_profile,
+        user_relation=user_relation,
     )
-    # 好感度
-    user_prompt.append(
-        f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>"
-    )
+    if user_profile_block:
+        user_prompt.append(user_profile_block)
+    # 窗口内其他活跃用户摘要
+    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
+    if active_user_briefs_block:
+        user_prompt.append(active_user_briefs_block)
     # 近期消息
     if recent_messages:
         recent_messages_str = "\n".join(
@@ -149,7 +164,7 @@ def build_reply_prompt(
     recent_messages: list[MessageData],
     media_captions: list[MediaCaption],
     bot_status: Status,
-    user_relation: tuple[int, str],
+    user_relation: tuple[int, str] | None = None,
     group_data: str = "",
     user_id: str = "",
     nickname: str = "",
@@ -158,8 +173,9 @@ def build_reply_prompt(
     tool_results: list[dict[str, str]] | None = None,
     long_memories: list[MemoryItem] | None = None,
     relevant_memories: list[str] | None = None,
-    user_profile: str | None = None,
+    user_profile: str | dict | None = None,
     group_profile: str | None = None,
+    active_user_briefs: list[dict] | None = None,
     other_data: list[str] | None = None,
     bot_sticker: str | None = None,
 ) -> str:
@@ -193,16 +209,21 @@ def build_reply_prompt(
     if group_data:
         user_prompt.append(f"<group_data>\n{group_data.strip()}\n</group_data>")
     # 群画像
-    if group_profile:
-        user_prompt.append(f"<group_profile>\n{group_profile}\n</group_profile>")
+    group_profile_text = normalize_profile_text(group_profile)
+    if group_profile_text:
+        user_prompt.append(f"<group_profile>\n{group_profile_text}\n</group_profile>")
     # 用户画像
-    user_prompt.append(
-        f"<user_profile user_id={user_id}>\n{user_profile}\n</user_profile>"
+    user_profile_block = build_user_profile_block(
+        user_id=user_id,
+        user_profile=user_profile,
+        user_relation=user_relation,
     )
-    # 好感度
-    user_prompt.append(
-        f"<user_relation user_id={user_id}>\n{build_user_relation(user_relation)}\n</user_relation>"
-    )
+    if user_profile_block:
+        user_prompt.append(user_profile_block)
+    # 窗口内其他活跃用户摘要
+    active_user_briefs_block = build_active_user_briefs(active_user_briefs)
+    if active_user_briefs_block:
+        user_prompt.append(active_user_briefs_block)
     # 长期记忆
     if long_memories:
         user_prompt.append(
@@ -315,11 +336,127 @@ def build_rag_results(rag_memories: list[str]) -> str:
     return rag_memories_str
 
 
-def build_user_relation(relation: tuple[int, str]) -> str:
-    text = [f"好感度：{relation[0] if relation else 0}"]
-    if relation[1]:
-        text.append(f"称号：{relation[1]}")
+def normalize_profile_text(profile: str | None) -> str:
+    if not profile:
+        return ""
+
+    normalized_lines = []
+    empty_values = {"", "无", "暂无", "未知", "none", "null", "n/a", "N/A"}
+    for raw_line in str(profile).splitlines():
+        line = raw_line.strip()
+        if not line or line in empty_values:
+            continue
+
+        content = line[1:].strip() if line.startswith(("-", "*")) else line
+        separator = "：" if "：" in content else ":" if ":" in content else ""
+        if separator:
+            _, value = content.split(separator, 1)
+            if value.strip() in empty_values:
+                continue
+
+        normalized_lines.append(line)
+
+    return "\n".join(normalized_lines)
+
+
+def normalize_profile_value(value) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text in {"", "无", "暂无", "未知", "none", "null", "n/a", "N/A"}:
+        return ""
+    return text
+
+
+def build_user_relation(relation: tuple[int, str] | None) -> str:
+    if not relation:
+        return ""
+
+    score = relation[0] if relation[0] is not None else 0
+    title = relation[1] or ""
+    if score == 0 and not title:
+        return ""
+
+    text = []
+    if score != 0:
+        text.append(f"好感度：{score}")
+    if title:
+        text.append(f"称号：{title}")
     return "\n".join(text)
+
+
+def build_user_profile_block(
+    user_id: str,
+    user_profile: str | dict | None,
+    user_relation: tuple[int, str] | None,
+) -> str:
+    parts = []
+
+    legacy_profile = ""
+    if isinstance(user_profile, dict):
+        structured_lines = []
+        for field, label in USER_PROFILE_FIELDS:
+            value = normalize_profile_value(user_profile.get(field))
+            if value:
+                structured_lines.append(f"{label}：{value}")
+        if structured_lines:
+            parts.append("\n".join(structured_lines))
+        legacy_profile = user_profile.get("profile") or ""
+    else:
+        legacy_profile = user_profile or ""
+
+    if not parts:
+        profile_text = normalize_profile_text(legacy_profile)
+        if profile_text:
+            parts.append(profile_text)
+
+    relation_text = build_user_relation(user_relation)
+    if relation_text:
+        parts.append(relation_text)
+
+    if not parts:
+        return ""
+
+    content = "\n".join(parts)
+    return f"<user_profile user_id={quoteattr(str(user_id))}>\n{content}\n</user_profile>"
+
+
+def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
+    if not active_user_briefs:
+        return ""
+
+    user_blocks = []
+    for item in active_user_briefs:
+        user_id = item.get("user_id")
+        if not user_id:
+            continue
+
+        props = f" user_id={quoteattr(str(user_id))}"
+        nickname = normalize_profile_value(item.get("nickname"))
+        if nickname:
+            props += f" nickname={quoteattr(nickname)}"
+
+        lines = []
+        relation = item.get("relation")
+        if relation not in (None, "", 0):
+            lines.append(f"好感度：{relation}")
+        title = normalize_profile_value(item.get("title"))
+        if title:
+            lines.append(f"关系头衔：{title}")
+        call_name = normalize_profile_value(item.get("call_name"))
+        if call_name:
+            lines.append(f"你的称呼：{call_name}")
+        aliases = normalize_profile_value(item.get("aliases"))
+        if aliases:
+            lines.append(f"其他外号：{aliases}")
+
+        if lines:
+            content = "\n".join(lines)
+            user_blocks.append(f"<user{props}>\n{content}\n</user>")
+
+    if not user_blocks:
+        return ""
+    return "<active_user_briefs>\n" + "\n".join(user_blocks) + "\n</active_user_briefs>"
 
 
 def format_time_to_hhmmss(db_value: str) -> str:
