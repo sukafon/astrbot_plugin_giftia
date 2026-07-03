@@ -728,10 +728,24 @@ class DataApi:
                 like_fields = ["up.profile"] + [
                     f"up.{field}" for field in USER_PROFILE_FIELD_KEYS
                 ]
+                alias_exists = """
+                    EXISTS (
+                        SELECT 1
+                        FROM user_aliases ua
+                        WHERE ua.bot_name = up.bot_name
+                          AND ua.group_or_user_id = up.group_or_user_id
+                          AND ua.user_id = up.user_id
+                          AND ua.alias LIKE ?
+                    )
+                """
                 conditions.append(
-                    "(" + " OR ".join(f"{field} LIKE ?" for field in like_fields) + ")"
+                    "("
+                    + " OR ".join(
+                        [f"{field} LIKE ?" for field in like_fields] + [alias_exists]
+                    )
+                    + ")"
                 )
-                params.extend([f"%{search}%"] * len(like_fields))
+                params.extend([f"%{search}%"] * (len(like_fields) + 1))
 
             where_clause = ""
             if conditions:
@@ -770,7 +784,12 @@ class DataApi:
                             "user_id": r["user_id"],
                             "profile": r["profile"],
                             "call_name": r["call_name"] or "",
-                            "aliases": r["aliases"] or "",
+                            "aliases": await self.giftia.db.get_user_aliases_text(
+                                bot_name=r["bot_name"],
+                                group_or_user_id=r["group_or_user_id"],
+                                user_id=r["user_id"],
+                                limit=6,
+                            ),
                             "personality": r["personality"] or "",
                             "interests": r["interests"] or "",
                             "attitude": r["attitude"] or "",
@@ -832,12 +851,25 @@ class DataApi:
                     params.append(user_id)
                 if search:
                     like_fields = ["profile"] + list(USER_PROFILE_FIELD_KEYS)
+                    alias_exists = """
+                        EXISTS (
+                            SELECT 1
+                            FROM user_aliases ua
+                            WHERE ua.bot_name = user_profiles.bot_name
+                              AND ua.group_or_user_id = user_profiles.group_or_user_id
+                              AND ua.user_id = user_profiles.user_id
+                              AND ua.alias LIKE ?
+                        )
+                    """
                     conditions.append(
                         "("
-                        + " OR ".join(f"{field} LIKE ?" for field in like_fields)
+                        + " OR ".join(
+                            [f"{field} LIKE ?" for field in like_fields]
+                            + [alias_exists]
+                        )
                         + ")"
                     )
-                    params.extend([f"%{search}%"] * len(like_fields))
+                    params.extend([f"%{search}%"] * (len(like_fields) + 1))
 
                 where_clause = "WHERE " + " AND ".join(conditions)
                 async with self.giftia.db.conn.execute(
@@ -908,6 +940,7 @@ class DataApi:
                 relation=parsed_relation,
                 title=parsed_title,
                 profile_fields=profile_fields,
+                alias_increment_count=False,
             )
 
             return json_response({"status": "success", "message": "更新用户画像成功"})

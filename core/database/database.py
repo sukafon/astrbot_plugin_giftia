@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 
 import aiosqlite
@@ -22,6 +23,25 @@ class Database:
         self.db_path = (
             StarTools.get_data_dir("astrbot_plugin_giftia") / "chat_history.db"
         )
+
+    @staticmethod
+    def parse_aliases(aliases: str | list[str] | tuple[str, ...] | None) -> list[str]:
+        if not aliases:
+            return []
+
+        raw_items = aliases
+        if isinstance(aliases, str):
+            raw_items = re.split(r"[,，、;；\n\r|]+", aliases)
+
+        parsed = []
+        seen = set()
+        for item in raw_items:
+            alias = str(item or "").strip()
+            if not alias or alias in seen:
+                continue
+            seen.add(alias)
+            parsed.append(alias)
+        return parsed
 
     @classmethod
     async def connect(cls):
@@ -172,6 +192,30 @@ class Database:
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_id_unique ON user_profiles (user_id, group_or_user_id, bot_name)"
             )
+            # 用户外号统计表。aliases 旧列保留兼容，但读写权威来源迁移到这里。
+            await cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_aliases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_name TEXT NOT NULL,
+                    group_or_user_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    alias TEXT NOT NULL,
+                    alias_count INTEGER NOT NULL DEFAULT 1,
+                    first_seen_at DATETIME,
+                    last_seen_at DATETIME,
+                    created_at DATETIME,
+                    updated_at DATETIME
+                )
+            """)
+            await cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_alias_unique ON user_aliases (bot_name, group_or_user_id, user_id, alias)"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_alias_lookup ON user_aliases (bot_name, group_or_user_id, user_id, alias_count, first_seen_at)"
+            )
+            await cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_alias_search ON user_aliases (bot_name, group_or_user_id, alias)"
+            )
             # 创建群画像表
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS group_profiles (
@@ -223,6 +267,67 @@ class Database:
             await cursor.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_kv_key_unique ON kv_store (key)"
             )
+            await cursor.execute(
+                "SELECT value FROM kv_store WHERE key = ? LIMIT 1",
+                ("user_aliases_migration_done",),
+            )
+            row = await cursor.fetchone()
+            if not row:
+                logger.info("[Database] Running user aliases migration...")
+                async with conn.execute(
+                    """
+                    SELECT bot_name, group_or_user_id, user_id, aliases, created_at, updated_at
+                    FROM user_profiles
+                    WHERE aliases IS NOT NULL AND aliases != ''
+                    """
+                ) as alias_cursor:
+                    alias_rows = await alias_cursor.fetchall()
+                for alias_row in alias_rows:
+                    aliases = cls.parse_aliases(alias_row["aliases"])
+                    first_seen_at = alias_row["created_at"] or datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    last_seen_at = alias_row["updated_at"] or first_seen_at
+                    for alias in aliases:
+                        await cursor.execute(
+                            """
+                            INSERT INTO user_aliases (
+                                bot_name,
+                                group_or_user_id,
+                                user_id,
+                                alias,
+                                alias_count,
+                                first_seen_at,
+                                last_seen_at,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                            ON CONFLICT(bot_name, group_or_user_id, user_id, alias) DO NOTHING
+                            """,
+                            (
+                                alias_row["bot_name"],
+                                alias_row["group_or_user_id"],
+                                alias_row["user_id"],
+                                alias,
+                                first_seen_at,
+                                last_seen_at,
+                                first_seen_at,
+                                last_seen_at,
+                            ),
+                        )
+                update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                await cursor.execute(
+                    """
+                    INSERT INTO kv_store (key, value, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value=excluded.value,
+                        updated_at=excluded.updated_at
+                    """,
+                    ("user_aliases_migration_done", "1", update_time, update_time),
+                )
+                logger.info("[Database] User aliases migration completed.")
             # 创建短期任务看板表
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS short_tasks (
@@ -1245,6 +1350,170 @@ class Database:
             row = await cursor.fetchone()
         return row["profile"] if row else None
 
+    async def get_user_aliases(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        limit: int = 6,
+    ) -> list[dict]:
+        """获取用户外号，按统计数量优先，同数量时旧外号优先"""
+        limit = max(1, int(limit or 6))
+        async with self.conn.execute(
+            """
+            SELECT alias, alias_count, first_seen_at, last_seen_at
+            FROM user_aliases
+            WHERE bot_name = ? AND group_or_user_id = ? AND user_id = ?
+            ORDER BY alias_count DESC, first_seen_at ASC, id ASC
+            LIMIT ?
+            """,
+            (bot_name, group_or_user_id, user_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_user_aliases_text(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        limit: int = 6,
+    ) -> str:
+        aliases = await self.get_user_aliases(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+            limit=limit,
+        )
+        return "，".join(item["alias"] for item in aliases)
+
+    async def get_session_user_aliases(
+        self, bot_name: str, group_or_user_id: str
+    ) -> list[dict]:
+        """获取当前会话内所有已知用户外号，用于后端观测计数。"""
+        async with self.conn.execute(
+            """
+            SELECT user_id, alias
+            FROM user_aliases
+            WHERE bot_name = ? AND group_or_user_id = ?
+            ORDER BY user_id ASC, alias_count DESC, first_seen_at ASC, id ASC
+            """,
+            (bot_name, group_or_user_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def increment_user_alias_counts(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        observations: list[tuple[str, str, int]],
+    ) -> None:
+        """批量增加已知外号的观测次数。不存在的外号不会被创建。"""
+        if not observations:
+            return
+
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for user_id, alias, count in observations:
+            clean_user_id = str(user_id or "").strip()
+            clean_alias = str(alias or "").strip()
+            try:
+                clean_count = max(1, int(count or 1))
+            except (TypeError, ValueError):
+                clean_count = 1
+            if not clean_user_id or not clean_alias:
+                continue
+            await self.conn.execute(
+                """
+                UPDATE user_aliases
+                SET
+                    alias_count = alias_count + ?,
+                    last_seen_at = ?,
+                    updated_at = ?
+                WHERE bot_name = ?
+                  AND group_or_user_id = ?
+                  AND user_id = ?
+                  AND alias = ?
+                """,
+                (
+                    clean_count,
+                    update_time,
+                    update_time,
+                    bot_name,
+                    group_or_user_id,
+                    clean_user_id,
+                    clean_alias,
+                ),
+            )
+        await self.conn.commit()
+
+    async def upsert_user_aliases(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        aliases: str | list[str] | tuple[str, ...] | None,
+        increment_count: bool = True,
+    ) -> None:
+        """记录用户外号。increment_count=True 表示本窗口观测到一次。"""
+        alias_items = self.parse_aliases(aliases)
+        if not alias_items:
+            return
+
+        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if increment_count:
+            conflict_update = """
+                alias_count=user_aliases.alias_count + excluded.alias_count,
+                last_seen_at=excluded.last_seen_at,
+                updated_at=excluded.updated_at
+            """
+        else:
+            conflict_update = """
+                updated_at=excluded.updated_at
+            """
+
+        for alias in alias_items:
+            await self.conn.execute(
+                f"""
+                INSERT INTO user_aliases (
+                    bot_name,
+                    group_or_user_id,
+                    user_id,
+                    alias,
+                    alias_count,
+                    first_seen_at,
+                    last_seen_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(bot_name, group_or_user_id, user_id, alias) DO UPDATE SET
+                    {conflict_update}
+                """,
+                (
+                    bot_name,
+                    group_or_user_id,
+                    user_id,
+                    alias,
+                    update_time,
+                    update_time,
+                    update_time,
+                    update_time,
+                ),
+            )
+        await self.conn.commit()
+
+    async def delete_user_aliases(
+        self, bot_name: str, group_or_user_id: str, user_id: str
+    ) -> None:
+        await self.conn.execute(
+            """
+            DELETE FROM user_aliases WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            """,
+            (user_id, group_or_user_id, bot_name),
+        )
+        await self.conn.commit()
+
     async def get_user_profile_record(
         self, bot_name: str, group_or_user_id: str, user_id: str
     ) -> dict | None:
@@ -1272,7 +1541,17 @@ class Database:
             (user_id, group_or_user_id, bot_name),
         ) as cursor:
             row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+
+        record = dict(row)
+        record["aliases"] = await self.get_user_aliases_text(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            user_id=user_id,
+            limit=6,
+        )
+        return record
 
     async def search_user_profiles(
         self,
@@ -1325,6 +1604,14 @@ class Database:
                 up.user_id LIKE ?
                 OR up.call_name LIKE ?
                 OR up.aliases LIKE ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM user_aliases ua
+                    WHERE ua.bot_name = up.bot_name
+                      AND ua.group_or_user_id = up.group_or_user_id
+                      AND ua.user_id = up.user_id
+                      AND ua.alias LIKE ?
+                )
                 OR up.title LIKE ?
                 OR up.profile LIKE ?
                 OR up.personality LIKE ?
@@ -1345,8 +1632,16 @@ class Database:
                 CASE
                     WHEN up.user_id = ? THEN 0
                     WHEN up.call_name = ? THEN 1
-                    WHEN up.aliases = ? THEN 2
-                    ELSE 3
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM user_aliases ua
+                        WHERE ua.bot_name = up.bot_name
+                          AND ua.group_or_user_id = up.group_or_user_id
+                          AND ua.user_id = up.user_id
+                          AND ua.alias = ?
+                    ) THEN 2
+                    WHEN up.aliases = ? THEN 3
+                    ELSE 4
                 END,
                 up.updated_at DESC
             LIMIT ?
@@ -1365,6 +1660,8 @@ class Database:
                 like,
                 like,
                 like,
+                like,
+                query,
                 query,
                 query,
                 query,
@@ -1372,7 +1669,16 @@ class Database:
             ),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+
+        results = [dict(row) for row in rows]
+        for item in results:
+            item["aliases"] = await self.get_user_aliases_text(
+                bot_name=item["bot_name"],
+                group_or_user_id=item["group_or_user_id"],
+                user_id=item["user_id"],
+                limit=6,
+            )
+        return results
 
     async def upsert_user_profile(
         self,
@@ -1387,7 +1693,6 @@ class Database:
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         profile_columns = [
             "call_name",
-            "aliases",
             "personality",
             "interests",
             "attitude",
@@ -1435,7 +1740,7 @@ class Database:
                 bot_name,
                 profile if profile is not None else "",
                 profile_fields.get("call_name"),
-                profile_fields.get("aliases"),
+                None,
                 profile_fields.get("personality"),
                 profile_fields.get("interests"),
                 profile_fields.get("attitude"),
@@ -1467,6 +1772,12 @@ class Database:
             """,
             (user_id, group_or_user_id, bot_name),
         )
+        await self.conn.execute(
+            """
+            DELETE FROM user_aliases WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+            """,
+            (user_id, group_or_user_id, bot_name),
+        )
         await self.conn.commit()
 
     # 删除整个群的用户画像
@@ -1481,6 +1792,12 @@ class Database:
         await self.conn.execute(
             """
             DELETE FROM relations WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
+        await self.conn.execute(
+            """
+            DELETE FROM user_aliases WHERE group_or_user_id = ? AND bot_name = ?
             """,
             (group_or_user_id, bot_name),
         )

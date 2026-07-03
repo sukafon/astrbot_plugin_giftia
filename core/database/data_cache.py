@@ -320,10 +320,12 @@ class DataCache:
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
         clamp_relation: bool = False,
+        alias_increment_count: bool = True,
     ) -> None:
         """设置用户画像"""
         fmt_key = f"{bot_name}:{group_or_user_id}:{user_id}"
-        profile_fields = profile_fields or {}
+        profile_fields = dict(profile_fields or {})
+        aliases = profile_fields.pop("aliases", None)
         if profile is not None:
             self.user_profiles[fmt_key] = profile
         db_relation = relation
@@ -351,6 +353,22 @@ class DataCache:
                 db_relation,
                 db_title,
             )
+        aliases_changed = aliases is not None
+        if aliases_changed:
+            if aliases or alias_increment_count:
+                await self.db.upsert_user_aliases(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                    aliases=aliases,
+                    increment_count=alias_increment_count,
+                )
+            else:
+                await self.db.delete_user_aliases(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    user_id=user_id,
+                )
         await self.db.upsert_user_profile(
             user_id=user_id,
             group_or_user_id=group_or_user_id,
@@ -365,6 +383,13 @@ class DataCache:
             current_record["profile"] = profile
         for key, value in profile_fields.items():
             current_record[key] = value
+        if aliases_changed:
+            current_record["aliases"] = await self.db.get_user_aliases_text(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                user_id=user_id,
+                limit=6,
+            )
         if db_relation is not None:
             current_record["relation"] = db_relation
         if db_title is not None:
