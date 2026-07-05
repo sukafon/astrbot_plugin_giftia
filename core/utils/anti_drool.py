@@ -22,6 +22,17 @@ def replace_outside_quotes(s: str, target: str, replacement: str) -> str:
             result.append(char)
     return "".join(result)
 
+def escape_tags_in_code_blocks(text: str) -> str:
+    """转义 Markdown 代码块（```...```）和行内代码（`...`）中的 XML 标签，防止解析器误伤"""
+    pattern = r'(```[a-zA-Z]*\n[\s\S]*?\n```|`[^`]+`)'
+    
+    def repl(match):
+        content = match.group(0)
+        return content.replace('<', '&lt;').replace('>', '&gt;')
+        
+    return re.sub(pattern, repl, text)
+
+
 def clean_llm_completion(text: str) -> str:
     """
     针对低智/弱模型输出流口水（如重复的 tool_call、标签拼写错误、中文标点引起的 JSON 损坏、哈希表示泄露等）的清洗函数。
@@ -29,8 +40,11 @@ def clean_llm_completion(text: str) -> str:
     if not text:
         return ""
 
+    # 0. 转义代码块/行内代码中的 XML 标签，防止其干扰 XML 结构树
+    cleaned = escape_tags_in_code_blocks(text)
+
     # 1. 规范化角括号 (例如 ‹ 和 › 替换为 < 和 >)
-    cleaned = text.replace("‹", "<").replace("›", ">")
+    cleaned = cleaned.replace("‹", "<").replace("›", ">")
 
     # 2. 修复常见标签名拼写错误
     # 比如 tool_cal1, too1_ca11, too1_ca11 -> tool_call

@@ -184,6 +184,30 @@ class WebUIManager:
             desc="Delete user profile",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases",
+            view_handler=self.web_api.get_user_aliases,
+            methods=["GET"],
+            desc="Get user profile aliases",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/add",
+            view_handler=self.web_api.add_user_alias,
+            methods=["POST"],
+            desc="Add user profile alias",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/count",
+            view_handler=self.web_api.update_user_alias_count,
+            methods=["POST"],
+            desc="Update user profile alias count",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/delete",
+            view_handler=self.web_api.delete_user_alias,
+            methods=["POST"],
+            desc="Delete user profile alias",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/group",
             view_handler=self.web_api.get_group_profiles,
             methods=["GET"],

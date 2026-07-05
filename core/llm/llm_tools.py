@@ -225,6 +225,19 @@ class SearchUserProfileTool(FunctionTool):
             query=query,
             limit=clean_limit,
         )
+        bot_conf = plugin.bot_map.get(bot_name, {})
+        self_refs = {
+            str(event.get_self_id() or "").strip(),
+            str(bot_conf.get("nickname") or "").strip(),
+            str(bot_name or "").strip(),
+            "bot",
+        }
+        self_refs.discard("")
+        results = [
+            item
+            for item in results
+            if str(item.get("user_id") or "").strip() not in self_refs
+        ]
         if not results:
             return f"未在当前会话找到与「{query}」相关的成员画像"
 

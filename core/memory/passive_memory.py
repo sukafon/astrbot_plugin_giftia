@@ -5,82 +5,17 @@ from datetime import datetime
 
 from astrbot.api import logger
 
+from ..llm.preset_prompts import (
+    DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT,
+    DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT,
+)
+
 from ..llm.prompt import (
     USER_PROFILE_FIELDS,
     normalize_profile_text,
     normalize_profile_value,
     parse_caption_to_str,
 )
-
-
-DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT = """# 角色与目标
-你是一个长期记忆提炼器。你需要分析以下群聊片段，只总结与机器人自身（昵称：{nickname}，ID：{self_id}）直接相关、未来值得召回的事件记忆。
-
-# 提炼规则
-- 只记录机器人参与、被提及、有互动的有价值事件，例如约定、承诺、共同经历、明确偏好或重要结论。
-- 每条记忆必须使用第一人称，从机器人的角度描述。
-- 每条记忆控制在 50 字以内，避免流水账和情绪泛化。
-- 必须使用 `users` 属性指出该记忆直接关联的群友 user_id，多用户用逗号分隔。
-- 与特定人无关但对机器人有意义时，可以省略 `users` 属性。
-
-# 输出格式
-请只输出 `<memory>` 标签：
-`<memory users="12345">小明约我周末一起打游戏，我答应提醒他。</memory>`
-
-如果没有值得记录的长期记忆，请只输出：
-`<memory>无</memory>`"""
-
-
-DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT = """# 角色与目标
-你是一个用户画像和群画像维护器。你需要分析以下群聊片段，结合已有画像，维护结构化用户画像、群画像、好感度和关系头衔。
-
-# 提供的现有状态
-- <current_user_profiles>：当前活跃成员的结构化画像、旧画像参考、好感度和关系头衔。
-- <current_group_profile>：当前群聊的现有画像。
-
-# 用户画像更新
-如果发现某位用户的新特征、新喜好、称呼关系或互动状态，请结合现有画像，输出该用户需要更新的字段。
-
-用户画像字段说明：
-- call_name：你对该成员的称呼。
-- aliases：其他群友对该成员的称呼或外号。
-- personality：性格特征与说话风格。
-- interests：兴趣爱好与关注事物。
-- attitude：该成员对你的态度。
-- agreements：与你达成的承诺或共同回忆。
-- extra：无法归入以上字段、但长期有助于理解用户的信息；不要重复已有字段；最多 3 条，每条 30 字以内。
-
-只输出需要更新的字段，不要为无变化字段输出标签。每个字段精炼在一句话、30 字以内。好感度使用最新绝对分数，不要输出增量。关系头衔如果没有变化可以省略 `title` 属性。
-
-格式：
-`<summary_user_profile user_id="12345" relation="12" title="挚友">
-<call_name>小草莓</call_name>
-<aliases>草莓酱</aliases>
-<personality>傲娇但友好</personality>
-<interests>喜欢动漫和游戏</interests>
-<attitude>经常调侃我</attitude>
-<agreements>周末一起打游戏</agreements>
-<extra>习惯深夜活跃</extra>
-</summary_user_profile>`
-
-# 群画像更新
-如果发现群聊的新特征，请结合现有群画像，输出最新完整群画像：
-- 群聊主题：<群聊定位与核心主题>
-- 氛围特征：<群内氛围与活跃特征>
-- 成员关系：<核心成员互动关系，50 字以内>
-- 核心规则与忌讳：<群规、敏感点或忌讳>
-
-格式：
-`<summary_group_profile>
-- 群聊主题：游戏讨论与日常吹水
-- 氛围特征：气氛轻松，经常开玩笑
-- 成员关系：流萤与爱丽丝关系亲密
-- 核心规则与忌讳：禁止刷屏和恶意复读
-</summary_group_profile>`
-
-# 输出要求
-只输出需要更新的 XML 标签。如果没有任何画像或关系需要更新，请只输出：
-`<profile>无</profile>`"""
 
 
 def format_time_to_seconds(db_value: str) -> str:
@@ -397,6 +332,96 @@ class PassiveMemoryManager:
                 parsed[field] = value
         return parsed
 
+    def _is_bot_reference(
+        self,
+        target_user: str,
+        resolved_user_id: str,
+        self_id: str,
+        nickname: str = "",
+        bot_name: str = "",
+    ) -> bool:
+        target = str(target_user or "").strip()
+        resolved = str(resolved_user_id or "").strip()
+        bot_refs = {
+            str(self_id or "").strip(),
+            str(nickname or "").strip(),
+            str(bot_name or "").strip(),
+            "bot",
+        }
+        bot_refs.discard("")
+        return target in bot_refs or resolved in bot_refs
+
+    async def _refresh_known_alias_observations(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        self_id: str,
+        db_messages: list,
+    ) -> None:
+        aliases = await self.plugin.db.get_session_user_aliases(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+        )
+        if not aliases:
+            return
+
+        scan_messages = []
+        for msg in db_messages or []:
+            sender_id = str(msg.user_id or "").strip()
+            content = str(msg.content or "")
+            if not sender_id or not content:
+                continue
+            if self._is_bot_reference(
+                sender_id,
+                sender_id,
+                self_id,
+                bot_name=bot_name,
+            ):
+                continue
+            scan_messages.append((sender_id, content))
+
+        if not scan_messages:
+            return
+
+        observations = []
+        observed_keys = set()
+        for item in aliases:
+            target_user_id = str(item.get("user_id") or "").strip()
+            alias = str(item.get("alias") or "").strip()
+            if not target_user_id or not alias:
+                continue
+            if self._is_bot_reference(
+                target_user_id,
+                target_user_id,
+                self_id,
+                bot_name=bot_name,
+            ):
+                continue
+
+            observed = any(
+                sender_id != target_user_id and alias in content
+                for sender_id, content in scan_messages
+            )
+            key = (target_user_id, alias)
+            if observed and key not in observed_keys:
+                observed_keys.add(key)
+                observations.append((target_user_id, alias, 1))
+
+        if not observations:
+            return
+
+        await self.plugin.db.increment_user_alias_counts(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            observations=observations,
+        )
+        for target_user_id, _, _ in observations:
+            fmt_key = f"{bot_name}:{group_or_user_id}:{target_user_id}"
+            self.plugin.data_cache.user_profile_records.pop(fmt_key, None)
+        logger.debug(
+            f"[Giftia Passive Memory] 已刷新旧外号观测次数: {len(observations)} 条"
+        )
+
     async def _build_summary_context(
         self,
         bot_name: str,
@@ -407,15 +432,24 @@ class PassiveMemoryManager:
         active_users_in_range = {
             msg.user_id
             for msg in db_messages
-            if msg.user_id and str(msg.user_id) != str(self_id)
+            if msg.user_id
+            and not self._is_bot_reference(
+                msg.user_id,
+                msg.user_id,
+                self_id,
+                bot_name=bot_name,
+            )
         }
 
         nickname_to_user_id = {}
         user_id_to_nickname = {}
         for msg in db_messages:
             if msg.user_id and msg.nickname:
-                nickname_to_user_id[msg.nickname] = msg.user_id
-                user_id_to_nickname[msg.user_id] = msg.nickname
+                if not self._is_bot_reference(
+                    msg.user_id, msg.user_id, self_id, bot_name=bot_name
+                ):
+                    nickname_to_user_id[msg.nickname] = msg.user_id
+                    user_id_to_nickname[msg.user_id] = msg.nickname
 
         all_media_ids = []
         for msg in db_messages:
@@ -489,6 +523,7 @@ class PassiveMemoryManager:
             "group_profile": group_profile or "无",
             "media_captions_block": media_captions_block,
             "chat_history_text": chat_history_text,
+            "alias_observation_messages": db_messages,
         }
 
     def _build_memory_user_prompt(self, group_or_user_id: str, context: dict) -> str:
@@ -643,6 +678,12 @@ class PassiveMemoryManager:
             return False
 
         logger.info(f"[Giftia Passive Memory] 画像维护返回内容:\n{completion_text}")
+        await self._refresh_known_alias_observations(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            self_id=self_id,
+            db_messages=context.get("alias_observation_messages") or [],
+        )
 
         user_profile_matches = re.finditer(
             r"<summary_user_profile\s+([^>]*)>(.*?)</summary_user_profile>",
@@ -675,6 +716,17 @@ class PassiveMemoryManager:
             if not resolved_user_id or (
                 not has_profile_content and relation is None and title is None
             ):
+                continue
+            if self._is_bot_reference(
+                target_user,
+                resolved_user_id,
+                self_id,
+                nickname=nickname,
+                bot_name=bot_name,
+            ):
+                logger.debug(
+                    f"[Giftia Passive Memory] 跳过机器人自身画像更新: {target_user}"
+                )
                 continue
 
             profile_fields = {}
@@ -735,6 +787,18 @@ class PassiveMemoryManager:
             except ValueError:
                 score_change = 0
 
+            if self._is_bot_reference(
+                target_user,
+                resolved_user_id,
+                self_id,
+                nickname=nickname,
+                bot_name=bot_name,
+            ):
+                logger.debug(
+                    f"[Giftia Passive Memory] 跳过机器人自身好感度更新: {target_user}"
+                )
+                continue
+
             if resolved_user_id and score_change != 0:
                 await self.plugin.data_cache.update_relation(
                     bot_name=bot_name,
@@ -760,6 +824,18 @@ class PassiveMemoryManager:
             resolved_user_id = context["nickname_to_user_id"].get(
                 target_user, target_user
             )
+            if self._is_bot_reference(
+                target_user,
+                resolved_user_id,
+                self_id,
+                nickname=nickname,
+                bot_name=bot_name,
+            ):
+                logger.debug(
+                    f"[Giftia Passive Memory] 跳过机器人自身关系头衔更新: {target_user}"
+                )
+                continue
+
             if resolved_user_id and title:
                 await self.plugin.data_cache.set_relation_title(
                     bot_name=bot_name,

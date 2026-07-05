@@ -403,6 +403,29 @@ html[data-theme="dark"] .edit-media-tab-header {
     max-width: 800px;
 }
 
+.user-aliases-modal-card {
+    max-width: 860px;
+}
+
+.inline-input-action {
+    display: flex;
+    gap: 8px;
+}
+
+.inline-input-action input {
+    flex: 1;
+}
+
+.alias-table-container {
+    max-height: 420px;
+    overflow: auto;
+}
+
+.alias-count-input {
+    width: 88px;
+    min-width: 88px;
+}
+
 /* Short Task Board Modal */
 .task-board-modal-card {
     max-width: 920px !important;
@@ -800,5 +823,3 @@ html[data-theme="dark"] .task-card-textarea:hover {
         padding-top: 4px;
     }
 }
-
-

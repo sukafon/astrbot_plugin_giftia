@@ -810,7 +810,6 @@ window.GiftiaApp = {
             const encodedProfile = encodeURIComponent(item.profile || "");
             const structured = {
                 call_name: item.call_name || "",
-                aliases: item.aliases || "",
                 personality: item.personality || "",
                 interests: item.interests || "",
                 attitude: item.attitude || "",
@@ -854,6 +853,7 @@ window.GiftiaApp = {
                     <td data-label="更新时间">${window.formatDate(item.updated_at || item.created_at)}</td>
                     <td data-label="操作" class="text-right">
                         <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
                         <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
                     </td>
                 </tr>

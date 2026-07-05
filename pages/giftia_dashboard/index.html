@@ -501,15 +501,9 @@
                         <input type="text" id="edit-user-prof-title" placeholder="关系称号或头衔">
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>你的称呼</label>
-                        <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
-                    </div>
-                    <div class="form-group flex-2">
-                        <label>其他外号</label>
-                        <input type="text" id="edit-user-prof-aliases" placeholder="其他群友使用的称呼或外号">
-                    </div>
+                <div class="form-group">
+                    <label>你的称呼</label>
+                    <input type="text" id="edit-user-prof-call-name" placeholder="你对该成员的称呼">
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -543,6 +537,53 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('edit-user-profile-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditUserProfile()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Manage User Aliases -->
+    <div id="user-aliases-modal" class="modal-overlay">
+        <div class="modal-card card user-aliases-modal-card">
+            <div class="modal-header">
+                <h2>管理用户外号</h2>
+                <button class="modal-close-btn" onclick="closeModal('user-aliases-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="user-alias-bot">
+                <input type="hidden" id="user-alias-group">
+                <input type="hidden" id="user-alias-user">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>用户ID</label>
+                        <input type="text" id="user-alias-user-display" class="readonly-input" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>新增外号</label>
+                        <div class="inline-input-action">
+                            <input type="text" id="user-alias-new" placeholder="输入外号">
+                            <button class="btn btn-primary btn-small" onclick="submitAddUserAlias()">新增</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-container alias-table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>外号</th>
+                                <th>次数</th>
+                                <th>首次出现</th>
+                                <th>最近出现</th>
+                                <th class="text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="user-alias-list">
+                            <tr><td colspan="5" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('user-aliases-modal')">关闭</button>
             </div>
         </div>
     </div>
