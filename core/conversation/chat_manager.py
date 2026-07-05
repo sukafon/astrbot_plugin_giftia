@@ -159,7 +159,7 @@ class ChatManager:
         group_or_user_id = event.get_group_id() or event.get_sender_id()
 
         # 检查是否开启延迟多媒体转述 (仅在没有 @ 且不在发言窗口时延迟)
-        caption_config = bot_conf.get("caption_config", {})
+        caption_config = self.plugin.get_caption_config(bot_conf)
         defer_enabled = caption_config.get("defer_caption_enabled", True)
 
         should_defer = False

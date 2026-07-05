@@ -15,6 +15,7 @@ from astrbot.api.message_components import (
     Node,
     Nodes,
     Plain,
+    Poke,
     Record,
     Reply,
     Video,
@@ -58,6 +59,109 @@ class MessageParser:
         self.url_locks = defaultdict(asyncio.Lock)
         self.hash_locks = defaultdict(asyncio.Lock)
 
+    async def _resolve_user_name(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+        current_name: str | None,
+        force_lookup: bool = False,
+    ) -> str:
+        """Resolve a readable nickname for notice events that only carry user_id."""
+        user_id = str(user_id or "").strip()
+        current_name = str(current_name or "").strip()
+        if current_name and current_name != user_id and not force_lookup:
+            return current_name
+        if not user_id:
+            return current_name
+
+        group_id = str(event.get_group_id() or "").strip()
+        bot = getattr(event, "bot", None)
+        routing_params = {}
+        self_id = str(event.get_self_id() or "").strip()
+        if self_id:
+            routing_params["self_id"] = self_id
+
+        if bot and hasattr(bot, "call_action"):
+            try:
+                query_user_id = int(user_id) if user_id.isdigit() else user_id
+                if group_id:
+                    query_group_id = int(group_id) if group_id.isdigit() else group_id
+                    info = await bot.call_action(
+                        action="get_group_member_info",
+                        group_id=query_group_id,
+                        user_id=query_user_id,
+                        no_cache=False,
+                        **routing_params,
+                    )
+                    nickname = (
+                        info.get("card")
+                        or info.get("nickname")
+                        or info.get("nick")
+                    )
+                    if nickname:
+                        return str(nickname)
+                info = await bot.call_action(
+                    action="get_stranger_info",
+                    user_id=query_user_id,
+                    no_cache=False,
+                    **routing_params,
+                )
+                nickname = info.get("nick") or info.get("nickname")
+                if nickname:
+                    return str(nickname)
+            except Exception as e:
+                logger.debug(f"[Giftia] 解析用户昵称失败: {e}")
+
+        if group_id:
+            try:
+                group = await event.get_group(group_id)
+                for member in getattr(group, "members", []) or []:
+                    if str(getattr(member, "user_id", "")) == user_id:
+                        nickname = getattr(member, "nickname", "")
+                        if nickname:
+                            return str(nickname)
+            except Exception as e:
+                logger.debug(f"[Giftia] 从群成员列表解析昵称失败: {e}")
+
+        return current_name or user_id
+
+    @staticmethod
+    def _get_poke_target_id(comp: Poke) -> str:
+        target_id = (
+            comp.target_id()
+            if hasattr(comp, "target_id")
+            else getattr(comp, "id", None) or getattr(comp, "qq", None)
+        )
+        return str(target_id or "").strip()
+
+    @staticmethod
+    def _format_user_ref(name: str, user_id: str) -> str:
+        name = str(name or "").strip()
+        user_id = str(user_id or "").strip()
+        if name and user_id and name != user_id:
+            return f"{name}({user_id})"
+        return user_id or name or "未知用户"
+
+    async def _format_poke_message(
+        self,
+        event: AstrMessageEvent,
+        chain: list[BaseMessageComponent],
+    ) -> str:
+        parts = []
+        for comp in chain:
+            if not isinstance(comp, Poke):
+                continue
+            target_id = self._get_poke_target_id(comp)
+            target_name = await self._resolve_user_name(
+                event=event,
+                user_id=target_id,
+                current_name=target_id,
+                force_lookup=True,
+            )
+            target_ref = self._format_user_ref(target_name, target_id)
+            parts.append(f"[戳一戳:{target_ref}]")
+        return " ".join(parts)
+
     async def parse_user_message(
         self, event: AstrMessageEvent, bot_name: str, defer_caption: bool = False
     ) -> tuple[MessageData, list[str], list[str]]:
@@ -69,6 +173,21 @@ class MessageParser:
             event.get_messages(), defer_caption
         )
         group_or_user_id = event.get_group_id() or event.get_sender_id()
+        sender_id = event.get_sender_id()
+        has_poke = any(isinstance(comp, Poke) for comp in event.get_messages())
+        sender_name = await self._resolve_user_name(
+            event=event,
+            user_id=sender_id,
+            current_name=event.get_sender_name(),
+            force_lookup=has_poke,
+        )
+        if has_poke:
+            poke_msg = await self._format_poke_message(
+                event=event,
+                chain=event.get_messages(),
+            )
+            if poke_msg:
+                msg = poke_msg
         # 提取消息中的图片url
         image_urls = []
         audio_urls = []
@@ -110,8 +229,8 @@ class MessageParser:
             ):
                 image_urls.append(comp.url)
         msg_data = MessageData(
-            nickname=event.get_sender_name(),
-            user_id=event.get_sender_id(),
+            nickname=sender_name,
+            user_id=sender_id,
             group_or_user_id=group_or_user_id,
             time=iso_string,
             message_id=event.message_obj.message_id,
@@ -218,6 +337,11 @@ class MessageParser:
                             quote_parts.append("[合并转发消息]")
                         elif isinstance(quote, File):
                             quote_parts.append(f"[文件:{quote.name}]")
+                        elif isinstance(quote, Poke):
+                            target_id = self._get_poke_target_id(quote)
+                            quote_parts.append(
+                                f"[戳一戳:{target_id}]" if target_id else "[戳一戳]"
+                            )
                     quote_text = " ".join(quote_parts)
                 msg_parts.append(
                     f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>"
@@ -298,6 +422,11 @@ class MessageParser:
             elif isinstance(comp, File):
                 # 暂不支持文件转述
                 msg_parts.append(f"[文件:{comp.name}]")
+            elif isinstance(comp, Poke):
+                target_id = self._get_poke_target_id(comp)
+                msg_parts.append(
+                    f"[戳一戳:{target_id}]" if target_id else "[戳一戳]"
+                )
             elif isinstance(comp, Node):
                 sub_content = ""
                 if comp.content:

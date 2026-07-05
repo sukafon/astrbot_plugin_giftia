@@ -28,7 +28,11 @@ class MediaCaptioner:
                     seen_media.add(media_id)
                     hash_vals.append(media_id)
 
-        max_deferred = caption_config.get("max_deferred_captions", 5)
+        try:
+            max_deferred = int(caption_config.get("max_deferred_captions", 5))
+        except (TypeError, ValueError):
+            max_deferred = 5
+        max_deferred = max(0, max_deferred)
         deferred_count = 0
 
         media_captions: list[MediaCaption] = []

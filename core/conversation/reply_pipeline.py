@@ -76,7 +76,7 @@ class ReplyPipeline:
                 if msg.user_id and str(msg.user_id) == self_id and msg.content:
                     sent_messages.append(msg.content)
 
-        caption_config = bot_conf.get("caption_config", {})
+        caption_config = self.plugin.get_caption_config(bot_conf)
         media_captions = await self.media_captioner.transcribe_media_if_deferred(
             bot_name=bot_name,
             recent_messages=recent_messages,
