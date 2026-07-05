@@ -483,11 +483,23 @@
                         "default": false,
                         "hint": "若不开启重排序，嵌入搜索结果将直接作为记忆输入大模型。"
                     },
+                    "use_external_provider": {
+                        "description": "使用 AstrBot 重排序提供商",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "开启后将使用 AstrBot 中配置的 Rerank 提供商，而不是本地 FastEmbed 重排模型。"
+                    },
+                    "external_provider_id": {
+                        "description": "外部重排序提供商 ID",
+                        "type": "string",
+                        "default": "",
+                        "hint": "在使用 AstrBot 提供商时生效。如果不填写，将默认使用 AstrBot 当前激活的第一个重排序模型。"
+                    },
                     "model": {
-                        "description": "模型名称",
+                        "description": "本地重排模型名称",
                         "type": "string",
                         "default": "BAAI/bge-reranker-base",
-                        "hint": "重排模型名称。BAAI/bge-base-zh-v1.5模型权重大小为1.04 GB。如需修改，可用 /打印rerank模型 在控制台查看支持的模型列表。"
+                        "hint": "仅在未开启“使用 AstrBot 重排序提供商”时生效。本地 FastEmbed 重排模型名称，例如 BAAI/bge-reranker-base。如需修改，可用 /打印rerank模型 在控制台查看支持的本地模型列表。"
                     },
                     "top_k": {
                         "description": "返回记忆数量",

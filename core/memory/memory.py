@@ -40,6 +40,75 @@ class LTM:
         self._lazy_initialized = False
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _get_provider_id(provider) -> str | None:
+        provider_config = getattr(provider, "provider_config", None)
+        if isinstance(provider_config, dict):
+            provider_id = provider_config.get("id")
+            if provider_id:
+                return provider_id
+
+        if hasattr(provider, "meta"):
+            try:
+                return provider.meta().id
+            except Exception:
+                return None
+
+        return None
+
+    @staticmethod
+    def _get_provider_model(provider) -> str:
+        for attr_name in ("model_name", "model"):
+            model_name = getattr(provider, attr_name, "")
+            if model_name:
+                return model_name
+
+        if hasattr(provider, "get_model"):
+            try:
+                model_name = provider.get_model()
+                if model_name:
+                    return model_name
+            except Exception:
+                pass
+
+        provider_config = getattr(provider, "provider_config", None)
+        if isinstance(provider_config, dict):
+            for key in ("rerank_model", "nvidia_rerank_model", "model"):
+                model_name = provider_config.get(key)
+                if model_name:
+                    return model_name
+
+        return "unknown"
+
+    def _get_all_rerank_providers(self) -> list:
+        get_all_rerank_providers = getattr(
+            self.context, "get_all_rerank_providers", None
+        )
+        if callable(get_all_rerank_providers):
+            return list(get_all_rerank_providers() or [])
+
+        provider_manager = getattr(self.context, "provider_manager", None)
+        return list(getattr(provider_manager, "rerank_provider_insts", []) or [])
+
+    def _resolve_rerank_provider(self, provider_id: str):
+        rerank_providers = self._get_all_rerank_providers()
+
+        if provider_id:
+            for prov in rerank_providers:
+                if self._get_provider_id(prov) == provider_id:
+                    return prov
+
+            get_provider_by_id = getattr(self.context, "get_provider_by_id", None)
+            if callable(get_provider_by_id):
+                prov = get_provider_by_id(provider_id)
+                if prov and callable(getattr(prov, "rerank", None)):
+                    return prov
+
+        if rerank_providers:
+            return rerank_providers[0]
+
+        return None
+
     def _lazy_init(self) -> None:
         """延迟初始化 Embedding 提供商、模型、表结构和重排模型。"""
         if self._lazy_initialized:
@@ -158,17 +227,50 @@ class LTM:
                 )
 
             if self.rerank_conf.get("enabled", False):
-                self.reranker = TextCrossEncoder(
-                    model_name=self.rerank_conf.get(
-                        "model",
-                        self.rerank_conf.get("model_name", "BAAI/bge-reranker-base"),
+                if self.rerank_conf.get("use_external_provider", False):
+                    provider_id = self.rerank_conf.get(
+                        "external_provider_id", ""
+                    ).strip()
+                    resolved_provider = self._resolve_rerank_provider(provider_id)
+
+                    if not resolved_provider:
+                        if provider_id:
+                            logger.warning(
+                                f"[Giftia LTM] 未找到 ID 为 '{provider_id}' 的 Rerank 提供商。"
+                            )
+                        raise ValueError(
+                            "[Giftia LTM] 未在 AstrBot 中找到任何已配置的 Rerank 提供商。请先在 WebUI 的“模型提供商”中添加并启用一个重排序模型。"
+                        )
+
+                    resolved_provider_id = self._get_provider_id(resolved_provider)
+                    if provider_id and resolved_provider_id != provider_id:
+                        logger.warning(
+                            f"[Giftia LTM] 未找到 ID 为 '{provider_id}' 的 Rerank 提供商，将尝试使用第一个可用的提供商。"
+                        )
+
+                    self.rerank_provider = resolved_provider
+                    logger.info(
+                        f"LTM当前使用 AstrBot 的外部 Rerank 提供商: {resolved_provider_id or 'unknown'}，"
+                        f"模型名称: {self._get_provider_model(resolved_provider)}"
                     )
-                )
-                logger.info(f"LTM当前运行的rerank模型名称: {self.reranker.model_name}")
-                for model_info in TextCrossEncoder.list_supported_models():
-                    if model_info["model"] == self.reranker.model_name:
-                        logger.info(f"模型硬盘空间占用: {model_info['size_in_GB']} GB")
-                        logger.info(f"模型描述: {model_info['description']}")
+                else:
+                    self.reranker = TextCrossEncoder(
+                        model_name=self.rerank_conf.get(
+                            "model",
+                            self.rerank_conf.get(
+                                "model_name", "BAAI/bge-reranker-base"
+                            ),
+                        )
+                    )
+                    logger.info(
+                        f"LTM当前运行的rerank模型名称: {self.reranker.model_name}"
+                    )
+                    for model_info in TextCrossEncoder.list_supported_models():
+                        if model_info["model"] == self.reranker.model_name:
+                            logger.info(
+                                f"模型硬盘空间占用: {model_info['size_in_GB']} GB"
+                            )
+                            logger.info(f"模型描述: {model_info['description']}")
 
             self._lazy_initialized = True
 
@@ -457,7 +559,7 @@ class LTM:
         self, query: str, memories: list[dict], top_k: int = 5, threshold: float = 0.5
     ) -> list[dict]:
         """
-        使用 Cross-Encoder 对记忆进行重排序
+        使用重排模型或 AstrBot Rerank 提供商对记忆进行重排序
         :param query: 用户的查询语句
         :param memories: 记忆列表，每个元素包含 'text' 字段
         :param top_k: 返回前 k 个最相关的记忆
@@ -465,11 +567,38 @@ class LTM:
         """
         self._lazy_init()
         try:
+            memory_texts = [memory["text"] for memory in memories]
+
+            if self.rerank_conf.get("use_external_provider", False):
+                if not hasattr(self, "rerank_provider"):
+                    logger.error("Rerank provider not initialized")
+                    return []
+
+                rerank_results = await self.rerank_provider.rerank(
+                    query, memory_texts, top_n=top_k
+                )
+
+                reranked_memories = []
+                for result in rerank_results:
+                    idx = getattr(result, "index", None)
+                    if idx is None or idx < 0 or idx >= len(memories):
+                        logger.warning(f"[Giftia LTM] Rerank 返回了无效索引: {idx}")
+                        continue
+
+                    score = float(getattr(result, "relevance_score", 0.0))
+                    if score < threshold:
+                        continue
+
+                    memory = memories[idx]
+                    memory["score"] = score
+                    reranked_memories.append(memory)
+
+                reranked_memories.sort(key=lambda x: x["score"], reverse=True)
+                return reranked_memories[:top_k]
+
             if not hasattr(self, "reranker"):
                 logger.error("Reranker not initialized")
                 return []
-            # 提取记忆文本
-            memory_texts = [memory["text"] for memory in memories]
 
             # 使用 Cross-Encoder 计算相关性分数
             # reranker.rerank 返回的是一个生成器，包含每个记忆的分数
