@@ -19,6 +19,32 @@ class ReplyPipeline:
         self.media_captioner = MediaCaptioner(plugin)
         self.tool_executor = ToolExecutor(plugin)
 
+    @staticmethod
+    def _has_non_message_work(llm_result) -> bool:
+        """Whether an empty message still represents useful follow-up work."""
+        action_fields = (
+            "delete_message_ids",
+            "emoji_ids",
+            "likes",
+            "poke",
+            "ban",
+            "kick",
+            "leave",
+            "search_memories",
+            "delete_memories",
+            "tools_to_call",
+            "native_tools_called",
+            "schedule_tasks",
+            "delete_schedule_tasks",
+            "all_tasks",
+            "add_stickers",
+            "send_stickers",
+            "search_histories",
+            "get_message_contexts",
+            "task_board_actions",
+        )
+        return any(bool(getattr(llm_result, field, None)) for field in action_fields)
+
     async def dispatch_llm_reply_loop(
         self,
         event: AstrMessageEvent,
@@ -209,7 +235,12 @@ class ReplyPipeline:
         filter_duplicate_replies(llm_result, sent_messages)
 
         # 5. 空回复拦截处理
-        if not remind_message and times == 0 and not llm_result.msg_chains:
+        if (
+            not remind_message
+            and times == 0
+            and not llm_result.msg_chains
+            and not self._has_non_message_work(llm_result)
+        ):
             await self.plugin.db.update_message_reply_decision(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,

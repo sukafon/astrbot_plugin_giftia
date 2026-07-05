@@ -266,6 +266,9 @@ class CallLLM:
                             llm_resp.completion_text, group_or_user_id
                         )
                         if result is not None:
+                            result.native_tools_called = list(
+                                llm_resp.tools_call_name or []
+                            )
                             return result
                         logger.warning(
                             f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
@@ -282,7 +285,9 @@ class CallLLM:
                         logger.info(
                             f"LLM returned completely empty response, treating as no reply. provider_id: {provider_id}"
                         )
-                        return XmlLlmResult()
+                        return XmlLlmResult(
+                            native_tools_called=list(llm_resp.tools_call_name or [])
+                        )
                 except EmptyModelOutputError:
                     # Gemini empty output error; treat as no reply needed.
                     logger.info(

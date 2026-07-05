@@ -120,6 +120,8 @@ class XmlLlmResult:
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
     )  # (工具名, 工具参数)
+    # 原生 function calling / tool loop 已调用的工具名
+    native_tools_called: list[str] = field(default_factory=list)
     # 定时任务，群号/用户ID，时间，内容
     schedule_tasks: list[tuple[str, str, str]] = field(default_factory=list)
     # 删除定时任务，任务ID
