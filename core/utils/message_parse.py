@@ -31,6 +31,7 @@ from .message_forward import (
 )
 from .message_media import (
     MessageMediaFormatter,
+    LockManager,
     SUPPORTED_FILE_FORMATS_WITH_DOT as SUPPORTED_FILE_FORMATS_WITH_DOT,
 )
 from .message_parse_types import ChainParseResult
@@ -52,8 +53,8 @@ class MessageParser:
         self.audio_caption_enabled = audio_caption_enabled
         self.call_llm = call_llm
         # 异步锁，防止多机器人场景重复解析媒体信息
-        self.url_locks = defaultdict(asyncio.Lock)
-        self.hash_locks = defaultdict(asyncio.Lock)
+        self.url_locks = LockManager()
+        self.hash_locks = LockManager()
         self.media_formatter = MessageMediaFormatter(
             data_cache=data_cache,
             http_manager=http_manager,

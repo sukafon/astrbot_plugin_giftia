@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
-from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status, extract_media_ids
 
 # 构造消息的XML标签的属性，属性按顺序添加。MessageData对象的属性若不在这或者值为空，将不添加该属性
 MSG_PROPS = [
@@ -118,7 +118,7 @@ def process_media_captions_for_prompt(
             hash_counts.update(msg.media_id_list)
         if msg.content:
             content_hash_counts.update(
-                re.findall(r"\[(?:图片|语音):([^\]\s]+)\]", msg.content)
+                extract_media_ids(msg.content)
             )
 
     # 建立 hash_val -> MediaCaption 映射

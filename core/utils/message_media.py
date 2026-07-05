@@ -1,5 +1,6 @@
 import asyncio
 import base64 as b64_module
+import contextlib
 import re
 import urllib.parse
 from collections import defaultdict
@@ -29,6 +30,29 @@ SUPPORTED_FILE_FORMATS_WITH_DOT = (
 )
 
 
+class LockManager:
+    def __init__(self):
+        self._locks = {}
+        self._global_lock = asyncio.Lock()
+
+    @contextlib.asynccontextmanager
+    async def lock(self, key: str):
+        async with self._global_lock:
+            if key not in self._locks:
+                self._locks[key] = [asyncio.Lock(), 0]
+            lock_info = self._locks[key]
+            lock_info[1] += 1
+        
+        try:
+            async with lock_info[0]:
+                yield
+        finally:
+            async with self._global_lock:
+                lock_info[1] -= 1
+                if lock_info[1] <= 0:
+                    self._locks.pop(key, None)
+
+
 class MessageMediaFormatter:
     def __init__(
         self,
@@ -46,10 +70,10 @@ class MessageMediaFormatter:
         self.audio_caption_enabled = audio_caption_enabled
         self.call_llm = call_llm
         self.url_locks = (
-            url_locks if url_locks is not None else defaultdict(asyncio.Lock)
+            url_locks if url_locks is not None else LockManager()
         )
         self.hash_locks = (
-            hash_locks if hash_locks is not None else defaultdict(asyncio.Lock)
+            hash_locks if hash_locks is not None else LockManager()
         )
 
     @staticmethod
@@ -174,7 +198,7 @@ class MessageMediaFormatter:
         """获取图片描述"""
         if not url and file_name:
             url = file_name
-        async with self.url_locks[url]:
+        async with self.url_locks.lock(url):
             legacy_hash = self.filename_stable_hash(file_name)
             legacy_caption = None
             if file_name and not is_temp_or_local_path(file_name):
@@ -252,7 +276,7 @@ class MessageMediaFormatter:
             except Exception as e:
                 logger.error(f"[Giftia] 保存媒体缓存失败: {e}")
 
-        async with self.hash_locks[hash_val]:
+        async with self.hash_locks.lock(hash_val):
             if custom_desc:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
@@ -372,7 +396,7 @@ class MessageMediaFormatter:
         """获取语音描述"""
         if not url and file_name:
             url = file_name
-        async with self.url_locks[url]:
+        async with self.url_locks.lock(url):
             if file_name and not is_temp_or_local_path(file_name):
                 # 检查缓存
                 hash_val, media_caption = await self.data_cache.get_caption_by_filename(

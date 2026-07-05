@@ -17,11 +17,12 @@ from ..utils.schemas import (
     ShortTask,
     Status,
     Sticker,
+    FORWARD_MEDIA_PATTERN,
+    FORWARD_NESTED_PATTERN,
 )
 
 
-_FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
-_FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
 
 
 def _decode_json_list(raw) -> list:
@@ -52,8 +53,8 @@ def _forward_stats(forward: dict) -> tuple[int, int, int]:
         if not isinstance(node, dict):
             continue
         content = str(node.get("content") or "")
-        media_ids.update(_FORWARD_MEDIA_PATTERN.findall(content))
-        nested_ids.update(_FORWARD_NESTED_PATTERN.findall(content))
+        media_ids.update(FORWARD_MEDIA_PATTERN.findall(content))
+        nested_ids.update(FORWARD_NESTED_PATTERN.findall(content))
         raw_media_ids = node.get("media_ids")
         if isinstance(raw_media_ids, list):
             media_ids.update(str(media_id) for media_id in raw_media_ids if media_id)

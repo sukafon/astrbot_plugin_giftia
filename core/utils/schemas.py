@@ -1,6 +1,22 @@
 from dataclasses import dataclass, field
+import re
 
 from astrbot.core.message.components import BaseMessageComponent
+
+FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
+FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
+
+def extract_media_ids(content: str) -> list[str]:
+    if not content:
+        return []
+    return FORWARD_MEDIA_PATTERN.findall(content)
+
+
+def extract_nested_forward_ids(content: str) -> list[str]:
+    if not content:
+        return []
+    return FORWARD_NESTED_PATTERN.findall(content)
 
 
 @dataclass(repr=False, slots=True)

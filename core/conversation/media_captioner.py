@@ -7,7 +7,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Image, Reply
 from astrbot.core.star.star_tools import StarTools
 
-from ..utils.schemas import MediaCaption, XmlLlmResult
+from ..utils.schemas import MediaCaption, XmlLlmResult, extract_media_ids
 
 
 class MediaCaptioner:
@@ -31,9 +31,7 @@ class MediaCaptioner:
         hash_vals = []
         seen_media = set()
         for msg in reversed(recent_messages):
-            content_media_ids = re.findall(
-                r"\[(?:图片|语音):([^\]\s]+)\]", getattr(msg, "content", "") or ""
-            )
+            content_media_ids = extract_media_ids(getattr(msg, "content", "") or "")
             for media_id in reversed(content_media_ids):
                 if media_id not in seen_media:
                     seen_media.add(media_id)

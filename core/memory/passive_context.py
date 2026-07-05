@@ -1,6 +1,8 @@
 import re
 from datetime import datetime
 
+from ..utils.schemas import FORWARD_MEDIA_PATTERN
+
 from astrbot.api import logger
 
 from ..llm.preset_prompts import (
@@ -221,7 +223,7 @@ class PassiveContextMixin:
         if not content:
             return False
 
-        normalized = re.sub(r"\[(?:图片|语音):[^\]]+\]", "", content)
+        normalized = FORWARD_MEDIA_PATTERN.sub("", content)
         normalized = re.sub(r"\[(?:图片|语音|视频|合并转发消息)\]", "", normalized)
         normalized = normalized.strip()
         if len(normalized) >= 4:
@@ -230,7 +232,7 @@ class PassiveContextMixin:
 
     def _long_profile_sample_text_length(self, msg) -> int:
         content = str(getattr(msg, "content", "") or "")
-        content = re.sub(r"\[(?:图片|语音):[^\]]+\]", "", content)
+        content = FORWARD_MEDIA_PATTERN.sub("", content)
         return len(content.strip())
 
     async def _build_long_profile_user_prompt(

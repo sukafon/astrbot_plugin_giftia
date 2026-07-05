@@ -4,9 +4,10 @@ import re
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..utils.schemas import FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
 
-_FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
-_FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
+
 
 
 def _safe_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -116,9 +117,9 @@ class ForwardApi:
                     "time": str(node.get("time") or ""),
                     "content": content,
                     "preview": _shorten(content, 180),
-                    "media_ids": sorted(set(_FORWARD_MEDIA_PATTERN.findall(content))),
+                    "media_ids": sorted(set(FORWARD_MEDIA_PATTERN.findall(content))),
                     "nested_ids": sorted(
-                        set(_FORWARD_NESTED_PATTERN.findall(content))
+                        set(FORWARD_NESTED_PATTERN.findall(content))
                     ),
                 }
             )

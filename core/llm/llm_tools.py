@@ -9,7 +9,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
-from ..utils.schemas import MessageData
+from ..utils.schemas import MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
 
 if TYPE_CHECKING:
     from ...main import Giftia
@@ -277,8 +277,8 @@ class InspectForwardMessageTool(FunctionTool):
     _default_raw_threshold = 20
     _summary_node_limit = 80
     _tool_result_max_chars = 6000
-    _media_pattern = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
-    _nested_pattern = re.compile(r"\[合并转发:([^\]\s]+)\]")
+    _media_pattern = FORWARD_MEDIA_PATTERN
+    _nested_pattern = FORWARD_NESTED_PATTERN
     _quote_message_id_pattern = re.compile(
         r"""(<quote\b[^>]*?)\s+message_id=("[^"]*"|'[^']*'|[^\s>]+)"""
     )
