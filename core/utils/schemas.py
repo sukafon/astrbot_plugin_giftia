@@ -5,6 +5,7 @@ from astrbot.core.message.components import BaseMessageComponent
 
 @dataclass(repr=False, slots=True)
 class MessageData:
+    db_id: int = 0
     nickname: str = ""
     user_id: str = ""
     group_or_user_id: str = ""

@@ -127,6 +127,24 @@ class Giftia(Star):
         self.passive_profile_summary_prompt = memory_config.get(
             "passive_profile_summary_prompt", ""
         )
+        self.passive_long_profile_summary_prompt = memory_config.get(
+            "passive_long_profile_summary_prompt", ""
+        )
+        self.passive_long_profile_message_threshold = memory_config.get(
+            "passive_long_profile_message_threshold", 30
+        )
+        self.passive_long_profile_text_threshold = memory_config.get(
+            "passive_long_profile_text_threshold", 1500
+        )
+        self.passive_long_profile_initial_message_threshold = memory_config.get(
+            "passive_long_profile_initial_message_threshold", 10
+        )
+        self.passive_long_profile_initial_text_threshold = memory_config.get(
+            "passive_long_profile_initial_text_threshold", 600
+        )
+        self.passive_long_profile_sample_limit = memory_config.get(
+            "passive_long_profile_sample_limit", 200
+        )
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})

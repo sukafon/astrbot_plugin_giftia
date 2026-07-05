@@ -319,7 +319,6 @@ class DataCache:
         relation: int | None = None,
         title: str | None = None,
         profile_fields: dict[str, str | None] | None = None,
-        clamp_relation: bool = False,
         alias_increment_count: bool = True,
     ) -> None:
         """设置用户画像"""
@@ -337,15 +336,7 @@ class DataCache:
                 user_id=user_id,
             )
             if relation is not None:
-                if clamp_relation:
-                    # 限制单次好感度变动的绝对值不超过 5
-                    diff = relation - current_relation
-                    if abs(diff) > 5:
-                        db_relation = current_relation + (5 if diff > 0 else -5)
-                    else:
-                        db_relation = relation
-                else:
-                    db_relation = relation
+                db_relation = relation
             else:
                 db_relation = current_relation
             db_title = title if title is not None else current_title

@@ -134,6 +134,51 @@ class Database(ProfileStoreMixin):
             for row in rows
         ]
 
+    async def get_user_messages_after_id(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        user_id: str,
+        after_id: int,
+        limit: int = 200,
+    ) -> list[MessageData]:
+        """获取某个用户在指定数据库 id 之后的最近消息，按时间正序返回。"""
+        if limit <= 0:
+            return []
+        async with self.conn.execute(
+            """
+            SELECT * FROM (
+                SELECT id, nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+                FROM chat_history
+                WHERE group_or_user_id = ?
+                  AND bot_name = ?
+                  AND user_id = ?
+                  AND id > ?
+                  AND COALESCE(role, 'message') != 'operation_log'
+                  AND COALESCE(is_recalled, 0) = 0
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            ORDER BY id ASC
+            """,
+            (group_or_user_id, bot_name, user_id, after_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            MessageData(
+                db_id=row["id"],
+                nickname=row["nickname"],
+                user_id=row["user_id"],
+                time=row["created_at"],
+                message_id=row["message_id"],
+                content=row["content"],
+                is_recalled=row["is_recalled"],
+                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
+                role=row["role"] if "role" in row.keys() else "message",
+            )
+            for row in rows
+        ]
+
     async def get_message_count_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
     ) -> int:
