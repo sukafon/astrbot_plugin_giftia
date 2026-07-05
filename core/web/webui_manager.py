@@ -160,6 +160,24 @@ class WebUIManager:
             desc="Delete chat history for a session",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/forwards",
+            view_handler=self.web_api.get_forwards,
+            methods=["GET"],
+            desc="Get merged forward message records",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/forwards/detail",
+            view_handler=self.web_api.get_forward_detail,
+            methods=["GET"],
+            desc="Get merged forward message detail",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/forwards/filter_options",
+            view_handler=self.web_api.get_forward_filter_options,
+            methods=["GET"],
+            desc="Get merged forward filter options",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user",
             view_handler=self.web_api.get_user_profiles,
             methods=["GET"],

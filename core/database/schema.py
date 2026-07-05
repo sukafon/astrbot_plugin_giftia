@@ -46,6 +46,34 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_message_id_unique ON chat_history (message_id, group_or_user_id, bot_name)"
         )
+        # 创建合并转发消息表。聊天记录只保留 [合并转发:id]，完整内容和后续转述缓存放这里。
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS forwarded_message (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                forward_id TEXT NOT NULL,
+                bot_name TEXT NOT NULL,
+                group_or_user_id TEXT NOT NULL,
+                owner_message_id TEXT,
+                source TEXT,
+                source_id TEXT,
+                node_count INTEGER DEFAULT 0,
+                media_count INTEGER DEFAULT 0,
+                nested_count INTEGER DEFAULT 0,
+                content TEXT NOT NULL,
+                summary TEXT,
+                is_summarized INTEGER DEFAULT 0,
+                query_times INTEGER DEFAULT 0,
+                created_at DATETIME,
+                updated_at DATETIME,
+                UNIQUE(forward_id, bot_name, group_or_user_id)
+            )
+        """)
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forwarded_message_owner ON forwarded_message (bot_name, group_or_user_id, owner_message_id)"
+        )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_forwarded_message_forward_id ON forwarded_message (bot_name, group_or_user_id, forward_id)"
+        )
         # 创建媒体的文字转述（caption）表
         await cursor.execute("""
             CREATE TABLE IF NOT EXISTS media_caption (

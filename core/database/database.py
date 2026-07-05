@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 
 import aiosqlite
@@ -19,6 +20,68 @@ from ..utils.schemas import (
 )
 
 
+_FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
+_FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
+
+def _decode_json_list(raw) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _decode_json_dict(raw) -> dict:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _forward_stats(forward: dict) -> tuple[int, int, int]:
+    nodes = forward.get("nodes") if isinstance(forward.get("nodes"), list) else []
+    media_ids = set()
+    nested_ids = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        content = str(node.get("content") or "")
+        media_ids.update(_FORWARD_MEDIA_PATTERN.findall(content))
+        nested_ids.update(_FORWARD_NESTED_PATTERN.findall(content))
+        raw_media_ids = node.get("media_ids")
+        if isinstance(raw_media_ids, list):
+            media_ids.update(str(media_id) for media_id in raw_media_ids if media_id)
+    return len(nodes), len(media_ids), len(nested_ids)
+
+
+def _row_has(row: aiosqlite.Row, key: str) -> bool:
+    return key in row.keys()
+
+
+def _row_to_message(row: aiosqlite.Row) -> MessageData:
+    return MessageData(
+        db_id=row["id"] if _row_has(row, "id") and row["id"] is not None else 0,
+        nickname=row["nickname"],
+        user_id=row["user_id"],
+        group_or_user_id=(
+            row["group_or_user_id"] if _row_has(row, "group_or_user_id") else ""
+        ),
+        time=row["created_at"],
+        message_id=row["message_id"],
+        content=row["content"] or "",
+        is_recalled=row["is_recalled"],
+        media_id_list=_decode_json_list(row["media_ids"]),
+        forward_messages=[],
+        role=row["role"] if _row_has(row, "role") and row["role"] else "message",
+    )
+
+
 class Database(ProfileStoreMixin):
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
@@ -35,6 +98,81 @@ class Database(ProfileStoreMixin):
         await initialize_database(conn)
         return cls(conn)
 
+    async def _upsert_forward_messages(self, bot_name: str, message: MessageData):
+        if not message.forward_messages:
+            return
+        updated_at = datetime.now().isoformat()
+        created_at = message.time or updated_at
+        for forward in message.forward_messages:
+            if not isinstance(forward, dict):
+                continue
+            forward_id = str(forward.get("id") or "").strip()
+            if not forward_id:
+                continue
+            node_count, media_count, nested_count = _forward_stats(forward)
+            await self.conn.execute(
+                """
+                INSERT INTO forwarded_message (
+                    forward_id, bot_name, group_or_user_id, owner_message_id,
+                    source, source_id, node_count, media_count, nested_count,
+                    content, summary, is_summarized, query_times, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?)
+                ON CONFLICT(forward_id, bot_name, group_or_user_id) DO UPDATE SET
+                    owner_message_id = excluded.owner_message_id,
+                    source = excluded.source,
+                    source_id = excluded.source_id,
+                    node_count = excluded.node_count,
+                    media_count = excluded.media_count,
+                    nested_count = excluded.nested_count,
+                    content = excluded.content,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    forward_id,
+                    bot_name,
+                    message.group_or_user_id,
+                    message.message_id,
+                    str(forward.get("source") or ""),
+                    str(forward.get("source_id") or ""),
+                    node_count,
+                    media_count,
+                    nested_count,
+                    json.dumps(forward, ensure_ascii=False),
+                    created_at,
+                    updated_at,
+                ),
+            )
+
+    async def _attach_forward_messages(
+        self, bot_name: str, group_or_user_id: str, messages: list[MessageData]
+    ) -> list[MessageData]:
+        message_ids = [msg.message_id for msg in messages if msg.message_id]
+        if not message_ids:
+            return messages
+        placeholders = ",".join("?" for _ in message_ids)
+        async with self.conn.execute(
+            f"""
+            SELECT owner_message_id, content
+            FROM forwarded_message
+            WHERE bot_name = ?
+              AND group_or_user_id = ?
+              AND owner_message_id IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            (bot_name, group_or_user_id, *message_ids),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        forward_map: dict[str, list[dict]] = {}
+        for row in rows:
+            forward = _decode_json_dict(row["content"])
+            if forward:
+                forward_map.setdefault(row["owner_message_id"], []).append(forward)
+        for msg in messages:
+            msg.forward_messages = forward_map.get(msg.message_id, [])
+        return messages
+
     async def insert_message(
         self,
         bot_name: str,
@@ -42,7 +180,11 @@ class Database(ProfileStoreMixin):
     ):
         await self.conn.execute(
             """
-            INSERT OR IGNORE INTO chat_history (group_or_user_id, nickname, user_id, message_id, content, reply_decision, use_rag, is_recalled, bot_name, media_ids, role, created_at, updated_at)
+            INSERT OR IGNORE INTO chat_history (
+                group_or_user_id, nickname, user_id, message_id, content,
+                reply_decision, use_rag, is_recalled, bot_name, media_ids,
+                role, created_at, updated_at
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -61,6 +203,7 @@ class Database(ProfileStoreMixin):
                 message.time,
             ),
         )
+        await self._upsert_forward_messages(bot_name, message)
         await self.conn.commit()
 
     async def get_messages(
@@ -80,19 +223,8 @@ class Database(ProfileStoreMixin):
             (group_or_user_id, bot_name, limit),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [
-            MessageData(
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
-            )
-            for row in rows
-        ]
+        messages = [_row_to_message(row) for row in rows]
+        return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
     async def get_max_message_id(self, bot_name: str, group_or_user_id: str) -> int:
         """获取指定会话在 chat_history 表中的最大 id"""
@@ -112,27 +244,16 @@ class Database(ProfileStoreMixin):
         """获取指定 id 范围内的历史消息"""
         async with self.conn.execute(
             """
-            SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
-            FROM chat_history
-            WHERE group_or_user_id = ? AND bot_name = ? AND id >= ? AND id <= ?
-            ORDER BY id ASC
+                SELECT nickname, user_id, message_id, content, media_ids, is_recalled, role, created_at
+                FROM chat_history
+                WHERE group_or_user_id = ? AND bot_name = ? AND id >= ? AND id <= ?
+                ORDER BY id ASC
             """,
             (group_or_user_id, bot_name, start_id, end_id),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [
-            MessageData(
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
-            )
-            for row in rows
-        ]
+        messages = [_row_to_message(row) for row in rows]
+        return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
     async def get_user_messages_after_id(
         self,
@@ -164,20 +285,8 @@ class Database(ProfileStoreMixin):
             (group_or_user_id, bot_name, user_id, after_id, limit),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [
-            MessageData(
-                db_id=row["id"],
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
-            )
-            for row in rows
-        ]
+        messages = [_row_to_message(row) for row in rows]
+        return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
     async def get_message_count_by_id_range(
         self, bot_name: str, group_or_user_id: str, start_id: int, end_id: int
@@ -226,16 +335,10 @@ class Database(ProfileStoreMixin):
         ) as cursor:
             row = await cursor.fetchone()
         if row:
-            return MessageData(
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
+            messages = await self._attach_forward_messages(
+                bot_name, group_or_user_id, [_row_to_message(row)]
             )
+            return messages[0]
         return None
 
     async def get_database_id_by_message_id(
@@ -300,21 +403,93 @@ class Database(ProfileStoreMixin):
             rows = await cursor.fetchall()
 
         if sort_order.lower() == "desc":
-            rows = reversed(list(rows))
+            rows = list(reversed(list(rows)))
 
-        return [
-            MessageData(
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
+        messages = [_row_to_message(row) for row in rows]
+        return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
+
+    async def find_forward_message_by_id(
+        self,
+        group_or_user_id: str,
+        bot_name: str,
+        forward_id: str,
+        limit: int = 50,
+    ) -> tuple[MessageData | None, dict | None]:
+        """按合并转发 id 查找所在聊天记录与完整转发结构。"""
+        if not forward_id:
+            return None, None
+
+        async with self.conn.execute(
+            """
+            SELECT owner_message_id, content
+            FROM forwarded_message
+            WHERE group_or_user_id = ?
+              AND bot_name = ?
+              AND forward_id = ?
+            LIMIT 1
+            """,
+            (group_or_user_id, bot_name, forward_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row:
+            return None, None
+        forward = _decode_json_dict(row["content"])
+        owner_msg = None
+        if row["owner_message_id"]:
+            owner_msg = await self.get_message_by_id(
+                row["owner_message_id"], group_or_user_id, bot_name
             )
-            for row in rows
-        ]
+        return owner_msg, forward or None
+
+    async def get_forward_summary(
+        self, bot_name: str, group_or_user_id: str, forward_id: str
+    ) -> str | None:
+        async with self.conn.execute(
+            """
+            SELECT summary, is_summarized
+            FROM forwarded_message
+            WHERE bot_name = ? AND group_or_user_id = ? AND forward_id = ?
+            LIMIT 1
+            """,
+            (bot_name, group_or_user_id, forward_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row["is_summarized"] and row["summary"]:
+            return row["summary"]
+        return None
+
+    async def update_forward_summary(
+        self, bot_name: str, group_or_user_id: str, forward_id: str, summary: str
+    ):
+        await self.conn.execute(
+            """
+            UPDATE forwarded_message
+            SET summary = ?, is_summarized = 1, updated_at = ?
+            WHERE bot_name = ? AND group_or_user_id = ? AND forward_id = ?
+            """,
+            (
+                summary,
+                datetime.now().isoformat(),
+                bot_name,
+                group_or_user_id,
+                forward_id,
+            ),
+        )
+        await self.conn.commit()
+
+    async def increment_forward_query_times(
+        self, bot_name: str, group_or_user_id: str, forward_id: str
+    ):
+        await self.conn.execute(
+            """
+            UPDATE forwarded_message
+            SET query_times = COALESCE(query_times, 0) + 1, updated_at = ?
+            WHERE bot_name = ? AND group_or_user_id = ? AND forward_id = ?
+            """,
+            (datetime.now().isoformat(), bot_name, group_or_user_id, forward_id),
+        )
+        await self.conn.commit()
 
     async def get_message_context(
         self, message_id: str, group_or_user_id: str, bot_name: str, limit: int = 30
@@ -359,27 +534,21 @@ class Database(ProfileStoreMixin):
         rows_before_list = list(rows_before)
         all_rows = rows_before_list[::-1] + list(rows_after)
 
-        messages = [
-            MessageData(
-                nickname=row["nickname"],
-                user_id=row["user_id"],
-                time=row["created_at"],
-                message_id=row["message_id"],
-                content=row["content"],
-                is_recalled=row["is_recalled"],
-                media_id_list=json.loads(row["media_ids"]) if row["media_ids"] else [],
-                role=row["role"] if "role" in row.keys() else "message",
-            )
-            for row in all_rows
-        ]
+        messages = [_row_to_message(row) for row in all_rows]
 
         # 把目标消息插入到中间
         messages.insert(len(rows_before_list), target_msg)
 
-        return messages
+        return await self._attach_forward_messages(bot_name, group_or_user_id, messages)
 
     # 清空聊天记录
     async def delete_chat_history(self, bot_name: str, group_or_user_id: str):
+        await self.conn.execute(
+            """
+            DELETE FROM forwarded_message WHERE group_or_user_id = ? AND bot_name = ?
+            """,
+            (group_or_user_id, bot_name),
+        )
         await self.conn.execute(
             """
             DELETE FROM chat_history WHERE group_or_user_id = ? AND bot_name = ?
@@ -443,6 +612,13 @@ class Database(ProfileStoreMixin):
     async def delete_message(
         self, bot_name: str, group_or_user_id: str, message_id: str
     ):
+        await self.conn.execute(
+            """
+            DELETE FROM forwarded_message
+            WHERE owner_message_id = ? AND group_or_user_id = ? AND bot_name = ?
+            """,
+            (message_id, group_or_user_id, bot_name),
+        )
         await self.conn.execute(
             """
             DELETE FROM chat_history

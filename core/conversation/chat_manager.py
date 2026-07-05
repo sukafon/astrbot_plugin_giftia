@@ -91,14 +91,11 @@ class ChatManager:
                     is_active_window = active_counter > 0
                     defer_caption = not is_active_window
 
-                    (
-                        msg_str,
-                        media_id_list,
-                    ) = await self.plugin.message_parser.chain_to_str(
-                        message.chain, defer_caption=defer_caption
+                    parsed_msg = await self.plugin.message_parser.chain_to_result(
+                        message.chain, defer_caption=defer_caption, event=event
                     )
                     logger.debug(
-                        f"[Giftia] intercepted_send logging message content: {msg_str}"
+                        f"[Giftia] intercepted_send logging message content: {parsed_msg.content}"
                     )
                     await self.plugin.data_cache.add_message(
                         bot_name,
@@ -109,8 +106,10 @@ class ChatManager:
                             group_or_user_id=group_or_user_id,
                             time=datetime.now().isoformat(),
                             message_id="",
-                            content=msg_str,
+                            content=parsed_msg.content,
                             is_recalled=0,
+                            media_id_list=parsed_msg.media_id_list,
+                            forward_messages=parsed_msg.forward_messages,
                         ),
                     )
                     logger.debug(

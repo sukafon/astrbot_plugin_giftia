@@ -14,6 +14,7 @@ from .core.handlers.commands import CommandHandler
 from .core.llm.call_llm import CallLLM
 from .core.llm.llm_tools import (
     GetMessageContextTool,
+    InspectForwardMessageTool,
     SearchChatHistoryTool,
     SearchUserProfileTool,
     remove_tools,
@@ -246,6 +247,9 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("search_user_profile_enabled", True):
             self.context.add_llm_tools(SearchUserProfileTool(plugin=self))
             logger.info("已注册函数调用工具: search_user_profile")
+        if self.conf.get("tools_config", {}).get("inspect_forward_message_enabled", True):
+            self.context.add_llm_tools(InspectForwardMessageTool(plugin=self))
+            logger.info("已注册函数调用工具: inspect_forward_message")
         # 注册 Web UI 及 API 路由
         self.webui_manager = WebUIManager(self)
         self.webui_manager.register_routes()
@@ -275,7 +279,7 @@ class Giftia(Star):
                 if bot_name:
                     bot_conf = self.bot_map.get(bot_name, {})
                     nickname = bot_conf.get("nickname", bot_name)
-                    msg_str, media_id_list = await self.message_parser.chain_to_str(
+                    parsed_msg = await self.message_parser.chain_to_result(
                         message_chain.chain, defer_caption=False
                     )
 
@@ -315,9 +319,10 @@ class Giftia(Star):
                             group_or_user_id=session_obj.session_id,
                             time=datetime.now().isoformat(),
                             message_id="",
-                            content=msg_str,
+                            content=parsed_msg.content,
                             is_recalled=0,
-                            media_id_list=media_id_list,
+                            media_id_list=parsed_msg.media_id_list,
+                            forward_messages=parsed_msg.forward_messages,
                         ),
                     )
             except Exception as e:

@@ -14,6 +14,7 @@ class MessageData:
     content: str = ""
     is_recalled: int = 0  # 0: 未撤回, 1: 已撤回
     media_id_list: list[str] = field(default_factory=list)  # 这里只存储媒体ID
+    forward_messages: list[dict] = field(default_factory=list)
     role: str = "message"  # "message" or "operation_log"
 
 

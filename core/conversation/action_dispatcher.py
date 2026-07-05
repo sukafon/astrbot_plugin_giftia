@@ -369,19 +369,19 @@ class ActionDispatcher:
                     finally:
                         event._giftia_bypass_logging = False
                     iso_string = datetime.now().isoformat()
-                    (
-                        msg_str,
-                        media_id_list,
-                    ) = await self.plugin.message_parser.chain_to_str(msg_chain)
+                    parsed_msg = await self.plugin.message_parser.chain_to_result(
+                        msg_chain, event=event
+                    )
                     msg_data = MessageData(
                         nickname=nickname,
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
                         message_id="",
-                        content=msg_str,
+                        content=parsed_msg.content,
                         is_recalled=False,
-                        media_id_list=media_id_list,
+                        media_id_list=parsed_msg.media_id_list,
+                        forward_messages=parsed_msg.forward_messages,
                     )
                     await self.plugin.data_cache.add_message(
                         bot_name, group_or_user_id, msg_data

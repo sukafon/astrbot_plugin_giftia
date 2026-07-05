@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import re
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -13,6 +14,13 @@ class MediaCaptioner:
     def __init__(self, plugin):
         self.plugin = plugin
 
+    @staticmethod
+    def _caption_enabled(media_caption: MediaCaption, caption_config: dict) -> bool:
+        media_type = str(getattr(media_caption, "media_type", "") or "").lower()
+        if media_type == "audio":
+            return bool(caption_config.get("audio_caption_enabled", True))
+        return bool(caption_config.get("image_caption_enabled", True))
+
     async def transcribe_media_if_deferred(
         self, bot_name: str, recent_messages: list, caption_config: dict
     ) -> list[MediaCaption]:
@@ -23,7 +31,10 @@ class MediaCaptioner:
         hash_vals = []
         seen_media = set()
         for msg in reversed(recent_messages):
-            for media_id in reversed(msg.media_id_list):
+            content_media_ids = re.findall(
+                r"\[(?:图片|语音):([^\]\s]+)\]", getattr(msg, "content", "") or ""
+            )
+            for media_id in reversed(content_media_ids):
                 if media_id not in seen_media:
                     seen_media.add(media_id)
                     hash_vals.append(media_id)
@@ -39,6 +50,8 @@ class MediaCaptioner:
         for hash_val in hash_vals:
             media_caption = await self.plugin.data_cache.get_caption_by_hash(hash_val)
             if media_caption:
+                if not self._caption_enabled(media_caption, caption_config):
+                    continue
                 # If the media caption has not been transcribed yet, transcribe it now
                 if not getattr(media_caption, "is_captioned", True):
                     if deferred_count < max_deferred:

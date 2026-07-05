@@ -372,6 +372,24 @@
                 "default": true,
                 "hint": "允许AI在当前会话内通过用户ID、昵称、你的称呼或其他外号模糊查询成员画像"
             },
+            "inspect_forward_message_enabled": {
+                "description": "启用合并转发按需查看工具",
+                "type": "bool",
+                "default": true,
+                "hint": "允许AI在需要时按forward_id查看合并转发消息内容，默认提示词只暴露轻量索引"
+            },
+            "inspect_forward_max_media_captions": {
+                "description": "转发查看工具最多转述媒体数",
+                "type": "int",
+                "default": 5,
+                "hint": "inspect_forward_message 被调用时，单次最多触发多少个转发内图片/语音转述"
+            },
+            "inspect_forward_raw_threshold": {
+                "description": "转发查看工具原文返回阈值",
+                "type": "int",
+                "default": 20,
+                "hint": "合并转发节点数不超过该值时直接返回原文，超过时才生成并复用总结"
+            },
             "active_user_brief_limit": {
                 "description": "活跃用户摘要数量",
                 "type": "int",
