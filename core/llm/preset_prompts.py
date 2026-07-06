@@ -42,6 +42,11 @@ def build_xml_instructions(enabled_features: list[str] | None) -> str:
             "  * 常用表情 ID：424 (太对了/赞同), 10068 (问号/抽象), 264 (捂脸/笑哭), 128560 (紧张/恶心/超前), 265 (辣眼睛), 76 (赞), 123 (NO/不赞同), 128557 (大哭), 49 (拥抱/安慰), 66 (爱心)。"
         )
 
+    if is_enabled("repeat"):
+        interactive_lines.append(
+            '- **消息复读**: `<repeat message_id="消息ID"/>`。当你想原样复读某条近期群友消息时使用，如：表情、文字、语音等。'
+        )
+
     if is_enabled("like"):
         interactive_lines.append(
             '- **点赞名片**: `<like user_id="用户ID" count="点赞次数(1-50)"/>`。为对方的名片点赞，表达好意。'

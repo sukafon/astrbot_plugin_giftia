@@ -120,6 +120,8 @@ class XmlLlmResult:
     delete_message_ids: list[str] = field(default_factory=list)
     # 贴表情，同样是给aiocqhttp用的
     emoji_ids: list[tuple[str, str]] = field(default_factory=list)
+    # 消息复读，同样是给aiocqhttp用的
+    repeat_message_ids: list[str] = field(default_factory=list)
     # 点赞，同样是给aiocqhttp用的
     likes: list[tuple[str, str]] = field(default_factory=list)
     # 戳一戳，同上。群号，用户ID

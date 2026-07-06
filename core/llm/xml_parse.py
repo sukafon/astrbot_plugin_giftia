@@ -216,6 +216,17 @@ class XmlParse:
                     if msg_id:
                         result.delete_message_ids.append(msg_id)
 
+                elif tag_name == "repeat":
+                    msg_id = self._attr_str(child, "message_id", "") or child.get_text(
+                        strip=True
+                    )
+                    if msg_id:
+                        result.repeat_message_ids.append(msg_id)
+                    else:
+                        logger.error(
+                            f"复读标签缺少message_id属性: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
                 elif tag_name == "like":
                     if self._attr_str(child, "user_id", "") and self._attr_str(
                         child, "count", ""
