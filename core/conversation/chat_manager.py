@@ -256,7 +256,7 @@ class ChatManager:
                             group_or_user_id=group_or_user_id,
                             llm_result=chunk,
                         )
-                        if chunk.msg_chains:
+                        if chunk.msg_chains or chunk.repeat_message_ids:
                             has_sent_reply = True
                 else:
                     logger.error(f"{bot_name} 生成消息失败，收到空消息块")
@@ -341,7 +341,7 @@ class ChatManager:
                                 group_or_user_id=group_or_user_id,
                                 llm_result=chunk,
                             )
-                            if chunk.msg_chains:
+                            if chunk.msg_chains or chunk.repeat_message_ids:
                                 has_sent_reply = True
                             continue
                     # 降级到普通消息发送

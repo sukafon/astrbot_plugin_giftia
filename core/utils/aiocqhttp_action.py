@@ -1,3 +1,4 @@
+import copy
 import random
 
 from astrbot.api import logger
@@ -54,6 +55,147 @@ class AIoCQHTTPAction:
         else:
             logger.warning("[Giftia] 发送消息失败: 当前仅支持aiocqhttp平台")
             return False, None
+
+    @staticmethod
+    def _unwrap_action_response(payload) -> dict:
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            return payload["data"]
+        return payload if isinstance(payload, dict) else {}
+
+    async def _call_onebot_action(
+        self,
+        event: AstrMessageEvent,
+        action_name: str,
+        params: dict,
+    ) -> dict | None:
+        bot = getattr(event, "bot", None)
+        if not bot:
+            logger.warning(f"[Giftia] 调用 OneBot 动作 {action_name} 失败: event.bot 不存在")
+            return None
+
+        routing_params = {}
+        try:
+            self_id = str(event.get_self_id() or "").strip()
+        except Exception:
+            self_id = ""
+        if self_id:
+            routing_params["self_id"] = self_id
+
+        direct = getattr(bot, action_name, None)
+        if callable(direct):
+            try:
+                payload = await direct(**params)
+                if isinstance(payload, dict):
+                    return payload
+                logger.warning(
+                    f"[Giftia] OneBot 动作 {action_name} direct 返回非 dict: {payload!r}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Giftia] OneBot 动作 {action_name} direct 调用失败: params={params}, error={e}"
+                )
+
+        api = getattr(bot, "api", None)
+        callers = []
+        if callable(getattr(api, "call_action", None)):
+            callers.append(("bot.api.call_action", api.call_action))
+        if callable(getattr(bot, "call_action", None)):
+            callers.append(("bot.call_action", bot.call_action))
+
+        call_params = dict(params)
+        call_params.update(routing_params)
+        for caller_name, caller in callers:
+            try:
+                payload = await caller(action=action_name, **call_params)
+            except TypeError as e:
+                logger.debug(
+                    f"[Giftia] OneBot 动作 {action_name} 通过 {caller_name} 使用 action 关键字失败，尝试位置参数: {e}"
+                )
+                try:
+                    payload = await caller(action_name, **call_params)
+                except Exception as positional_error:
+                    logger.warning(
+                        f"[Giftia] OneBot 动作 {action_name} 通过 {caller_name} 调用失败: params={call_params}, error={positional_error}"
+                    )
+                    continue
+            except Exception as e:
+                logger.warning(
+                    f"[Giftia] OneBot 动作 {action_name} 通过 {caller_name} 调用失败: params={call_params}, error={e}"
+                )
+                continue
+
+            if isinstance(payload, dict):
+                return payload
+            logger.warning(
+                f"[Giftia] OneBot 动作 {action_name} 通过 {caller_name} 返回非 dict: {payload!r}"
+            )
+
+        logger.warning(f"[Giftia] OneBot 动作 {action_name} 所有调用路径均失败: params={params}")
+        return None
+
+    @staticmethod
+    def _extract_repeat_message_data(payload: dict):
+        data = AIoCQHTTPAction._unwrap_action_response(payload)
+        message_data = (
+            data.get("message")
+            if data.get("message") is not None
+            else data.get("messages")
+        )
+        if message_data is None:
+            message_data = data.get("raw_message")
+        if isinstance(message_data, list):
+            clean_message = [
+                seg for seg in copy.deepcopy(message_data) if isinstance(seg, dict)
+            ]
+            return clean_message or None
+        if isinstance(message_data, str):
+            return message_data if message_data.strip() else None
+        return None
+
+    async def repeat_message(
+        self,
+        event: AstrMessageEvent,
+        message_id: int,
+    ) -> tuple[bool, int | None, str | None]:
+        """原样复读一条 OneBot 消息。调用方负责校验消息是否在上下文窗口内。"""
+        if not (
+            event.get_platform_name() == "aiocqhttp"
+            and isinstance(event, AiocqhttpMessageEvent)
+        ):
+            logger.warning("[Giftia] 复读消息失败: 当前仅支持aiocqhttp平台")
+            return False, None, "当前仅支持aiocqhttp平台"
+
+        try:
+            payload = await self._call_onebot_action(
+                event, "get_msg", {"message_id": message_id}
+            )
+            if not payload:
+                return False, None, "获取原消息失败"
+
+            message_data = self._extract_repeat_message_data(payload)
+            if message_data is None:
+                return False, None, "原消息为空或暂不支持复读"
+
+            group_id = event.get_group_id()
+            if group_id:
+                resp = await event.bot.send_group_msg(
+                    group_id=int(group_id), message=message_data
+                )
+            else:
+                resp = await event.bot.send_private_msg(
+                    user_id=int(event.get_sender_id()), message=message_data
+                )
+
+            resp_data = self._unwrap_action_response(resp)
+            if resp_data and resp_data.get("message_id"):
+                return True, resp_data["message_id"], None
+            if isinstance(resp, dict) and resp.get("message_id"):
+                return True, resp["message_id"], None
+            logger.warning(f"[Giftia] 复读消息已发送但未返回 message_id: {resp}")
+            return True, None, "平台未返回message_id，无法写入复读消息记录"
+        except Exception as e:
+            logger.error(f"[Giftia] 复读消息失败: {e}", exc_info=True)
+            return False, None, str(e)
 
     async def delete_messages(
         self, event: AstrMessageEvent, message_ids: list[int]

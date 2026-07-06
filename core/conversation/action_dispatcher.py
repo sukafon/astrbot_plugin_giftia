@@ -18,6 +18,22 @@ class ActionDispatcher:
     def __init__(self, plugin):
         self.plugin = plugin
 
+    def _interactive_feature_enabled(self, feature_name: str) -> bool:
+        enabled_features = self.plugin.tools_config.get("enabled_interactive_features")
+        if enabled_features is None:
+            return True
+        return any(str(item).startswith(feature_name) for item in enabled_features)
+
+    def _find_recent_message(
+        self, bot_name: str, group_or_user_id: str, message_id: str
+    ) -> MessageData | None:
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        messages = self.plugin.data_cache.recent_messages.get(fmt_key, [])
+        for msg in reversed(messages):
+            if str(msg.message_id) == str(message_id):
+                return msg
+        return None
+
     async def _dispatch_task_board_actions(
         self,
         event: AstrMessageEvent,
@@ -166,7 +182,88 @@ class ActionDispatcher:
                             f"{bot_name} 贴表情数据格式错误: {message_id}, {emoji_id}"
                         )
 
-            # 4. 点赞
+            # 4. 消息复读
+            if llm_result.repeat_message_ids:
+                repeat_enabled = self._interactive_feature_enabled("repeat")
+                self_id = str(event.get_self_id() or "")
+                for message_id in llm_result.repeat_message_ids:
+                    message_id = str(message_id or "").strip()
+                    if not message_id:
+                        continue
+                    if not repeat_enabled:
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='disabled'/>"
+                        )
+                        continue
+
+                    target_msg = self._find_recent_message(
+                        bot_name, group_or_user_id, message_id
+                    )
+                    if not target_msg:
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='not_in_context_window'/>"
+                        )
+                        continue
+                    if getattr(target_msg, "role", "message") == "operation_log":
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='operation_log'/>"
+                        )
+                        continue
+                    if self_id and str(target_msg.user_id or "") == self_id:
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='self_message'/>"
+                        )
+                        continue
+                    if target_msg.is_recalled:
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='recalled'/>"
+                        )
+                        continue
+
+                    try:
+                        message_id_int = int(message_id)
+                    except ValueError:
+                        logger.error(f"{bot_name} 复读消息ID格式错误: {message_id}")
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason='invalid_message_id'/>"
+                        )
+                        continue
+
+                    success, new_message_id, err_msg = (
+                        await self.plugin.aiocqhttp.repeat_message(
+                            event=event,
+                            message_id=message_id_int,
+                        )
+                    )
+                    if success:
+                        if new_message_id:
+                            success_logs.append(
+                                f"<repeat message_id={quoteattr(message_id)} new_message_id={quoteattr(str(new_message_id))} result='success'/>"
+                            )
+                            msg_data = MessageData(
+                                nickname=nickname,
+                                user_id=event.get_self_id(),
+                                group_or_user_id=group_or_user_id,
+                                time=datetime.now().isoformat(),
+                                message_id=str(new_message_id),
+                                content=target_msg.content,
+                                is_recalled=False,
+                                media_id_list=list(target_msg.media_id_list or []),
+                                forward_messages=list(target_msg.forward_messages or []),
+                            )
+                            await self.plugin.data_cache.add_message(
+                                bot_name, group_or_user_id, msg_data
+                            )
+                        else:
+                            success_logs.append(
+                                f"<repeat message_id={quoteattr(message_id)} result='partial' reason={quoteattr(err_msg or 'missing_message_id')}/>"
+                            )
+                    else:
+                        success_logs.append(
+                            f"<repeat message_id={quoteattr(message_id)} result='failed' reason={quoteattr(err_msg or 'unknown')}/>"
+                        )
+
+            # 5. 点赞
             if llm_result.likes:
                 for user_id, count in llm_result.likes:
                     try:
@@ -183,7 +280,7 @@ class ActionDispatcher:
                     except ValueError:
                         logger.error(f"{bot_name} 点赞数据格式错误: {user_id}, {count}")
 
-            # 5. 戳一戳
+            # 6. 戳一戳
             if llm_result.poke:
                 for group_id, user_id in llm_result.poke:
                     try:
@@ -202,7 +299,7 @@ class ActionDispatcher:
                             f"{bot_name} 戳一戳数据格式错误: {group_id}, {user_id}"
                         )
 
-            # 6. 禁言
+            # 7. 禁言
             if llm_result.ban:
                 for group_id, user_id, duration in llm_result.ban:
                     try:

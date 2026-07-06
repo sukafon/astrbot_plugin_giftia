@@ -25,6 +25,7 @@ class ReplyPipeline:
         action_fields = (
             "delete_message_ids",
             "emoji_ids",
+            "repeat_message_ids",
             "likes",
             "poke",
             "ban",

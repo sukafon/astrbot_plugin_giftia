@@ -415,6 +415,7 @@
                 "options": [
                     "poke(戳一戳)",
                     "emoji_like(贴表情回应)",
+                    "repeat(消息复读)",
                     "like(点赞名片)",
                     "delete(撤回自身消息)",
                     "group_admin(群管禁言/踢人)",
@@ -427,6 +428,7 @@
                 "default": [
                     "poke(戳一戳)",
                     "emoji_like(贴表情回应)",
+                    "repeat(消息复读)",
                     "like(点赞名片)",
                     "delete(撤回自身消息)",
                     "group_admin(群管禁言/踢人)",
