@@ -15,6 +15,35 @@ MAX_FORWARD_NODE_COUNT = 80
 
 
 class MessageForwardParser:
+    _forward_node_list_keys = ("messages", "message", "nodes", "nodeList")
+    _forward_node_hint_keys = (
+        "sender",
+        "message",
+        "content",
+        "nickname",
+        "name",
+        "user_id",
+        "uin",
+    )
+    _plain_segment_types = {
+        "text",
+        "plain",
+        "at",
+        "image",
+        "record",
+        "voice",
+        "audio",
+        "video",
+        "file",
+        "json",
+        "xml",
+        "face",
+        "reply",
+        "forward",
+        "forward_msg",
+        "nodes",
+    }
+
     def __init__(self, chain_to_result, format_image_ref, format_audio_ref):
         self.chain_to_result = chain_to_result
         self.format_image_ref = format_image_ref
@@ -26,13 +55,81 @@ class MessageForwardParser:
         return f"fwd_{xxh3_64_hexdigest(raw.encode())[:12]}"
 
     @staticmethod
-    def unwrap_action_response(payload) -> dict:
+    def unwrap_action_response(payload):
+        if isinstance(payload, list):
+            return payload
         if not isinstance(payload, dict):
             return {}
         data = payload.get("data")
-        if isinstance(data, dict):
+        if isinstance(data, (dict, list)):
             return data
         return payload
+
+    @staticmethod
+    def payload_brief(payload) -> str:
+        if not isinstance(payload, dict):
+            if isinstance(payload, list):
+                return f"type=list, len={len(payload)}"
+            return f"type={type(payload).__name__}"
+
+        data = payload.get("data")
+        brief = {
+            "keys": list(payload.keys())[:12],
+            "status": payload.get("status"),
+            "retcode": payload.get("retcode"),
+            "message": payload.get("message") or payload.get("wording"),
+            "data_type": type(data).__name__,
+        }
+        if isinstance(data, dict):
+            brief["data_keys"] = list(data.keys())[:12]
+        elif isinstance(data, list):
+            brief["data_len"] = len(data)
+        return json.dumps(brief, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def extract_forward_nodes_from_payload(payload):
+        data = MessageForwardParser.unwrap_action_response(payload)
+        if isinstance(data, list):
+            return data
+        if not isinstance(data, dict):
+            return None
+        for key in MessageForwardParser._forward_node_list_keys:
+            if key not in data:
+                continue
+            return MessageForwardParser.parse_json_text(data.get(key))
+        return None
+
+    @staticmethod
+    def parse_json_text(value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value.strip().replace("&#44;", ","))
+        except Exception:
+            return value
+
+    @staticmethod
+    def looks_like_forward_node_list(value) -> bool:
+        if not isinstance(value, list) or not value:
+            return False
+        for item in value:
+            if not isinstance(item, dict):
+                return False
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type in MessageForwardParser._plain_segment_types:
+                return False
+            node_data = item.get("data") if isinstance(item.get("data"), dict) else {}
+            if item_type and item_type != "node" and not any(
+                key in item or key in node_data
+                for key in ("message", "content", "messages", "nodes")
+            ):
+                return False
+            if not any(
+                key in item or key in node_data
+                for key in MessageForwardParser._forward_node_hint_keys
+            ):
+                return False
+        return True
 
     async def component_nodes_to_forward_result(
         self,
@@ -78,7 +175,7 @@ class MessageForwardParser:
 
     async def call_forward_msg(
         self, event: AstrMessageEvent | None, forward_id: str
-    ) -> dict | None:
+    ):
         if not event or not forward_id:
             return None
         bot = getattr(event, "bot", None)
@@ -118,7 +215,20 @@ class MessageForwardParser:
                             )
                         else:
                             payload = await caller("get_forward_msg", **call_params)
-                        if isinstance(payload, dict):
+                        if isinstance(payload, (dict, list)):
+                            if isinstance(payload, list):
+                                return payload
+                            status = payload.get("status")
+                            retcode = payload.get("retcode")
+                            if status == "failed" or (
+                                retcode not in (None, 0, "0")
+                                and not payload.get("data")
+                            ):
+                                last_error = self.payload_brief(payload)
+                                continue
+                            if self.extract_forward_nodes_from_payload(payload) is None:
+                                last_error = self.payload_brief(payload)
+                                continue
                             return payload
                     except TypeError as e:
                         last_error = e
@@ -201,20 +311,14 @@ class MessageForwardParser:
 
     async def onebot_forward_payload_to_result(
         self,
-        payload: dict,
+        payload,
         source_id: str,
         defer_caption: bool,
         event: AstrMessageEvent | None,
         forward_ctx: dict,
         depth: int,
     ) -> ChainParseResult:
-        data = self.unwrap_action_response(payload)
-        nodes = (
-            data.get("messages")
-            or data.get("message")
-            or data.get("nodes")
-            or data.get("nodeList")
-        )
+        nodes = self.extract_forward_nodes_from_payload(payload)
         if not isinstance(nodes, list):
             block = {
                 "source": "remote",
@@ -334,6 +438,15 @@ class MessageForwardParser:
                     _forward_ctx=forward_ctx,
                     _depth=depth,
                 )
+            if self.looks_like_forward_node_list(raw_content):
+                return await self.onebot_nodes_to_forward_result(
+                    raw_content,
+                    source_id="",
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=forward_ctx,
+                    depth=depth,
+                )
             return await self.onebot_segments_to_result(
                 raw_content,
                 defer_caption=defer_caption,
@@ -342,6 +455,29 @@ class MessageForwardParser:
                 depth=depth,
             )
         if isinstance(raw_content, dict):
+            seg_type = str(raw_content.get("type") or "").lower()
+            seg_data = (
+                raw_content.get("data")
+                if isinstance(raw_content.get("data"), dict)
+                else {}
+            )
+            if not seg_type:
+                for source in (raw_content, seg_data):
+                    if not isinstance(source, dict):
+                        continue
+                    for key in ("nodes", "messages", "message", "content"):
+                        if key not in source:
+                            continue
+                        nested = self.parse_json_text(source.get(key))
+                        if nested is raw_content:
+                            continue
+                        return await self.onebot_content_to_result(
+                            nested,
+                            defer_caption=defer_caption,
+                            event=event,
+                            forward_ctx=forward_ctx,
+                            depth=depth,
+                        )
             return await self.onebot_segments_to_result(
                 [raw_content],
                 defer_caption=defer_caption,
@@ -430,7 +566,20 @@ class MessageForwardParser:
                 )
                 parts.append(f"[文件:{name}]")
             elif seg_type in ("forward", "forward_msg"):
-                fid = seg_data.get("id") or seg_data.get("message_id")
+                fid = (
+                    seg_data.get("id")
+                    or seg_data.get("message_id")
+                    or seg_data.get("resid")
+                    or seg_data.get("m_resid")
+                    or seg_data.get("forward_id")
+                    or seg_data.get("msg_resid")
+                )
+                nested = (
+                    self.parse_json_text(seg_data.get("content"))
+                    or seg_data.get("nodes")
+                    or seg_data.get("messages")
+                    or seg_data.get("message")
+                )
                 if fid:
                     forward_result = await self.forward_id_to_result(
                         fid,
@@ -439,10 +588,39 @@ class MessageForwardParser:
                         forward_ctx=forward_ctx,
                         depth=depth,
                     )
-                    result.merge(forward_result)
-                    parts.append(forward_result.content)
+                    first_block = (
+                        forward_result.forward_messages[0]
+                        if forward_result.forward_messages
+                        else {}
+                    )
+                    if first_block.get("unresolved") and nested:
+                        nested_result = await self.onebot_content_to_result(
+                            nested,
+                            defer_caption=defer_caption,
+                            event=event,
+                            forward_ctx=forward_ctx,
+                            depth=depth + 1,
+                        )
+                        if nested_result.forward_messages or nested_result.content:
+                            if nested_result.forward_messages:
+                                block_id = str(
+                                    nested_result.forward_messages[0].get("id") or ""
+                                )
+                                if block_id:
+                                    forward_ctx["remote_refs"][str(fid)] = block_id
+                            result.merge(nested_result)
+                            parts.append(
+                                nested_result.content
+                                if nested_result.content
+                                else "[合并转发消息]"
+                            )
+                        else:
+                            result.merge(forward_result)
+                            parts.append(forward_result.content)
+                    else:
+                        result.merge(forward_result)
+                        parts.append(forward_result.content)
                 else:
-                    nested = seg_data.get("content") or seg_data.get("nodes")
                     nested_result = await self.onebot_content_to_result(
                         nested,
                         defer_caption=defer_caption,
@@ -552,6 +730,23 @@ class MessageForwardParser:
             )
         return nodes
 
+    def extract_json_forward_embedded_nodes(self, data: dict) -> list:
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        detail = meta.get("detail") if isinstance(meta.get("detail"), dict) else {}
+        for item in (detail, meta, data):
+            if not isinstance(item, dict):
+                continue
+            for key in ("nodes", "messages", "message", "content"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    try:
+                        value = json.loads(value.strip().replace("&#44;", ","))
+                    except Exception:
+                        continue
+                if isinstance(value, list):
+                    return value
+        return []
+
     async def json_to_forward_result(
         self,
         data,
@@ -588,6 +783,7 @@ class MessageForwardParser:
             return None
 
         source_id = self.extract_json_forward_source_id(data)
+        embedded_nodes = self.extract_json_forward_embedded_nodes(data)
         preview_nodes = self.extract_json_forward_preview_nodes(data)
         if source_id:
             fetched = await self.forward_id_to_result(
@@ -600,6 +796,20 @@ class MessageForwardParser:
             first_block = fetched.forward_messages[0] if fetched.forward_messages else {}
             if fetched.forward_messages and not first_block.get("unresolved"):
                 return fetched
+            if embedded_nodes:
+                embedded_result = await self.onebot_nodes_to_forward_result(
+                    embedded_nodes,
+                    source_id=source_id,
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=forward_ctx,
+                    depth=depth,
+                )
+                if embedded_result.forward_messages:
+                    forward_ctx["remote_refs"][source_id] = embedded_result.forward_messages[
+                        0
+                    ]["id"]
+                return embedded_result
             if preview_nodes:
                 preview_result = await self.onebot_nodes_to_forward_result(
                     preview_nodes,
@@ -615,6 +825,15 @@ class MessageForwardParser:
                     ]["id"]
                 return preview_result
             return fetched
+        if embedded_nodes:
+            return await self.onebot_nodes_to_forward_result(
+                embedded_nodes,
+                source_id="",
+                defer_caption=defer_caption,
+                event=event,
+                forward_ctx=forward_ctx,
+                depth=depth,
+            )
         if preview_nodes:
             return await self.onebot_nodes_to_forward_result(
                 preview_nodes,
