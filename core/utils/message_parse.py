@@ -1,43 +1,41 @@
 import asyncio
-import re
 from collections import defaultdict
 from datetime import datetime
-
-from xxhash import xxh3_64_hexdigest
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import (
     At,
     File,
+    Forward,
     Image,
     Json,
     Node,
     Nodes,
     Plain,
+    Poke,
     Record,
     Reply,
     Video,
 )
 from astrbot.core.message.components import BaseMessageComponent
 
-from ..database.data_cache import DataCache, is_temp_or_local_path
+from ..database.data_cache import DataCache
 from ..llm.call_llm import CallLLM
 from .http_manager import HttpManager
-from .schemas import MediaCaption, MessageData
-
-# 支持的图片文件格式
-SUPPORTED_FILE_FORMATS_WITH_DOT = (
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".webp",
-    ".bmp",
-    ".gif",
-    ".heic",
-    ".heif",
-    ".mpo",
+from .message_forward import (
+    MAX_FORWARD_FETCH as MAX_FORWARD_FETCH,
+    MAX_FORWARD_NODE_COUNT as MAX_FORWARD_NODE_COUNT,
+    MAX_FORWARD_NODE_DEPTH as MAX_FORWARD_NODE_DEPTH,
+    MessageForwardParser,
 )
+from .message_media import (
+    MessageMediaFormatter,
+    LockManager,
+    SUPPORTED_FILE_FORMATS_WITH_DOT as SUPPORTED_FILE_FORMATS_WITH_DOT,
+)
+from .message_parse_types import ChainParseResult
+from .schemas import MediaCaption, MessageData
 
 
 class MessageParser:
@@ -55,8 +53,125 @@ class MessageParser:
         self.audio_caption_enabled = audio_caption_enabled
         self.call_llm = call_llm
         # 异步锁，防止多机器人场景重复解析媒体信息
-        self.url_locks = defaultdict(asyncio.Lock)
-        self.hash_locks = defaultdict(asyncio.Lock)
+        self.url_locks = LockManager()
+        self.hash_locks = LockManager()
+        self.media_formatter = MessageMediaFormatter(
+            data_cache=data_cache,
+            http_manager=http_manager,
+            image_caption_enabled=image_caption_enabled,
+            audio_caption_enabled=audio_caption_enabled,
+            call_llm=call_llm,
+            url_locks=self.url_locks,
+            hash_locks=self.hash_locks,
+        )
+        self.forward_parser = MessageForwardParser(
+            chain_to_result=self.chain_to_result,
+            format_image_ref=self._format_image_ref,
+            format_audio_ref=self._format_audio_ref,
+        )
+
+    async def _resolve_user_name(
+        self,
+        event: AstrMessageEvent,
+        user_id: str,
+        current_name: str | None,
+        force_lookup: bool = False,
+    ) -> str:
+        """Resolve a readable nickname for notice events that only carry user_id."""
+        user_id = str(user_id or "").strip()
+        current_name = str(current_name or "").strip()
+        if current_name and current_name != user_id and not force_lookup:
+            return current_name
+        if not user_id:
+            return current_name
+
+        group_id = str(event.get_group_id() or "").strip()
+        bot = getattr(event, "bot", None)
+        routing_params = {}
+        self_id = str(event.get_self_id() or "").strip()
+        if self_id:
+            routing_params["self_id"] = self_id
+
+        if bot and hasattr(bot, "call_action"):
+            try:
+                query_user_id = int(user_id) if user_id.isdigit() else user_id
+                if group_id:
+                    query_group_id = int(group_id) if group_id.isdigit() else group_id
+                    info = await bot.call_action(
+                        action="get_group_member_info",
+                        group_id=query_group_id,
+                        user_id=query_user_id,
+                        no_cache=False,
+                        **routing_params,
+                    )
+                    nickname = (
+                        info.get("card")
+                        or info.get("nickname")
+                        or info.get("nick")
+                    )
+                    if nickname:
+                        return str(nickname)
+                info = await bot.call_action(
+                    action="get_stranger_info",
+                    user_id=query_user_id,
+                    no_cache=False,
+                    **routing_params,
+                )
+                nickname = info.get("nick") or info.get("nickname")
+                if nickname:
+                    return str(nickname)
+            except Exception as e:
+                logger.debug(f"[Giftia] 解析用户昵称失败: {e}")
+
+        if group_id:
+            try:
+                group = await event.get_group(group_id)
+                for member in getattr(group, "members", []) or []:
+                    if str(getattr(member, "user_id", "")) == user_id:
+                        nickname = getattr(member, "nickname", "")
+                        if nickname:
+                            return str(nickname)
+            except Exception as e:
+                logger.debug(f"[Giftia] 从群成员列表解析昵称失败: {e}")
+
+        return current_name or user_id
+
+    @staticmethod
+    def _get_poke_target_id(comp: Poke) -> str:
+        target_id = (
+            comp.target_id()
+            if hasattr(comp, "target_id")
+            else getattr(comp, "id", None) or getattr(comp, "qq", None)
+        )
+        return str(target_id or "").strip()
+
+    @staticmethod
+    def _format_user_ref(name: str, user_id: str) -> str:
+        name = str(name or "").strip()
+        user_id = str(user_id or "").strip()
+        if name and user_id and name != user_id:
+            return f"{name}({user_id})"
+        return user_id or name or "未知用户"
+
+    async def _format_poke_message(
+        self,
+        event: AstrMessageEvent,
+        chain: list[BaseMessageComponent],
+    ) -> str:
+        parts = []
+        for comp in chain:
+            if not isinstance(comp, Poke):
+                continue
+            target_id = self._get_poke_target_id(comp)
+            target_name = await self._resolve_user_name(
+                event=event,
+                user_id=target_id,
+                current_name=target_id,
+                force_lookup=True,
+            )
+            target_ref = self._format_user_ref(target_name, target_id)
+            parts.append(f"[戳一戳:{target_ref}]")
+        return " ".join(parts)
 
     async def parse_user_message(
         self, event: AstrMessageEvent, bot_name: str, defer_caption: bool = False
@@ -65,562 +180,358 @@ class MessageParser:
         # 获取时间
         iso_string = datetime.fromtimestamp(event.message_obj.timestamp).isoformat()
         # 获取消息内容
-        msg, media_id_list = await self.chain_to_str(
-            event.get_messages(), defer_caption
+        parsed = await self.chain_to_result(
+            event.get_messages(), defer_caption, event=event
         )
+        msg = parsed.content
+        media_id_list = parsed.media_id_list
         group_or_user_id = event.get_group_id() or event.get_sender_id()
-        # 提取消息中的图片url
-        image_urls = []
-        audio_urls = []
-        for comp in event.get_messages():
-            if isinstance(comp, Reply) and comp.chain:
-                for quote in comp.chain:
-                    if isinstance(quote, Image) and quote.url:
-                        image_urls.append(quote.url)
-                    elif isinstance(quote, Record) and quote.url:
-                        audio_urls.append(quote.url)
-                    # 图片文件（astr的大模型请求接口似乎没有pdf的类型，这里只支持图片）
-                    elif (
-                        isinstance(quote, File)
-                        and quote.url
-                        and quote.url.startswith("http")
-                        and (
-                            quote.url.lower().endswith(SUPPORTED_FILE_FORMATS_WITH_DOT)
-                            or quote.name
-                            and quote.name.lower().endswith(
-                                SUPPORTED_FILE_FORMATS_WITH_DOT
-                            )
-                        )
-                    ):
-                        image_urls.append(quote.url)
-            elif isinstance(comp, Image) and comp.url:
-                image_urls.append(comp.url)
-            elif isinstance(comp, Record) and comp.url:
-                audio_urls.append(comp.url)
-            # 图片文件（astr的大模型请求接口似乎没有pdf的类型，这里只支持图片）
-            elif (
-                isinstance(comp, File)
-                and comp.url
-                and comp.url.startswith("http")
-                and (
-                    comp.url.lower().endswith(SUPPORTED_FILE_FORMATS_WITH_DOT)
-                    or comp.name
-                    and comp.name.lower().endswith(SUPPORTED_FILE_FORMATS_WITH_DOT)
-                )
-            ):
-                image_urls.append(comp.url)
+        sender_id = event.get_sender_id()
+        has_poke = any(isinstance(comp, Poke) for comp in event.get_messages())
+        sender_name = await self._resolve_user_name(
+            event=event,
+            user_id=sender_id,
+            current_name=event.get_sender_name(),
+            force_lookup=has_poke,
+        )
+        if has_poke:
+            poke_msg = await self._format_poke_message(
+                event=event,
+                chain=event.get_messages(),
+            )
+            if poke_msg:
+                msg = poke_msg
         msg_data = MessageData(
-            nickname=event.get_sender_name(),
-            user_id=event.get_sender_id(),
+            nickname=sender_name,
+            user_id=sender_id,
             group_or_user_id=group_or_user_id,
             time=iso_string,
             message_id=event.message_obj.message_id,
             content=msg,
             is_recalled=0,
             media_id_list=media_id_list,
+            forward_messages=parsed.forward_messages,
         )
         # 将消息写入缓存
         await self.data_cache.add_message(bot_name, group_or_user_id, msg_data)
-        return msg_data, image_urls, audio_urls
+        return msg_data, parsed.image_urls, parsed.audio_urls
 
     async def chain_to_str(
         self, chain: list[BaseMessageComponent], defer_caption: bool = False
     ) -> tuple[str, list[str]]:
         """将消息链转换为字符串，用于接收用户消息时转换使用"""
+        parsed = await self.chain_to_result(chain, defer_caption)
+        return parsed.content, parsed.media_id_list
+
+    async def chain_to_result(
+        self,
+        chain: list[BaseMessageComponent],
+        defer_caption: bool = False,
+        event: AstrMessageEvent | None = None,
+        _forward_ctx: dict | None = None,
+        _depth: int = 0,
+    ) -> ChainParseResult:
+        """将消息链转换为可入库的正文、媒体脚注和转发结构。"""
+        if _forward_ctx is None:
+            _forward_ctx = {
+                "remote_refs": {},
+                "fetch_count": 0,
+                "fetching": set(),
+            }
+
         msg_parts = []
-        media_id_list = []
-        for comp in chain:
+        result = ChainParseResult()
+        index = 0
+        while index < len(chain):
+            comp = chain[index]
+            index += 1
             if isinstance(comp, Plain):
                 msg_parts.append(comp.text)
             elif isinstance(comp, Reply):
                 # 引用消息文本
                 quote_text = ""
                 if comp.chain:
-                    quote_parts = []
-                    for quote in comp.chain:
-                        if isinstance(quote, Plain):
-                            quote_parts.append(quote.text)
-                        elif isinstance(quote, At):
-                            quote_parts.append(f"<@{quote.name}({quote.qq})>")
-                        elif isinstance(quote, Image):
-                            file_name = quote.file
-                            media_caption = None
-                            hash_val = None
-
-                            if file_name and not is_temp_or_local_path(file_name):
-                                (
-                                    hash_val,
-                                    media_caption,
-                                ) = await self.data_cache.get_caption_by_filename(
-                                    file_name
-                                )
-
-                            if not media_caption and (
-                                quote.url
-                                or (
-                                    file_name
-                                    and (
-                                        file_name.startswith("file://")
-                                        or file_name.startswith("base64://")
-                                    )
-                                )
-                            ):
-                                hash_val, media_caption = await self._get_image_caption(
-                                    quote.url or "", file_name, defer_caption
-                                )
-                            if hash_val and media_caption:
-                                quote_parts.append(f"[图片:{hash_val}]")
-                                media_id_list.append(hash_val)
-                                # 写入缓存
-                                await self.data_cache.set_caption(media_caption)
-                                continue
-                            # 无法获取图片描述，使用默认值
-                            quote_parts.append("[图片]")
-                        elif isinstance(quote, Record):
-                            file_name = quote.file
-                            media_caption = None
-                            hash_val = None
-
-                            if (
-                                file_name
-                                and self.audio_caption_enabled
-                                and not is_temp_or_local_path(file_name)
-                            ):
-                                (
-                                    hash_val,
-                                    media_caption,
-                                ) = await self.data_cache.get_caption_by_filename(
-                                    file_name
-                                )
-
-                            if (
-                                not media_caption
-                                and (
-                                    quote.url
-                                    or (file_name and file_name.startswith("file://"))
-                                )
-                                and self.audio_caption_enabled
-                            ):
-                                hash_val, media_caption = await self._get_audio_caption(
-                                    quote.url or "", file_name, defer_caption
-                                )
-                            if hash_val and media_caption:
-                                quote_parts.append(f"[语音:{hash_val}]")
-                                media_id_list.append(hash_val)
-                                # 写入缓存
-                                await self.data_cache.set_caption(media_caption)
-                                continue
-                            # 无法获取语音描述，使用默认值
-                            quote_parts.append("[语音]")
-                        elif isinstance(quote, Video):
-                            quote_parts.append("[视频]")
-                        elif isinstance(quote, Json):
-                            quote_parts.append("[合并转发消息]")
-                        elif isinstance(quote, File):
-                            quote_parts.append(f"[文件:{quote.name}]")
-                    quote_text = " ".join(quote_parts)
+                    quote_result = await self.chain_to_result(
+                        comp.chain,
+                        defer_caption=defer_caption,
+                        event=event,
+                        _forward_ctx=_forward_ctx,
+                        _depth=_depth + 1,
+                    )
+                    result.merge(quote_result)
+                    quote_text = quote_result.content
                 msg_parts.append(
                     f"<quote message_id={comp.id} sender_id={comp.sender_id} sender_name={comp.sender_nickname}>{quote_text}</quote>"
                 )
             elif isinstance(comp, At):
                 msg_parts.append(f"<@{comp.name}({comp.qq})>")
             elif isinstance(comp, Image):
-                file_name = comp.file
-                media_caption = None
-                hash_val = None
                 custom_desc = getattr(comp, "meme_desc", None)
-
-                if file_name and not is_temp_or_local_path(file_name):
-                    (
-                        hash_val,
-                        media_caption,
-                    ) = await self.data_cache.get_caption_by_filename(file_name)
-
-                if not media_caption and (
-                    comp.url
-                    or (
-                        file_name
-                        and (
-                            file_name.startswith("file://")
-                            or file_name.startswith("base64://")
-                        )
-                    )
-                ):
-                    hash_val, media_caption = await self._get_image_caption(
-                        comp.url or "", file_name, defer_caption, custom_desc=custom_desc
-                    )
-                if hash_val and media_caption:
-                    msg_parts.append(f"[图片:{hash_val}]")
-                    media_id_list.append(hash_val)
-                    # 写入缓存
-                    await self.data_cache.set_caption(media_caption)
-                    continue
-                # 无法获取图片描述，使用默认值
-                msg_parts.append("[图片]")
+                part, media_result = await self._format_image_ref(
+                    comp.url or "",
+                    comp.file,
+                    defer_caption,
+                    custom_desc=custom_desc,
+                )
+                result.merge(media_result)
+                msg_parts.append(part)
             # 语音消息
             elif isinstance(comp, Record):
-                file_name = comp.file
-                media_caption = None
-                hash_val = None
-
-                if (
-                    file_name
-                    and self.audio_caption_enabled
-                    and not is_temp_or_local_path(file_name)
-                ):
-                    (
-                        hash_val,
-                        media_caption,
-                    ) = await self.data_cache.get_caption_by_filename(file_name)
-
-                if (
-                    not media_caption
-                    and (comp.url or (file_name and file_name.startswith("file://")))
-                    and self.audio_caption_enabled
-                ):
-                    hash_val, media_caption = await self._get_audio_caption(
-                        comp.url or "", file_name, defer_caption
-                    )
-                if hash_val and media_caption:
-                    msg_parts.append(f"[语音:{hash_val}]")
-                    media_id_list.append(hash_val)
-                    # 写入缓存
-                    await self.data_cache.set_caption(media_caption)
-                    continue
-                # 无法获取语音描述，使用默认值
-                msg_parts.append("[语音]")
+                part, media_result = await self._format_audio_ref(
+                    comp.url or "", comp.file, defer_caption
+                )
+                result.merge(media_result)
+                msg_parts.append(part)
             elif isinstance(comp, Video):
                 # 暂不支持视频转述，考虑用工具异步支持
                 msg_parts.append("[视频]")
             elif isinstance(comp, Json):
-                # 暂不支持合并转发消息转述，考虑用工具异步支持
-                msg_parts.append("[合并转发消息]")
+                forward_result = await self._json_to_forward_result(
+                    comp.data,
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=_forward_ctx,
+                    depth=_depth,
+                )
+                if forward_result:
+                    result.merge(forward_result)
+                    msg_parts.append(forward_result.content)
+                else:
+                    msg_parts.append("[合并转发消息]")
             elif isinstance(comp, File):
                 # 暂不支持文件转述
                 msg_parts.append(f"[文件:{comp.name}]")
+            elif isinstance(comp, Poke):
+                target_id = self._get_poke_target_id(comp)
+                msg_parts.append(
+                    f"[戳一戳:{target_id}]" if target_id else "[戳一戳]"
+                )
             elif isinstance(comp, Node):
-                sub_content = ""
-                if comp.content:
-                    sub_content, sub_media = await self.chain_to_str(
-                        comp.content, defer_caption
-                    )
-                    media_id_list.extend(sub_media)
-                msg_parts.append(f"[{comp.name or 'bot'}]: {sub_content}")
+                nodes = [comp]
+                while index < len(chain) and isinstance(chain[index], Node):
+                    nodes.append(chain[index])
+                    index += 1
+                forward_result = await self._component_nodes_to_forward_result(
+                    nodes,
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=_forward_ctx,
+                    depth=_depth,
+                )
+                result.merge(forward_result)
+                msg_parts.append(forward_result.content)
             elif isinstance(comp, Nodes):
-                sub_parts = []
-                if comp.nodes:
-                    for node in comp.nodes:
-                        sub_content = ""
-                        if node.content:
-                            sub_content, sub_media = await self.chain_to_str(
-                                node.content, defer_caption
-                            )
-                            media_id_list.extend(sub_media)
-                        sub_parts.append(f"[{node.name or 'bot'}]: {sub_content}")
-                msg_parts.append("\n".join(sub_parts))
-        return " ".join(msg_parts), media_id_list
+                forward_result = await self._component_nodes_to_forward_result(
+                    comp.nodes or [],
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=_forward_ctx,
+                    depth=_depth,
+                )
+                result.merge(forward_result)
+                msg_parts.append(forward_result.content)
+            elif isinstance(comp, Forward):
+                forward_result = await self._forward_id_to_result(
+                    getattr(comp, "id", ""),
+                    defer_caption=defer_caption,
+                    event=event,
+                    forward_ctx=_forward_ctx,
+                    depth=_depth,
+                )
+                result.merge(forward_result)
+                msg_parts.append(forward_result.content)
+        result.content = " ".join(part for part in msg_parts if part).strip()
+        return result
+
+    @staticmethod
+    def _make_forward_id(payload: dict) -> str:
+        return MessageForwardParser.make_forward_id(payload)
+
+    @staticmethod
+    def _unwrap_action_response(payload) -> dict:
+        return MessageForwardParser.unwrap_action_response(payload)
+
+    @staticmethod
+    def _first_media_url(url: str | None, file_name: str | None) -> str:
+        return MessageMediaFormatter.first_media_url(url, file_name)
+
+    @staticmethod
+    def _filename_stable_hash(file_name: str | None) -> str | None:
+        return MessageMediaFormatter.filename_stable_hash(file_name)
+
+    @staticmethod
+    def _is_filename_stable_hash(hash_val: str | None) -> bool:
+        return MessageMediaFormatter.is_filename_stable_hash(hash_val)
+
+    async def _format_image_ref(
+        self,
+        url: str,
+        file_name: str | None,
+        defer_caption: bool,
+        custom_desc: str | None = None,
+    ) -> tuple[str, ChainParseResult]:
+        return await self.media_formatter.format_image_ref(
+            url,
+            file_name,
+            defer_caption,
+            custom_desc=custom_desc,
+        )
+
+    async def _format_audio_ref(
+        self, url: str, file_name: str | None, defer_caption: bool
+    ) -> tuple[str, ChainParseResult]:
+        return await self.media_formatter.format_audio_ref(
+            url,
+            file_name,
+            defer_caption,
+        )
+
+    async def _component_nodes_to_forward_result(
+        self,
+        nodes: list[Node],
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.component_nodes_to_forward_result(
+            nodes,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    async def _call_forward_msg(
+        self, event: AstrMessageEvent | None, forward_id: str
+    ) -> dict | None:
+        return await self.forward_parser.call_forward_msg(event, forward_id)
+
+    async def _forward_id_to_result(
+        self,
+        forward_id,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.forward_id_to_result(
+            forward_id,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    async def _onebot_forward_payload_to_result(
+        self,
+        payload: dict,
+        source_id: str,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.onebot_forward_payload_to_result(
+            payload,
+            source_id=source_id,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    async def _onebot_nodes_to_forward_result(
+        self,
+        nodes: list,
+        source_id: str,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.onebot_nodes_to_forward_result(
+            nodes,
+            source_id=source_id,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    async def _onebot_content_to_result(
+        self,
+        raw_content,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.onebot_content_to_result(
+            raw_content,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    async def _onebot_segments_to_result(
+        self,
+        segments: list,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult:
+        return await self.forward_parser.onebot_segments_to_result(
+            segments,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
+
+    def _extract_json_forward_source_id(self, data: dict) -> str:
+        return self.forward_parser.extract_json_forward_source_id(data)
+
+    def _extract_json_forward_preview_nodes(self, data: dict) -> list[dict]:
+        return self.forward_parser.extract_json_forward_preview_nodes(data)
+
+    async def _json_to_forward_result(
+        self,
+        data,
+        defer_caption: bool,
+        event: AstrMessageEvent | None,
+        forward_ctx: dict,
+        depth: int,
+    ) -> ChainParseResult | None:
+        return await self.forward_parser.json_to_forward_result(
+            data,
+            defer_caption=defer_caption,
+            event=event,
+            forward_ctx=forward_ctx,
+            depth=depth,
+        )
 
     async def _get_image_caption(
-        self, url: str, file_name: str | None = None, defer_caption: bool = False, custom_desc: str | None = None
+        self,
+        url: str,
+        file_name: str | None = None,
+        defer_caption: bool = False,
+        custom_desc: str | None = None,
     ) -> tuple[str | None, MediaCaption | None]:
-        """获取图片描述"""
-        if not url and file_name:
-            url = file_name
-        async with self.url_locks[url]:
-            if file_name and not is_temp_or_local_path(file_name):
-                # 检查缓存
-                hash_val, media_caption = await self.data_cache.get_caption_by_filename(
-                    file_name
-                )
-                if hash_val and media_caption:
-                    if getattr(media_caption, "is_captioned", True) or defer_caption:
-                        return hash_val, media_caption
-
-            # Try to extract a stable MD5 hash from file_name as the stable identifier.
-            # Only file_name is used — URLs are intentionally excluded because they often
-            # contain shared parameters (e.g. rkey, session tokens) that look like 32-char
-            # hex strings but are identical across different images, causing false cache hits.
-            stable_hash = None
-
-            if file_name and not is_temp_or_local_path(file_name):
-                # Require the 32-char hex to be the entire stem of the filename (e.g.
-                # "ABCDEF...1234.image" -> stem "ABCDEF...1234"), not a partial match.
-                stem = re.sub(r"\.[^.]+$", "", file_name)  # strip extension
-                if re.fullmatch(r"[a-fA-F0-9]{32}", stem):
-                    stable_hash = stem.lower()
-
-            if stable_hash:
-                media_caption = await self.data_cache.get_caption_by_hash(stable_hash)
-                if media_caption:
-                    media_caption.url = url
-                    if file_name:
-                        media_caption.file_name = file_name
-                    if getattr(media_caption, "is_captioned", True) or defer_caption:
-                        await self.data_cache.set_caption(media_caption)
-                        return stable_hash, media_caption
-
-            # 下载图片
-            image_bytes = None
-            if file_name and file_name.startswith("file://"):
-                import urllib.parse
-                from pathlib import Path
-
-                clean_path = urllib.parse.unquote(file_name[7:])
-                local_path = Path(clean_path)
-                if local_path.is_file():
-                    try:
-                        image_bytes = local_path.read_bytes()
-                    except Exception as e:
-                        file_name_disp = (
-                            (file_name[:100] + "...")
-                            if file_name and len(file_name) > 100
-                            else file_name
-                        )
-                        logger.error(f"[Giftia] 读取本地图片失败 {file_name_disp}: {e}")
-            elif file_name and file_name.startswith("base64://"):
-                import base64 as b64_module
-
-                try:
-                    b64_data = file_name[9:]
-                    if "," in b64_data:
-                        b64_data = b64_data.split(",", 1)[1]
-                    image_bytes = b64_module.b64decode(b64_data)
-                except Exception as e:
-                    logger.error(f"[Giftia] 解码 base64 图片失败: {e}")
-
-            if not image_bytes:
-                image_bytes = await self.http_manager.download_media(url)
-
-            if not image_bytes:
-                return None, None
-            # 生成hash
-            hash_val = stable_hash or xxh3_64_hexdigest(image_bytes)
-
-            # If the URL/file_name is a base64 string, replace it with a clean placeholder to avoid bloated DB columns
-            db_url = url
-            if db_url and db_url.startswith("base64://"):
-                db_url = f"base64://{hash_val}"
-
-            db_file_name = file_name
-            if db_file_name and db_file_name.startswith("base64://"):
-                db_file_name = f"base64://{hash_val}"
-
-            # 保存到本地持久缓存目录，以便网页端可以永久预览
-            try:
-                from astrbot.core.star.star_tools import StarTools
-
-                cache_dir = (
-                    StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
-                )
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file = cache_dir / hash_val
-                if not cache_file.exists():
-                    cache_file.write_bytes(image_bytes)
-            except Exception as e:
-                logger.error(f"[Giftia] 保存媒体缓存失败: {e}")
-
-        async with self.hash_locks[hash_val]:
-            if custom_desc:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=db_url,
-                    media_type="image",
-                    caption=custom_desc,
-                    genre="表情包",
-                    is_captioned=True,
-                )
-                if file_name:
-                    media_caption.file_name = db_file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-
-            # 检查缓存
-            media_caption = await self.data_cache.get_caption_by_hash(hash_val)
-            if media_caption:
-                media_caption.url = db_url
-                if file_name:
-                    media_caption.file_name = db_file_name
-                if getattr(media_caption, "is_captioned", True) or defer_caption:
-                    await self.data_cache.set_caption(media_caption)
-                    return hash_val, media_caption
-
-            # 如果开启了延迟，或者未开启转述，直接返回一个仅包含url和hash的基础对象
-            if defer_caption:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=db_url,
-                    media_type="image",
-                    is_captioned=False,
-                )
-                if file_name:
-                    media_caption.file_name = db_file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-
-            if not self.image_caption_enabled:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=db_url,
-                    media_type="image",
-                    is_captioned=True,
-                )
-                if file_name:
-                    media_caption.file_name = db_file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-
-            # 处理图片
-            base64s, is_animated = await asyncio.to_thread(
-                self.http_manager.handle_image, image_bytes
-            )
-            if not base64s:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=db_url,
-                    media_type="image",
-                    is_captioned=True,
-                )
-                if file_name:
-                    media_caption.file_name = db_file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-            # Log key identifiers so we can detect if two different URLs produce the
-            # same image content (which would indicate a stale-temp-file read).
-            url_disp = (url[:100] + "...") if url and len(url) > 100 else url
-            logger.info(
-                f"[Giftia] 调用LLM转述图片: hash={hash_val} "
-                f"size={len(image_bytes)}B "
-                f"head={image_bytes[:8].hex()} "
-                f"url={url_disp!r}"
-            )
-            # 调用LLM生成图片描述
-            media_caption = await self.call_llm.call_llm_image_caption(base64s)
-            if not media_caption:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=db_url,
-                    media_type="image",
-                    is_captioned=True,
-                )
-                if file_name:
-                    media_caption.file_name = db_file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-            media_caption.hash_val = hash_val
-            media_caption.url = db_url
-            if file_name:
-                media_caption.file_name = db_file_name
-            media_caption.media_type = "image"
-            media_caption.is_captioned = True
-            # 缓存
-            await self.data_cache.set_caption(media_caption)
-            return hash_val, media_caption
+        return await self.media_formatter.get_image_caption(
+            url,
+            file_name=file_name,
+            defer_caption=defer_caption,
+            custom_desc=custom_desc,
+        )
 
     async def _get_audio_caption(
         self, url: str, file_name: str | None = None, defer_caption: bool = False
     ) -> tuple[str | None, MediaCaption | None]:
-        """获取语音描述"""
-        if not url and file_name:
-            url = file_name
-        async with self.url_locks[url]:
-            if file_name and not is_temp_or_local_path(file_name):
-                # 检查缓存
-                hash_val, media_caption = await self.data_cache.get_caption_by_filename(
-                    file_name
-                )
-                if hash_val and media_caption:
-                    if getattr(media_caption, "is_captioned", True) or defer_caption:
-                        return hash_val, media_caption
-
-            # 语音的hash_val用url生成，如果是本地文件，使用本地内容生成hash
-            audio_bytes = None
-            if file_name and file_name.startswith("file://"):
-                import urllib.parse
-                from pathlib import Path
-
-                clean_path = urllib.parse.unquote(file_name[7:])
-                local_path = Path(clean_path)
-                if local_path.is_file():
-                    try:
-                        audio_bytes = local_path.read_bytes()
-                    except Exception as e:
-                        file_name_disp = (
-                            (file_name[:100] + "...")
-                            if file_name and len(file_name) > 100
-                            else file_name
-                        )
-                        logger.error(f"[Giftia] 读取本地音频失败 {file_name_disp}: {e}")
-
-            if audio_bytes:
-                hash_val = xxh3_64_hexdigest(audio_bytes)
-            else:
-                hash_val = xxh3_64_hexdigest(url.encode())
-
-            # 检查缓存
-            media_caption = await self.data_cache.get_caption_by_hash(hash_val)
-            if media_caption:
-                media_caption.url = url
-                if file_name:
-                    media_caption.file_name = file_name
-                if getattr(media_caption, "is_captioned", True) or defer_caption:
-                    await self.data_cache.set_caption(media_caption)
-                    return hash_val, media_caption
-
-            # 下载并保存语音文件，以便永久播放
-            if not audio_bytes:
-                try:
-                    audio_bytes = await self.http_manager.download_media(url)
-                except Exception as e:
-                    url_disp = (url[:100] + "...") if url and len(url) > 100 else url
-                    logger.error(f"[Giftia] 下载音频失败 {url_disp}: {e}")
-
-            if audio_bytes:
-                try:
-                    from astrbot.core.star.star_tools import StarTools
-
-                    cache_dir = (
-                        StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
-                    )
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    cache_file = cache_dir / hash_val
-                    if not cache_file.exists():
-                        cache_file.write_bytes(audio_bytes)
-                except Exception as e:
-                    logger.error(f"[Giftia] 保存音频缓存失败: {e}")
-
-            if defer_caption:
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=url,
-                    media_type="audio",
-                    is_captioned=False,
-                )
-                if file_name:
-                    media_caption.file_name = file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-
-            # 调用LLM生成语音描述
-            media_caption = await self.call_llm.call_llm_audio_caption([url])
-            if not media_caption:
-                # 即使LLM失败，也需要保存一个未转述的或者空的对象，但标记为 captioned=False 方便后续重试
-                media_caption = MediaCaption(
-                    hash_val=hash_val,
-                    url=url,
-                    media_type="audio",
-                    is_captioned=False,
-                )
-                if file_name:
-                    media_caption.file_name = file_name
-                await self.data_cache.set_caption(media_caption)
-                return hash_val, media_caption
-
-            media_caption.hash_val = hash_val
-            media_caption.url = url
-            if file_name:
-                media_caption.file_name = file_name
-            media_caption.media_type = "audio"
-            media_caption.is_captioned = True
-            # 缓存
-            await self.data_cache.set_caption(media_caption)
-            return hash_val, media_caption
+        return await self.media_formatter.get_audio_caption(
+            url,
+            file_name=file_name,
+            defer_caption=defer_caption,
+        )

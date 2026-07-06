@@ -1,10 +1,27 @@
 from dataclasses import dataclass, field
+import re
 
 from astrbot.core.message.components import BaseMessageComponent
+
+FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
+FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
+
+
+def extract_media_ids(content: str) -> list[str]:
+    if not content:
+        return []
+    return FORWARD_MEDIA_PATTERN.findall(content)
+
+
+def extract_nested_forward_ids(content: str) -> list[str]:
+    if not content:
+        return []
+    return FORWARD_NESTED_PATTERN.findall(content)
 
 
 @dataclass(repr=False, slots=True)
 class MessageData:
+    db_id: int = 0
     nickname: str = ""
     user_id: str = ""
     group_or_user_id: str = ""
@@ -13,6 +30,7 @@ class MessageData:
     content: str = ""
     is_recalled: int = 0  # 0: 未撤回, 1: 已撤回
     media_id_list: list[str] = field(default_factory=list)  # 这里只存储媒体ID
+    forward_messages: list[dict] = field(default_factory=list)
     role: str = "message"  # "message" or "operation_log"
 
 
@@ -119,6 +137,8 @@ class XmlLlmResult:
     tools_to_call: list[tuple[str, dict]] = field(
         default_factory=list
     )  # (工具名, 工具参数)
+    # 原生 function calling / tool loop 已调用的工具名
+    native_tools_called: list[str] = field(default_factory=list)
     # 定时任务，群号/用户ID，时间，内容
     schedule_tasks: list[tuple[str, str, str]] = field(default_factory=list)
     # 删除定时任务，任务ID

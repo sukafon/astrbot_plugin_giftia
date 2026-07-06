@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -8,11 +9,17 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
+from ..utils.schemas import MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
 
 if TYPE_CHECKING:
     from ...main import Giftia
 
-TOOLS_NAMESPACE = ["search_chat_history", "get_message_context", "search_user_profile"]
+TOOLS_NAMESPACE = [
+    "search_chat_history",
+    "get_message_context",
+    "search_user_profile",
+    "inspect_forward_message",
+]
 
 
 @dataclass
@@ -244,6 +251,367 @@ class SearchUserProfileTool(FunctionTool):
         return "查询到的成员画像:\n" + "\n\n".join(
             self._format_profile_result(item) for item in results
         )
+
+
+@dataclass
+class InspectForwardMessageTool(FunctionTool):
+    plugin: Any = None
+    name: str = "inspect_forward_message"
+    description: str = (
+        "按forward_id查看当前会话中的合并转发消息。小转发直接返回原文和媒体转述；"
+        "大转发自动总结并复用缓存。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "forward_id": {
+                    "type": "string",
+                    "description": "提示词中 [合并转发:fwd_xxx] 或 <forward id=\"fwd_xxx\"/> 的 id。",
+                },
+            },
+            "required": ["forward_id"],
+        }
+    )
+
+    _default_raw_threshold = 20
+    _summary_node_limit = 80
+    _tool_result_max_chars = 6000
+    _media_pattern = FORWARD_MEDIA_PATTERN
+    _nested_pattern = FORWARD_NESTED_PATTERN
+    _quote_message_id_pattern = re.compile(
+        r"""(<quote\b[^>]*?)\s+message_id=("[^"]*"|'[^']*'|[^\s>]+)"""
+    )
+
+    def _find_forward_in_messages(
+        self, messages: list[MessageData], forward_id: str
+    ) -> tuple[MessageData | None, dict | None]:
+        for msg in reversed(messages or []):
+            for forward in getattr(msg, "forward_messages", []) or []:
+                if isinstance(forward, dict) and str(forward.get("id") or "") == str(
+                    forward_id
+                ):
+                    return msg, forward
+        return None, None
+
+    async def _find_forward(
+        self,
+        plugin,
+        bot_name: str,
+        group_or_user_id: str,
+        forward_id: str,
+    ) -> tuple[MessageData | None, dict | None]:
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        cached = list(plugin.data_cache.recent_messages.get(fmt_key, []))
+        msg, forward = self._find_forward_in_messages(cached, forward_id)
+        if forward:
+            return msg, forward
+
+        try:
+            recent = await plugin.data_cache.get_recent_message(
+                bot_name, group_or_user_id, plugin.msg_number
+            )
+            msg, forward = self._find_forward_in_messages(recent, forward_id)
+            if forward:
+                return msg, forward
+        except Exception as e:
+            logger.debug(f"InspectForwardMessageTool 读取近期消息失败: {e}")
+
+        return await plugin.db.find_forward_message_by_id(
+            group_or_user_id=group_or_user_id,
+            bot_name=bot_name,
+            forward_id=forward_id,
+        )
+
+    @staticmethod
+    def _clean_int(value, default: int, min_value: int, max_value: int) -> int:
+        try:
+            clean = int(value)
+        except (TypeError, ValueError):
+            clean = default
+        return min(max(clean, min_value), max_value)
+
+    @staticmethod
+    def _shorten(text: str, limit: int) -> str:
+        text = str(text or "").strip()
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 12)].rstrip() + "...<已截断>"
+
+    def _strip_message_ids_from_text(self, text: str) -> str:
+        return self._quote_message_id_pattern.sub(r"\1", str(text or ""))
+
+    def _node_text(self, node: dict) -> str:
+        sender = str(node.get("sender_name") or node.get("sender_id") or "未知用户")
+        sender_id = str(node.get("sender_id") or "").strip()
+        if sender_id and sender_id != sender:
+            sender = f"{sender}({sender_id})"
+        node_index = str(node.get("index") or "?")
+        prefix = f"[{node_index}] {sender}"
+        content = self._strip_message_ids_from_text(str(node.get("content") or ""))
+        return f"{prefix}: {content}"
+
+    def _append_limited(self, lines: list[str], text: str, max_chars: int) -> bool:
+        current_len = sum(len(line) + 1 for line in lines)
+        if current_len >= max_chars:
+            return False
+        remaining = max_chars - current_len
+        lines.append(self._shorten(text, remaining))
+        return len(text) <= remaining
+
+    def _media_ids_from_nodes(self, nodes: list[dict]) -> list[str]:
+        media_ids = []
+        seen = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            for media_id in self._media_pattern.findall(str(node.get("content") or "")):
+                if media_id not in seen:
+                    seen.add(media_id)
+                    media_ids.append(media_id)
+        return media_ids
+
+    def _nested_ids_from_nodes(self, nodes: list[dict]) -> list[str]:
+        nested_ids = []
+        seen = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            for forward_id in self._nested_pattern.findall(str(node.get("content") or "")):
+                if forward_id not in seen:
+                    seen.add(forward_id)
+                    nested_ids.append(forward_id)
+        return nested_ids
+
+    def _format_nodes(
+        self, title: str, nodes: list[dict], max_chars: int, per_node_limit: int = 700
+    ) -> str:
+        lines = [title]
+        if not nodes:
+            lines.append("未找到匹配节点")
+            return "\n".join(lines)
+        for node in nodes:
+            text = self._shorten(self._node_text(node), per_node_limit)
+            if not self._append_limited(lines, text, max_chars):
+                lines.append("...<结果已截断>")
+                break
+        return "\n".join(lines)
+
+    def _reply_provider_ids(self, plugin, bot_name: str) -> list[str]:
+        bot_conf = getattr(plugin, "bot_map", {}).get(bot_name, {})
+        llm_reply_conf = bot_conf.get("llm_reply_conf", {})
+        provider_ids = llm_reply_conf.get("provider_ids")
+        if not provider_ids:
+            old_provider_id = llm_reply_conf.get("provider_id")
+            if old_provider_id:
+                provider_ids = [old_provider_id] + llm_reply_conf.get(
+                    "fallback_provider_ids", []
+                )
+            else:
+                provider_ids = []
+        return [provider_id for provider_id in provider_ids if provider_id]
+
+    async def _generate_forward_summary(
+        self,
+        plugin,
+        bot_name: str,
+        forward_id: str,
+        nodes: list[dict],
+        max_chars: int,
+    ) -> str:
+        provider_ids = self._reply_provider_ids(plugin, bot_name)
+        if not provider_ids:
+            return ""
+
+        selected = nodes[: self._summary_node_limit]
+        if not selected:
+            return "未找到可转述的转发节点"
+
+        material_limit = max(2000, min(12000, max_chars * 2))
+        material = self._format_nodes(
+            "合并转发原文节点:",
+            selected,
+            max_chars=material_limit,
+            per_node_limit=600,
+        )
+        omitted = max(0, len(nodes) - len(selected))
+        omitted_line = f"\n另有 {omitted} 条节点未放入本次转述素材。" if omitted else ""
+        prompt = (
+            "请把下面的合并转发消息转述成简洁中文总结。"
+            "要求：只依据给出的节点；保留关键人物、时间顺序、结论和待办；"
+            "不要编造图片/语音内容，遇到媒体脚注只说明存在媒体。"
+            f"\nforward_id: {forward_id}{omitted_line}\n\n{material}"
+        )
+        system_prompt = "你是聊天合并转发内容的转述器，输出直接可供另一个助手理解。"
+        for provider_id in provider_ids:
+            try:
+                llm_resp = await plugin.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    system_prompt=system_prompt,
+                    prompt=prompt,
+                )
+                completion = getattr(llm_resp, "completion_text", "") or ""
+                if completion.strip():
+                    return self._shorten(completion.strip(), max_chars)
+            except Exception as e:
+                logger.warning(
+                    f"InspectForwardMessageTool 转发转述失败: provider_id={provider_id}, error={e}"
+                )
+        return ""
+
+    async def _load_media_captions(
+        self, plugin, bot_name: str, media_ids: list[str]
+    ) -> list:
+        if not media_ids:
+            return []
+        max_media = self._max_media_captions(plugin)
+        if max_media <= 0:
+            return []
+
+        from ..conversation.media_captioner import MediaCaptioner
+
+        caption_config = dict(plugin.get_caption_config(plugin.bot_map.get(bot_name, {})))
+        caption_config["max_deferred_captions"] = min(max_media, len(media_ids))
+        fake_content = " ".join(f"[图片:{media_id}]" for media_id in media_ids[:max_media])
+        return await MediaCaptioner(plugin).transcribe_media_if_deferred(
+            bot_name=bot_name,
+            recent_messages=[
+                MessageData(content=fake_content, media_id_list=media_ids[:max_media])
+            ],
+            caption_config=caption_config,
+        )
+
+    def _raw_threshold(self, plugin) -> int:
+        return self._clean_int(
+            getattr(plugin, "tools_config", {}).get(
+                "inspect_forward_raw_threshold", self._default_raw_threshold
+            ),
+            self._default_raw_threshold,
+            1,
+            200,
+        )
+
+    def _max_media_captions(self, plugin) -> int:
+        return self._clean_int(
+            getattr(plugin, "tools_config", {}).get(
+                "inspect_forward_max_media_captions", 5
+            ),
+            5,
+            0,
+            20,
+        )
+
+    def _format_media_captions(self, captions: list, max_chars: int) -> str:
+        lines = ["媒体转述:"]
+        if not captions:
+            lines.append("未找到可用媒体转述")
+            return "\n".join(lines)
+        for caption in captions:
+            parts = []
+            if getattr(caption, "caption", ""):
+                parts.append(f"描述: {caption.caption}")
+            if getattr(caption, "text", ""):
+                parts.append(f"文字: {caption.text}")
+            if getattr(caption, "genre", ""):
+                parts.append(f"类型: {caption.genre}")
+            media_line = f"- {caption.hash_val} ({caption.media_type or 'media'}): "
+            media_line += "；".join(parts) if parts else "暂无转述内容"
+            if not self._append_limited(lines, media_line, max_chars):
+                lines.append("- ...<媒体转述已截断>")
+                break
+        return "\n".join(lines)
+
+    async def call(
+        self,
+        context: ContextWrapper[AstrAgentContext],
+        forward_id: str,
+    ):
+        if self.plugin is None:
+            logger.warning("InspectForwardMessageTool 未绑定插件实例")
+            return "查看失败：未找到插件实例"
+        plugin: Giftia = self.plugin
+        event: AstrMessageEvent = context.context.event
+        bot_name = plugin.adapter_id_map.get(event.platform_meta.id)
+        if not bot_name:
+            logger.warning("InspectForwardMessageTool 未找到对应的 bot_name")
+            return "查看失败：未找到对应的 bot_name"
+
+        forward_id = str(forward_id or "").strip()
+        if not forward_id:
+            return "查看失败：缺少 forward_id"
+
+        group_or_user_id = event.get_group_id() or event.get_sender_id()
+        _owner_msg, forward = await self._find_forward(
+            plugin, bot_name, group_or_user_id, forward_id
+        )
+        if not forward:
+            return f"未找到合并转发消息: {forward_id}"
+
+        nodes = forward.get("nodes") if isinstance(forward.get("nodes"), list) else []
+        raw_threshold = self._raw_threshold(plugin)
+        max_chars = self._tool_result_max_chars
+        media_ids = self._media_ids_from_nodes(nodes)
+        nested_ids = self._nested_ids_from_nodes(nodes)
+
+        header = [
+            f"合并转发 {forward_id}",
+            f"- 节点数: {len(nodes)}",
+            f"- 媒体数: {len(media_ids)}",
+            f"- 嵌套转发数: {len(nested_ids)}",
+        ]
+        if forward.get("truncated"):
+            header.append("- 注意: 入库时已截断过长转发")
+        if forward.get("unresolved"):
+            header.append("- 注意: 原始转发内容未能完整拉取")
+        if nested_ids:
+            header.append("- 嵌套转发ID: " + ", ".join(nested_ids[:10]))
+
+        if len(nodes) <= raw_threshold:
+            body = self._format_nodes(
+                "原文:",
+                nodes,
+                max_chars=max_chars,
+                per_node_limit=800,
+            )
+        else:
+            body = ""
+            cached_summary = await plugin.db.get_forward_summary(
+                bot_name, group_or_user_id, forward_id
+            )
+            if cached_summary:
+                body = "缓存转述:\n" + self._shorten(cached_summary, max_chars)
+            if not body:
+                generated_summary = await self._generate_forward_summary(
+                    plugin=plugin,
+                    bot_name=bot_name,
+                    forward_id=forward_id,
+                    nodes=nodes,
+                    max_chars=max_chars,
+                )
+                if generated_summary:
+                    body = "转述:\n" + generated_summary
+                    await plugin.db.update_forward_summary(
+                        bot_name, group_or_user_id, forward_id, generated_summary
+                    )
+                else:
+                    body = self._format_nodes(
+                        f"转述生成失败，提供前 {raw_threshold} 条原文摘录:",
+                        nodes[:raw_threshold],
+                        max_chars=max_chars,
+                        per_node_limit=500,
+                    )
+
+        lines = ["\n".join(header), body]
+        if media_ids and self._max_media_captions(plugin) > 0:
+            captions = await self._load_media_captions(plugin, bot_name, media_ids)
+            lines.append(self._format_media_captions(captions, max_chars=max_chars))
+            omitted_media = max(0, len(media_ids) - self._max_media_captions(plugin))
+            if omitted_media:
+                lines.append(f"另有 {omitted_media} 个媒体未转述。")
+        elif media_ids:
+            lines.append("媒体转述未启用，原文中只保留媒体脚注。")
+
+        return "\n\n".join(line for line in lines if line).strip()
 
 
 def remove_tools(context: Context):

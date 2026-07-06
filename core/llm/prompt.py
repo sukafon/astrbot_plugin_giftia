@@ -1,7 +1,9 @@
+import re
+from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
-from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status
+from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status, extract_media_ids
 
 # 构造消息的XML标签的属性，属性按顺序添加。MessageData对象的属性若不在这或者值为空，将不添加该属性
 MSG_PROPS = [
@@ -13,6 +15,7 @@ MSG_PROPS = [
 ]
 # 操作同上
 CAPTION_PROPS = ["genre", "character", "source", "text", "caption"]
+MAX_FORWARDED_INDEX_IN_PROMPT = 20
 USER_PROFILE_FIELDS = [
     ("call_name", "你的称呼"),
     ("aliases", "其他外号"),
@@ -68,6 +71,15 @@ def build_decision_prompt(
     task_board_block = build_short_task_board(short_tasks, short_task_limit)
     if task_board_block:
         user_prompt.append(task_board_block)
+    # 合并转发消息内容
+    decision_messages = []
+    if recent_messages:
+        decision_messages.extend(recent_messages)
+    if current_message:
+        decision_messages.append(current_message)
+    forwarded_messages_block = build_forwarded_messages_block(decision_messages)
+    if forwarded_messages_block:
+        user_prompt.append(forwarded_messages_block)
     # 近期消息
     if recent_messages:
         recent_messages_str = "\n".join(
@@ -94,16 +106,20 @@ def process_media_captions_for_prompt(
     分析消息列表与媒体转述，进行内联判定与替换。
     返回: (修改后的消息副本列表, 剩余未内联的媒体转述列表)
     """
-    import copy
     from collections import Counter
 
-    copied_messages = [copy.copy(msg) for msg in messages] if messages else []
+    copied_messages = [replace(msg) for msg in messages] if messages else []
 
     # 统计所有消息中媒体 ID 的出现频次
     hash_counts = Counter()
+    content_hash_counts = Counter()
     for msg in copied_messages:
         if msg.media_id_list:
             hash_counts.update(msg.media_id_list)
+        if msg.content:
+            content_hash_counts.update(
+                extract_media_ids(msg.content)
+            )
 
     # 建立 hash_val -> MediaCaption 映射
     caption_map = {}
@@ -122,7 +138,11 @@ def process_media_captions_for_prompt(
             if getattr(caption, f, "")
         )
         # 只有在非空描述长度在 (0, threshold] 之间，且频次为 1 时才内联
-        if 0 < len(raw_text) <= threshold and hash_counts[hash_val] == 1:
+        if (
+            0 < len(raw_text) <= threshold
+            and hash_counts[hash_val] == 1
+            and content_hash_counts[hash_val] == 1
+        ):
             inline_hashes.add(hash_val)
 
     # 对可内联媒体进行内容格式化和占位符替换
@@ -247,6 +267,10 @@ def build_reply_prompt(
             parse_caption_to_str(caption) for caption in remaining_captions
         )
         user_prompt.append(f"<media_content>\n{media_captions_block}\n</media_content>")
+    # 合并转发消息内容
+    forwarded_messages_block = build_forwarded_messages_block(processed_messages)
+    if forwarded_messages_block:
+        user_prompt.append(forwarded_messages_block)
     # 近期消息
     if copied_recent:
         recent_messages_str = "\n".join(
@@ -319,6 +343,61 @@ def parse_caption_to_str(media_caption: MediaCaption) -> str:
     return (
         f'<caption media_id="{media_caption.hash_val}"{props}>{caption_text}</caption>'
     )
+
+
+def build_forwarded_messages_block(messages: list[MessageData] | None) -> str:
+    """构建合并转发消息索引，正文里只保留 [合并转发:id] 脚注。"""
+    if not messages:
+        return ""
+
+    seen_ids = set()
+    forward_xmls = []
+    omitted = 0
+    for msg in messages:
+        for forward in getattr(msg, "forward_messages", []) or []:
+            if not isinstance(forward, dict):
+                continue
+            forward_id = str(forward.get("id") or "").strip()
+            if not forward_id or forward_id in seen_ids:
+                continue
+            seen_ids.add(forward_id)
+            if len(forward_xmls) >= MAX_FORWARDED_INDEX_IN_PROMPT:
+                omitted += 1
+                continue
+            forward_xmls.append(parse_forward_message_index_to_str(forward))
+
+    if not forward_xmls:
+        return ""
+    props = f' omitted="{omitted}"' if omitted else ""
+    return (
+        f"<forwarded_messages{props}>\n"
+        + "\n".join(forward_xmls)
+        + "\n</forwarded_messages>"
+    )
+
+
+def parse_forward_message_index_to_str(forward: dict) -> str:
+    forward_id = str(forward.get("id") or "").strip()
+    props = f" id={quoteattr(forward_id)}" if forward_id else ""
+
+    nodes = forward.get("nodes") if isinstance(forward.get("nodes"), list) else []
+    preview_lines = []
+    for node in nodes[:4]:
+        sender = str(node.get("sender_name") or "").strip()
+        content = str(node.get("content") or "").strip()
+        if not sender and not content:
+            continue
+        if len(content) > 100:
+            content = content[:100] + "..."
+        if sender:
+            preview_lines.append(f"{sender}: {content}")
+        else:
+            preview_lines.append(content)
+
+    if preview_lines:
+        preview_text = "\n".join(preview_lines)
+        return f"<forward{props}>\n[消息预览]\n{preview_text}\n</forward>"
+    return f"<forward{props}/>"
 
 
 def parse_status_to_str(status: Status) -> str:

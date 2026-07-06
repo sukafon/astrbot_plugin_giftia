@@ -14,6 +14,7 @@ from .core.handlers.commands import CommandHandler
 from .core.llm.call_llm import CallLLM
 from .core.llm.llm_tools import (
     GetMessageContextTool,
+    InspectForwardMessageTool,
     SearchChatHistoryTool,
     SearchUserProfileTool,
     remove_tools,
@@ -127,6 +128,24 @@ class Giftia(Star):
         self.passive_profile_summary_prompt = memory_config.get(
             "passive_profile_summary_prompt", ""
         )
+        self.passive_long_profile_summary_prompt = memory_config.get(
+            "passive_long_profile_summary_prompt", ""
+        )
+        self.passive_long_profile_message_threshold = memory_config.get(
+            "passive_long_profile_message_threshold", 30
+        )
+        self.passive_long_profile_text_threshold = memory_config.get(
+            "passive_long_profile_text_threshold", 1500
+        )
+        self.passive_long_profile_initial_message_threshold = memory_config.get(
+            "passive_long_profile_initial_message_threshold", 10
+        )
+        self.passive_long_profile_initial_text_threshold = memory_config.get(
+            "passive_long_profile_initial_text_threshold", 600
+        )
+        self.passive_long_profile_sample_limit = memory_config.get(
+            "passive_long_profile_sample_limit", 200
+        )
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
@@ -156,6 +175,13 @@ class Giftia(Star):
         self.replying_status: dict[str, int] = {}
 
         self._original_send_message = self.context.send_message
+
+    def get_caption_config(self, bot_conf: dict | None = None) -> dict:
+        """Return global media-caption config with optional per-bot overrides."""
+        caption_config = dict(self.caption_config or {})
+        if bot_conf:
+            caption_config.update(bot_conf.get("caption_config") or {})
+        return caption_config
 
     async def initialize(self):
         """插件初始化方法"""
@@ -221,6 +247,9 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("search_user_profile_enabled", True):
             self.context.add_llm_tools(SearchUserProfileTool(plugin=self))
             logger.info("已注册函数调用工具: search_user_profile")
+        if self.conf.get("tools_config", {}).get("inspect_forward_message_enabled", True):
+            self.context.add_llm_tools(InspectForwardMessageTool(plugin=self))
+            logger.info("已注册函数调用工具: inspect_forward_message")
         # 注册 Web UI 及 API 路由
         self.webui_manager = WebUIManager(self)
         self.webui_manager.register_routes()
@@ -250,7 +279,7 @@ class Giftia(Star):
                 if bot_name:
                     bot_conf = self.bot_map.get(bot_name, {})
                     nickname = bot_conf.get("nickname", bot_name)
-                    msg_str, media_id_list = await self.message_parser.chain_to_str(
+                    parsed_msg = await self.message_parser.chain_to_result(
                         message_chain.chain, defer_caption=False
                     )
 
@@ -290,9 +319,10 @@ class Giftia(Star):
                             group_or_user_id=session_obj.session_id,
                             time=datetime.now().isoformat(),
                             message_id="",
-                            content=msg_str,
+                            content=parsed_msg.content,
                             is_recalled=0,
-                            media_id_list=media_id_list,
+                            media_id_list=parsed_msg.media_id_list,
+                            forward_messages=parsed_msg.forward_messages,
                         ),
                     )
             except Exception as e:

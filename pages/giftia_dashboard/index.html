@@ -46,6 +46,10 @@
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
                     媒体转述
                 </button>
+                <button class="nav-tab" data-tab="forward-messages">
+                    <svg class="tab-icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M7 8h10"></path><path d="M7 12h6"></path><path d="M8 22l4-4 4 4"></path></svg>
+                    合并转发
+                </button>
                 <button class="nav-tab" data-tab="profiles">
                     <svg class="tab-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                     画像管理
@@ -213,7 +217,61 @@
                 </div>
             </section>
 
-            <!-- TAB 5: Profiles -->
+            <!-- TAB 5: Forward Messages -->
+            <section id="tab-forward-messages" class="tab-panel">
+                <div class="filter-card card">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Bot名称</label>
+                            <select id="forward-bot-name"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label>群聊/用户ID</label>
+                            <select id="forward-group-id"></select>
+                        </div>
+                        <div class="filter-group">
+                            <label>转述状态</label>
+                            <select id="forward-status">
+                                <option value="">全部</option>
+                                <option value="summarized">已转述</option>
+                                <option value="unsummarized">待转述</option>
+                                <option value="unresolved">未完整拉取</option>
+                                <option value="truncated">已截断</option>
+                            </select>
+                        </div>
+                        <div class="filter-group flex-grow">
+                            <label>搜索内容</label>
+                            <input type="text" id="forward-search" placeholder="搜索 forward_id、消息ID、摘要或节点内容...">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="data-card card">
+                    <div class="table-container forward-table-container">
+                        <table class="forward-table">
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>Forward ID</th>
+                                    <th>会话/来源</th>
+                                    <th>结构</th>
+                                    <th>状态</th>
+                                    <th>摘要/预览</th>
+                                    <th class="text-right">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="forward-list">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination-container" id="forward-pagination">
+                        <!-- Pagination -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 6: Profiles -->
             <section id="tab-profiles" class="tab-panel">
                 <div class="filter-card card">
                     <div class="filter-row">
@@ -287,6 +345,22 @@
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- MODAL: Forward Detail -->
+    <div id="forward-detail-modal" class="modal-overlay">
+        <div class="modal-card card forward-detail-modal-card">
+            <div class="modal-header">
+                <h2 id="forward-detail-title">合并转发详情</h2>
+                <button class="modal-close-btn" onclick="closeModal('forward-detail-modal')">&times;</button>
+            </div>
+            <div class="modal-body" id="forward-detail-body">
+                <!-- Dynamic forward detail -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('forward-detail-modal')">关闭</button>
+            </div>
+        </div>
     </div>
 
     <!-- MODAL: Add Memory -->
