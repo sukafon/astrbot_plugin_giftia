@@ -842,6 +842,39 @@ window.GiftiaApp = {
         }
     },
 
+    async cleanOldForwards() {
+        window.showConfirm(
+            "确认清理合并转发",
+            "确定要清理超过 24 小时的合并转发记录吗？这些记录通常只用于即时查看，清理后无法恢复。",
+            async () => {
+                const btn = document.getElementById("btn-clean-forwards");
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = "清理中...";
+                }
+                try {
+                    const res = await window.apiPost("/forwards/clean", {});
+                    if (res && res.status === "success") {
+                        const count = Number(res.count || 0);
+                        window.showToast(`已清理 ${count} 条过期合并转发记录`);
+                        this.pagination.forwards.page = 1;
+                        await this.refreshScopedFilters("forwards", false);
+                        await this.loadForwards();
+                    } else {
+                        window.showToast(`清理失败: ${res.message || "请求出错"}`);
+                    }
+                } catch (e) {
+                    window.showToast(`清理出错: ${e.message}`);
+                } finally {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = "清理过期";
+                    }
+                }
+            }
+        );
+    },
+
     renderForwards(items) {
         const container = document.getElementById("forward-list");
         if (!items || items.length === 0) {

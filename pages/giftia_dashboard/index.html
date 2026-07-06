@@ -243,6 +243,9 @@
                             <label>搜索内容</label>
                             <input type="text" id="forward-search" placeholder="搜索 forward_id、消息ID、摘要或节点内容...">
                         </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button class="btn btn-danger" id="btn-clean-forwards" onclick="window.GiftiaApp.cleanOldForwards()">清理过期</button>
+                        </div>
                     </div>
                 </div>
 
