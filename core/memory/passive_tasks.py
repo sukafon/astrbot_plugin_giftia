@@ -153,6 +153,12 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             resolved_user_id = context["nickname_to_user_id"].get(
                 target_user, target_user
             )
+            active_users = context.get("active_users_in_range") or set()
+            if resolved_user_id not in active_users:
+                logger.warning(
+                    f"[Giftia Passive Memory] 关系画像维护解析到非法/非当前活跃用户 ID: {resolved_user_id} ({target_user})，跳过入库"
+                )
+                continue
 
             title = attrs.get("title")
             if title is not None:

@@ -1041,10 +1041,10 @@ window.GiftiaApp = {
 
     async loadUserProfiles() {
         const listContainer = document.getElementById("user-profile-list");
-        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<div class="loading-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0;"><span class="loader"></span> 加载数据中...</div>`;
         if (!document.getElementById("profile-bot-name").value) {
             this.pagination.userProfiles.total = 0;
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无可用 Bot</div>`;
             window.renderPagination("user-profile-pagination", this.pagination.userProfiles, () => {});
             return;
         }
@@ -1070,14 +1070,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">加载数据失败: ${e.message}</div>`;
         }
     },
 
     renderUserProfiles(items) {
         const container = document.getElementById("user-profile-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关用户画像记录</td></tr>`;
+            container.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无相关用户画像记录</div>`;
             return;
         }
 
@@ -1092,56 +1092,64 @@ window.GiftiaApp = {
                 extra: item.extra || ""
             };
             const encodedStructured = encodeURIComponent(JSON.stringify(structured));
-            const structuredRows = [
-                ["你的称呼", item.call_name],
-                ["其他外号", item.aliases],
-                ["性格风格", item.personality],
-                ["兴趣话题", item.interests],
-                ["互动态度", item.attitude],
-                ["关键约定", item.agreements],
-                ["其他补充", item.extra]
-            ].filter(([, value]) => value && String(value).trim());
-            const profileHtml = structuredRows.length > 0
-                ? structuredRows.map(([label, value]) => `<div><strong>${label}：</strong>${window.escapeHtml(value)}</div>`).join("")
-                : `<div style="color: var(--font-secondary);">旧画像参考</div><div>${window.escapeHtml(item.profile || "")}</div>`;
+            const profileHtml = window.renderProfileCard(item.profile || "", {
+                call_name: item.call_name,
+                aliases: item.aliases,
+                personality: item.personality,
+                interests: item.interests,
+                attitude: item.attitude,
+                agreements: item.agreements,
+                extra: item.extra
+            });
             
             let relationBadge = "";
             const rel = parseInt(item.relation) || 0;
             if (rel > 0) {
-                relationBadge = `<span class="badge badge-success">+${rel}</span>`;
+                relationBadge = `<span class="badge badge-success">${rel} 好感度</span>`;
             } else if (rel < 0) {
-                relationBadge = `<span class="badge badge-danger">${rel}</span>`;
+                relationBadge = `<span class="badge badge-danger">${rel} 好感度</span>`;
             } else {
-                relationBadge = `<span class="badge badge-secondary">0</span>`;
+                relationBadge = `<span class="badge badge-secondary">0 好感度</span>`;
             }
-            const titleHtml = item.title ? `<span class="badge badge-info">${window.escapeHtml(item.title)}</span>` : `<span style="color: var(--font-secondary);">-</span>`;
+            const titleHtml = item.title ? `<span class="badge badge-info">${window.escapeHtml(item.title)}</span>` : "";
             const encodedTitle = encodeURIComponent(item.title || "");
 
             return `
-                <tr>
-                    <td data-label="用户ID">${item.user_id}</td>
-                    <td data-label="好感度">${relationBadge}</td>
-                    <td data-label="关系头衔">${titleHtml}</td>
-                    <td data-label="画像总结内容 (Profile)">
-                        <div style="max-width: 500px; word-break: break-all; white-space: pre-wrap;">${profileHtml}</div>
-                    </td>
-                    <td data-label="更新时间">${window.formatDate(item.updated_at || item.created_at)}</td>
-                    <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
-                        <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
-                    </td>
-                </tr>
+                <div class="profile-item-card card">
+                    <div class="profile-card-header">
+                        <div class="profile-card-id-section">
+                            <span class="profile-card-id-label">用户:</span>
+                            <span class="profile-card-id-value">${item.user_id}</span>
+                        </div>
+                        <div class="profile-card-badges">
+                            ${relationBadge}
+                            ${titleHtml}
+                        </div>
+                    </div>
+                    <div class="profile-card-body">
+                        ${profileHtml}
+                    </div>
+                    <div class="profile-card-footer">
+                        <div class="profile-card-time">
+                            更新时间: ${window.formatDate(item.updated_at || item.created_at)}
+                        </div>
+                        <div class="profile-card-actions">
+                            <button class="btn btn-secondary btn-small" onclick="window.openEditUserProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}', '${encodedProfile}', ${rel}, '${encodedTitle}', '${encodedStructured}')">编辑</button>
+                            <button class="btn btn-secondary btn-small" onclick="window.openUserAliasesModal('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">外号</button>
+                            <button class="btn btn-danger btn-small" onclick="window.deleteUserProfile('${item.bot_name}', '${item.group_or_user_id}', '${item.user_id}')">删除</button>
+                        </div>
+                    </div>
+                </div>
             `;
         }).join("");
     },
 
     async loadGroupProfiles() {
         const listContainer = document.getElementById("group-profile-list");
-        listContainer.innerHTML = `<tr><td colspan="3" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<div class="loading-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0;"><span class="loader"></span> 加载数据中...</div>`;
         if (!document.getElementById("profile-bot-name").value) {
             this.pagination.groupProfiles.total = 0;
-            listContainer.innerHTML = `<tr><td colspan="3" class="no-data-row">暂无可用 Bot</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无可用 Bot</div>`;
             window.renderPagination("group-profile-pagination", this.pagination.groupProfiles, () => {});
             return;
         }
@@ -1166,30 +1174,42 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="3" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">加载数据失败: ${e.message}</div>`;
         }
     },
 
     renderGroupProfiles(items) {
         const container = document.getElementById("group-profile-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="3" class="no-data-row">暂无相关群聊画像记录</td></tr>`;
+            container.innerHTML = `<div class="no-data-row" style="grid-column: 1 / -1; text-align: center; padding: 40px 0; color: var(--font-secondary);">暂无相关群聊画像记录</div>`;
             return;
         }
 
         container.innerHTML = items.map(item => {
             const encodedProfile = encodeURIComponent(item.profile || "");
+            const profileHtml = window.renderProfileCard(item.profile || "", null);
+            
             return `
-                <tr>
-                    <td data-label="群聊画像总结内容 (Profile)">
-                        <div style="max-width: 600px; word-break: break-all; white-space: pre-wrap;">${window.escapeHtml(item.profile || "")}</div>
-                    </td>
-                    <td data-label="更新时间">${window.formatDate(item.updated_at || item.created_at)}</td>
-                    <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditGroupProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${encodedProfile}')">编辑</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteGroupProfile('${item.bot_name}', '${item.group_or_user_id}')">删除</button>
-                    </td>
-                </tr>
+                <div class="profile-item-card card">
+                    <div class="profile-card-header">
+                        <div class="profile-card-id-section">
+                            <span class="profile-card-id-label">群聊:</span>
+                            <span class="profile-card-id-value">${item.group_or_user_id}</span>
+                        </div>
+                    </div>
+                    <div class="profile-card-body">
+                        ${profileHtml}
+                    </div>
+                    <div class="profile-card-footer">
+                        <div class="profile-card-time">
+                            更新时间: ${window.formatDate(item.updated_at || item.created_at)}
+                        </div>
+                        <div class="profile-card-actions">
+                            <button class="btn btn-secondary btn-small" onclick="window.openEditGroupProfileModal('${item.bot_name}', '${item.group_or_user_id}', '${encodedProfile}')">编辑</button>
+                            <button class="btn btn-danger btn-small" onclick="window.deleteGroupProfile('${item.bot_name}', '${item.group_or_user_id}')">删除</button>
+                        </div>
+                    </div>
+                </div>
             `;
         }).join("");
     }
