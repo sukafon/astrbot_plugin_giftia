@@ -999,6 +999,7 @@ class DataApi:
                 group_or_user_id=group_or_user_id,
                 user_id=user_id,
                 limit=limit,
+                ignore_count_filter=True,
             )
             return json_response(
                 {

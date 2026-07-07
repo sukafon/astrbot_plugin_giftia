@@ -505,6 +505,7 @@ class PassiveContextMixin:
         return {
             "nickname_to_user_id": nickname_to_user_id,
             "user_id_to_nickname": user_id_to_nickname,
+            "active_users_in_range": active_users_in_range,
             "active_users_text": "\n".join(active_user_lines) or "无",
             "user_profiles_text": "\n---\n".join(user_profile_blocks) or "无",
             "group_profile": group_profile or "无",

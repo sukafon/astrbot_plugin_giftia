@@ -190,3 +190,166 @@ window.downloadMedia = async function(hash, mimeType) {
         window.showToast("下载失败: " + e.message);
     }
 };
+
+window.renderProfileCard = function(rawProfile, structured) {
+    // If we have structured details, or we can extract them from rawProfile
+    let fields = {
+        "你的称呼": "",
+        "其他外号": "",
+        "性格风格": "",
+        "兴趣话题": "",
+        "互动态度": "",
+        "关键约定": "",
+        "其他补充": ""
+    };
+    
+    // Fill from structured if present
+    if (structured) {
+        fields["你的称呼"] = structured.call_name || "";
+        fields["其他外号"] = structured.aliases || "";
+        fields["性格风格"] = structured.personality || "";
+        fields["兴趣话题"] = structured.interests || "";
+        fields["互动态度"] = structured.attitude || "";
+        fields["关键约定"] = structured.agreements || "";
+        fields["其他补充"] = structured.extra || "";
+    }
+    
+    // If some fields are empty, let's try to extract them from rawProfile
+    if (rawProfile) {
+        const lines = rawProfile.split('\n');
+        for (const line of lines) {
+            const match = line.match(/^([^：:]+)[：:](.*)$/);
+            if (match) {
+                const key = match[1].trim();
+                const val = match[2].trim();
+                if (fields[key] !== undefined && !fields[key]) {
+                    fields[key] = val;
+                } else if (key === "其他外号" && !fields["其他外号"]) {
+                    fields["其他外号"] = val;
+                }
+            }
+        }
+    }
+    
+    // Now let's render it
+    let html = `<div class="profile-card-layout">`;
+    
+    // 1. Render tags / badges: 你的称呼, 其他外号
+    const nickname = fields["你的称呼"] || (structured && structured.call_name);
+    const aliases = fields["其他外号"] || (structured && structured.aliases);
+    
+    let tagsHtml = "";
+    if (nickname) {
+        tagsHtml += `<span class="profile-tag tag-nickname"><i class="tag-icon">👤</i>${window.escapeHtml(nickname)}</span>`;
+    }
+    if (aliases) {
+        const aliasList = String(aliases).split(/[,，\s]+/).filter(x => x.trim());
+        aliasList.forEach(alias => {
+            tagsHtml += `<span class="profile-tag tag-alias"><i class="tag-icon">🏷️</i>${window.escapeHtml(alias)}</span>`;
+        });
+    }
+    
+    if (tagsHtml) {
+        html += `<div class="profile-tags-container">${tagsHtml}</div>`;
+    }
+    
+    // 2. Render Tabs Header
+    html += `
+        <div class="card-tabs-header">
+            <button class="card-tab-btn active" onclick="window.switchCardTab(this, 'profile')">画像</button>
+            <button class="card-tab-btn" onclick="window.switchCardTab(this, 'relation')">关系</button>
+        </div>
+    `;
+
+    // Extract fields
+    const profileFields = [
+        { label: "性格风格", val: fields["性格风格"] || "", class: "prop-personality", color: "var(--primary)" },
+        { label: "兴趣话题", val: fields["兴趣话题"] || "", class: "prop-interests", color: "var(--info)" },
+        { label: "其他补充", val: fields["其他补充"] || "", class: "prop-extra", color: "var(--font-secondary)" }
+    ].filter(f => f.val && String(f.val).trim());
+
+    const relationFields = [
+        { label: "互动态度", val: fields["互动态度"] || "", class: "prop-attitude", color: "var(--success)" },
+        { label: "关键约定", val: fields["关键约定"] || "", class: "prop-agreements", color: "var(--warning)" }
+    ].filter(f => f.val && String(f.val).trim());
+
+    // --- Tab 1: 画像 ---
+    html += `<div class="card-tab-content card-tab-profile">`;
+    if (profileFields.length > 0) {
+        html += `<div class="profile-grid">`;
+        profileFields.forEach((field) => {
+            html += `
+                <div class="profile-grid-item ${field.class}" style="border-left: 3px solid ${field.color}">
+                    <div class="profile-grid-label">${field.label}</div>
+                    <div class="profile-grid-value"><span class="text-content">${window.escapeHtml(field.val)}</span></div>
+                </div>
+            `;
+        });
+        html += `</div>`;
+    } else if (rawProfile && !nickname && !aliases && relationFields.length === 0) {
+        // Fallback for raw legacy profile
+        html += `<div class="profile-raw-content"><span class="text-content" style="white-space: pre-wrap;">${window.escapeHtml(rawProfile)}</span></div>`;
+    } else {
+        html += `<div class="profile-grid-empty" style="color: var(--font-secondary); padding: 12px; text-align: center; font-size: 13px;">暂无画像数据</div>`;
+    }
+    html += `</div>`;
+
+    // --- Tab 2: 关系 ---
+    html += `<div class="card-tab-content card-tab-relation" style="display: none;">`;
+    if (relationFields.length > 0) {
+        html += `<div class="profile-grid">`;
+        relationFields.forEach((field) => {
+            html += `
+                <div class="profile-grid-item ${field.class}" style="border-left: 3px solid ${field.color}">
+                    <div class="profile-grid-label">${field.label}</div>
+                    <div class="profile-grid-value"><span class="text-content">${window.escapeHtml(field.val)}</span></div>
+                </div>
+            `;
+        });
+        html += `</div>`;
+    } else {
+        html += `<div class="profile-grid-empty" style="color: var(--font-secondary); padding: 12px; text-align: center; font-size: 13px;">暂无关系数据</div>`;
+    }
+    html += `</div>`;
+    
+    html += `</div>`;
+    return html;
+};
+
+window.switchCardTab = function(btn, tabName) {
+    const card = btn.closest(".profile-card-layout");
+    if (!card) return;
+    
+    card.querySelectorAll(".card-tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    
+    const profilePane = card.querySelector(".card-tab-profile");
+    const relationPane = card.querySelector(".card-tab-relation");
+    
+    if (tabName === 'profile') {
+        if (profilePane) profilePane.style.display = "block";
+        if (relationPane) relationPane.style.display = "none";
+    } else {
+        if (profilePane) profilePane.style.display = "none";
+        if (relationPane) relationPane.style.display = "block";
+    }
+};
+
+window.toggleProfileText = function(btn) {
+    const parent = btn.parentNode;
+    const shortText = parent.querySelector(".short-text");
+    const fullText = parent.querySelector(".full-text");
+    if (shortText && fullText) {
+        const isCollapsed = fullText.style.display === "none";
+        if (isCollapsed) {
+            fullText.style.display = "inline";
+            shortText.style.display = "none";
+            btn.textContent = "收起";
+        } else {
+            fullText.style.display = "none";
+            shortText.style.display = "inline";
+            btn.textContent = "展开";
+        }
+    }
+};
+

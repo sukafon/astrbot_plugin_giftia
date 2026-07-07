@@ -178,6 +178,12 @@ class WebUIManager:
             desc="Get merged forward filter options",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/forwards/clean",
+            view_handler=self.web_api.clean_old_forwards,
+            methods=["POST"],
+            desc="Clean old merged forward message records",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/user",
             view_handler=self.web_api.get_user_profiles,
             methods=["GET"],

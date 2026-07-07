@@ -259,7 +259,7 @@ class InspectForwardMessageTool(FunctionTool):
     name: str = "inspect_forward_message"
     description: str = (
         "按forward_id查看当前会话中的合并转发消息。小转发直接返回原文和媒体转述；"
-        "大转发自动总结并复用缓存。"
+        "大转发会结合原文和必要的媒体转述生成总结。"
     )
     parameters: dict = field(
         default_factory=lambda: {
@@ -417,6 +417,7 @@ class InspectForwardMessageTool(FunctionTool):
         bot_name: str,
         forward_id: str,
         nodes: list[dict],
+        media_captions: list | None,
         max_chars: int,
     ) -> str:
         provider_ids = self._reply_provider_ids(plugin, bot_name)
@@ -434,13 +435,19 @@ class InspectForwardMessageTool(FunctionTool):
             max_chars=material_limit,
             per_node_limit=600,
         )
+        media_material = ""
+        if media_captions:
+            media_material = self._format_media_captions(
+                media_captions, max_chars=max(1200, material_limit // 3)
+            )
         omitted = max(0, len(nodes) - len(selected))
         omitted_line = f"\n另有 {omitted} 条节点未放入本次转述素材。" if omitted else ""
+        media_section = f"\n\n{media_material}" if media_material else ""
         prompt = (
             "请把下面的合并转发消息转述成简洁中文总结。"
-            "要求：只依据给出的节点；保留关键人物、时间顺序、结论和待办；"
-            "不要编造图片/语音内容，遇到媒体脚注只说明存在媒体。"
-            f"\nforward_id: {forward_id}{omitted_line}\n\n{material}"
+            "要求：只依据给出的媒体转述和原文节点；保留关键人物、时间顺序、结论和待办；"
+            "媒体转述可用于理解对应媒体脚注，未转述的媒体脚注只说明存在媒体，不要编造。"
+            f"\nforward_id: {forward_id}{omitted_line}{media_section}\n\n{material}"
         )
         system_prompt = "你是聊天合并转发内容的转述器，输出直接可供另一个助手理解。"
         for provider_id in provider_ids:
@@ -472,7 +479,9 @@ class InspectForwardMessageTool(FunctionTool):
 
         caption_config = dict(plugin.get_caption_config(plugin.bot_map.get(bot_name, {})))
         caption_config["max_deferred_captions"] = min(max_media, len(media_ids))
-        fake_content = " ".join(f"[图片:{media_id}]" for media_id in media_ids[:max_media])
+        fake_content = " ".join(
+            f"[图片:{media_id}]" for media_id in media_ids[:max_media]
+        )
         return await MediaCaptioner(plugin).transcribe_media_if_deferred(
             bot_name=bot_name,
             recent_messages=[
@@ -552,6 +561,19 @@ class InspectForwardMessageTool(FunctionTool):
         max_chars = self._tool_result_max_chars
         media_ids = self._media_ids_from_nodes(nodes)
         nested_ids = self._nested_ids_from_nodes(nodes)
+        max_media_captions = self._max_media_captions(plugin)
+        captions: list | None = None
+
+        async def load_captions_if_needed() -> list:
+            nonlocal captions
+            if captions is None:
+                if media_ids and max_media_captions > 0:
+                    captions = await self._load_media_captions(
+                        plugin, bot_name, media_ids
+                    )
+                else:
+                    captions = []
+            return captions
 
         header = [
             f"合并转发 {forward_id}",
@@ -581,11 +603,13 @@ class InspectForwardMessageTool(FunctionTool):
             if cached_summary:
                 body = "缓存转述:\n" + self._shorten(cached_summary, max_chars)
             if not body:
+                captions_for_summary = await load_captions_if_needed()
                 generated_summary = await self._generate_forward_summary(
                     plugin=plugin,
                     bot_name=bot_name,
                     forward_id=forward_id,
                     nodes=nodes,
+                    media_captions=captions_for_summary,
                     max_chars=max_chars,
                 )
                 if generated_summary:
@@ -602,13 +626,15 @@ class InspectForwardMessageTool(FunctionTool):
                     )
 
         lines = ["\n".join(header), body]
-        if media_ids and self._max_media_captions(plugin) > 0:
-            captions = await self._load_media_captions(plugin, bot_name, media_ids)
-            lines.append(self._format_media_captions(captions, max_chars=max_chars))
-            omitted_media = max(0, len(media_ids) - self._max_media_captions(plugin))
+        if len(nodes) <= raw_threshold and media_ids and max_media_captions > 0:
+            captions_for_output = await load_captions_if_needed()
+            lines.append(
+                self._format_media_captions(captions_for_output, max_chars=max_chars)
+            )
+            omitted_media = max(0, len(media_ids) - max_media_captions)
             if omitted_media:
                 lines.append(f"另有 {omitted_media} 个媒体未转述。")
-        elif media_ids:
+        elif len(nodes) <= raw_threshold and media_ids:
             lines.append("媒体转述未启用，原文中只保留媒体脚注。")
 
         return "\n\n".join(line for line in lines if line).strip()

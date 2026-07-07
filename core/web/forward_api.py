@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
@@ -336,3 +337,39 @@ class ForwardApi:
         except Exception as e:
             logger.error(f"[Giftia API] get_forward_filter_options error: {e}")
             return error_response(f"获取合并转发筛选项失败: {str(e)}")
+
+    async def clean_old_forwards(self):
+        """Delete merged forward records older than 24 hours."""
+        try:
+            cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+            async with self.giftia.db.conn.execute(
+                """
+                SELECT COUNT(*) as total
+                FROM forwarded_message
+                WHERE COALESCE(created_at, updated_at) < ?
+                """,
+                (cutoff,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                deleted_count = int(row["total"] or 0) if row else 0
+
+            await self.giftia.db.conn.execute(
+                """
+                DELETE FROM forwarded_message
+                WHERE COALESCE(created_at, updated_at) < ?
+                """,
+                (cutoff,),
+            )
+            await self.giftia.db.conn.commit()
+
+            return json_response(
+                {
+                    "status": "success",
+                    "count": deleted_count,
+                    "cutoff": cutoff,
+                    "message": f"已清理 {deleted_count} 条超过 24 小时的合并转发记录",
+                }
+            )
+        except Exception as e:
+            logger.error(f"[Giftia API] clean_old_forwards error: {e}")
+            return error_response(f"清理合并转发记录失败: {str(e)}")

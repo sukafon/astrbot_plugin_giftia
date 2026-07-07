@@ -24,19 +24,29 @@ class ProfileStoreMixin:
         group_or_user_id: str,
         user_id: str,
         limit: int | None = 6,
+        ignore_count_filter: bool = False,
     ) -> list[dict]:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
         params: list = [bot_name, group_or_user_id, user_id]
+        
+        count_clause = "AND ua.alias_count > 3" if not ignore_count_filter else ""
+        
         limit_clause = ""
         if limit is not None:
             limit_clause = "LIMIT ?"
             params.append(max(1, int(limit or 6)))
+            
         async with self.conn.execute(
             f"""
-            SELECT alias, alias_count, first_seen_at, last_seen_at
-            FROM user_aliases
-            WHERE bot_name = ? AND group_or_user_id = ? AND user_id = ?
-            ORDER BY alias_count DESC, first_seen_at ASC, id ASC
+            SELECT ua.alias, ua.alias_count, ua.first_seen_at, ua.last_seen_at
+            FROM user_aliases ua
+            LEFT JOIN user_profiles up ON ua.bot_name = up.bot_name
+                AND ua.group_or_user_id = up.group_or_user_id
+                AND ua.user_id = up.user_id
+            WHERE ua.bot_name = ? AND ua.group_or_user_id = ? AND ua.user_id = ?
+                {count_clause}
+                AND (up.call_name IS NULL OR LOWER(TRIM(ua.alias)) != LOWER(TRIM(up.call_name)))
+            ORDER BY ua.alias_count DESC, ua.first_seen_at ASC, ua.id ASC
             {limit_clause}
             """,
             params,
@@ -65,10 +75,14 @@ class ProfileStoreMixin:
         """获取当前会话内所有已知用户外号，用于后端观测计数。"""
         async with self.conn.execute(
             """
-            SELECT user_id, alias
-            FROM user_aliases
-            WHERE bot_name = ? AND group_or_user_id = ?
-            ORDER BY user_id ASC, alias_count DESC, first_seen_at ASC, id ASC
+            SELECT ua.user_id, ua.alias
+            FROM user_aliases ua
+            LEFT JOIN user_profiles up ON ua.bot_name = up.bot_name
+                AND ua.group_or_user_id = up.group_or_user_id
+                AND ua.user_id = up.user_id
+            WHERE ua.bot_name = ? AND ua.group_or_user_id = ?
+                AND (up.call_name IS NULL OR LOWER(TRIM(ua.alias)) != LOWER(TRIM(up.call_name)))
+            ORDER BY ua.user_id ASC, ua.alias_count DESC, ua.first_seen_at ASC, ua.id ASC
             """,
             (bot_name, group_or_user_id),
         ) as cursor:
@@ -132,6 +146,15 @@ class ProfileStoreMixin:
         if not alias_items:
             return
 
+        call_name = None
+        async with self.conn.execute(
+            "SELECT call_name FROM user_profiles WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ? LIMIT 1",
+            (user_id, group_or_user_id, bot_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row["call_name"]:
+                call_name = str(row["call_name"]).strip().lower()
+
         update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if increment_count:
             conflict_update = """
@@ -145,6 +168,8 @@ class ProfileStoreMixin:
             """
 
         for alias in alias_items:
+            if call_name and alias.strip().lower() == call_name:
+                continue
             await self.conn.execute(
                 f"""
                 INSERT INTO user_aliases (
@@ -470,6 +495,18 @@ class ProfileStoreMixin:
                 update_time,
             ),
         )
+        new_call_name = profile_fields.get("call_name")
+        if new_call_name:
+            stripped = new_call_name.strip()
+            if stripped:
+                await self.conn.execute(
+                    """
+                    DELETE FROM user_aliases 
+                    WHERE user_id = ? AND group_or_user_id = ? AND bot_name = ?
+                        AND LOWER(TRIM(alias)) = LOWER(?)
+                    """,
+                    (user_id, group_or_user_id, bot_name, stripped),
+                )
         await self.conn.commit()
 
     async def delete_user_profile(

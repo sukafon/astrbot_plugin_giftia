@@ -243,6 +243,9 @@
                             <label>搜索内容</label>
                             <input type="text" id="forward-search" placeholder="搜索 forward_id、消息ID、摘要或节点内容...">
                         </div>
+                        <div class="filter-group" style="align-self: flex-end;">
+                            <button class="btn btn-danger" id="btn-clean-forwards" onclick="window.GiftiaApp.cleanOldForwards()">清理过期</button>
+                        </div>
                     </div>
                 </div>
 
@@ -298,49 +301,20 @@
                 </div>
 
                 <div id="subpanel-user-profiles" class="subpanel active">
-                    <div class="data-card card">
-                        <div class="table-container">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>用户ID</th>
-                                        <th>好感度</th>
-                                        <th>关系头衔</th>
-                                        <th>画像总结内容 (Profile)</th>
-                                        <th>更新时间</th>
-                                        <th class="text-right">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="user-profile-list">
-                                    <!-- Dynamic rows -->
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="pagination-container" id="user-profile-pagination">
-                            <!-- Pagination -->
-                        </div>
+                    <div class="profile-cards-grid" id="user-profile-list">
+                        <!-- Dynamic cards -->
+                    </div>
+                    <div class="pagination-container" id="user-profile-pagination">
+                        <!-- Pagination -->
                     </div>
                 </div>
 
                 <div id="subpanel-group-profiles" class="subpanel">
-                    <div class="data-card card">
-                        <div class="table-container">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>群聊画像总结内容 (Profile)</th>
-                                        <th>更新时间</th>
-                                        <th class="text-right">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="group-profile-list">
-                                    <!-- Dynamic rows -->
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="pagination-container" id="group-profile-pagination">
-                            <!-- Pagination -->
-                        </div>
+                    <div class="profile-cards-grid" id="group-profile-list">
+                        <!-- Dynamic cards -->
+                    </div>
+                    <div class="pagination-container" id="group-profile-pagination">
+                        <!-- Pagination -->
                     </div>
                 </div>
             </section>
