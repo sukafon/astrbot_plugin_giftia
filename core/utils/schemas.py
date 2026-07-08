@@ -19,6 +19,18 @@ def extract_nested_forward_ids(content: str) -> list[str]:
     return FORWARD_NESTED_PATTERN.findall(content)
 
 
+def normalize_memory_importance(value, default: int = 5) -> int:
+    """Normalize memory importance into the 1-10 range."""
+    try:
+        if value is None or value == "":
+            normalized = int(default)
+        else:
+            normalized = int(float(value))
+    except (TypeError, ValueError):
+        normalized = int(default)
+    return max(1, min(10, normalized))
+
+
 @dataclass(repr=False, slots=True)
 class MessageData:
     db_id: int = 0
@@ -73,6 +85,9 @@ class MemoryItem:
     metadata: str
     updated_at: str
     created_at: str
+    importance: int = 5
+    hit_count: int = 0
+    last_hit_at: str = ""
 
 
 @dataclass(repr=False, slots=True)

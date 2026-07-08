@@ -178,6 +178,9 @@ class CommandHandler:
             data = {
                 "memory_id": mem.memory_id,
                 "text": mem.text,
+                "importance": mem.importance,
+                "hit_count": mem.hit_count,
+                "last_hit_at": mem.last_hit_at,
                 "created_at": mem.created_at,
             }
             nodes.append(

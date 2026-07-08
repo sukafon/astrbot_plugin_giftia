@@ -165,6 +165,8 @@
                                 <tr>
                                     <th>记忆内容 (Text)</th>
                                     <th>关联用户</th>
+                                    <th>重要度</th>
+                                    <th>活跃度</th>
                                     <th>创建时间</th>
                                     <th class="text-right">操作</th>
                                 </tr>
@@ -358,6 +360,10 @@
                     <input type="text" id="add-mem-associated-ids" placeholder="例如: 12345,67890">
                 </div>
                 <div class="form-group">
+                    <label>重要度 (1-10)</label>
+                    <input type="number" id="add-mem-importance" min="1" max="10" value="5">
+                </div>
+                <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>
                     <textarea id="add-mem-text" rows="5" placeholder="例如: 老师最喜欢的食物是草莓蛋糕。"></textarea>
                 </div>
@@ -389,6 +395,10 @@
                 <div class="form-group">
                     <label>关联用户ID (可选，多个以英文逗号分隔)</label>
                     <input type="text" id="edit-mem-associated-ids" placeholder="例如: 12345,67890">
+                </div>
+                <div class="form-group">
+                    <label>重要度 (1-10)</label>
+                    <input type="number" id="edit-mem-importance" min="1" max="10" value="5">
                 </div>
                 <div class="form-group">
                     <label>记忆文本 <span class="required">*</span></label>

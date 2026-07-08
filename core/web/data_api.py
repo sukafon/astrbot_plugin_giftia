@@ -4,6 +4,8 @@ import time
 from astrbot.api import logger
 from astrbot.api.web import error_response, json_response, request
 
+from ..utils.schemas import normalize_memory_importance
+
 
 USER_PROFILE_FIELD_KEYS = (
     "call_name",
@@ -269,7 +271,8 @@ class DataApi:
 
             # Query data
             data_sql = f"""
-                SELECT id, bot_name, group_or_user_id, memory_id, text, metadata, created_at
+                SELECT id, bot_name, group_or_user_id, memory_id, text, metadata,
+                       importance, hit_count, last_hit_at, created_at, updated_at
                 FROM memories
                 {where_clause}
                 ORDER BY created_at DESC
@@ -290,7 +293,11 @@ class DataApi:
                             "metadata": json.loads(r["metadata"])
                             if r["metadata"]
                             else {},
+                            "importance": normalize_memory_importance(r["importance"]),
+                            "hit_count": int(r["hit_count"] or 0),
+                            "last_hit_at": r["last_hit_at"],
                             "created_at": r["created_at"],
+                            "updated_at": r["updated_at"],
                         }
                     )
 
@@ -387,6 +394,7 @@ class DataApi:
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
             associated_user_ids = body.get("associated_user_ids")
+            importance = normalize_memory_importance(body.get("importance"), 5)
 
             if isinstance(associated_user_ids, str):
                 associated_user_ids = [
@@ -402,6 +410,7 @@ class DataApi:
                 text=text,
                 user_id=user_id,
                 associated_user_ids=associated_user_ids,
+                importance=importance,
             )
 
             if not memory_id:
@@ -428,6 +437,7 @@ class DataApi:
             text = body.get("text")
             user_id = body.get("user_id") or "admin"
             associated_user_ids = body.get("associated_user_ids")
+            importance_raw = body.get("importance")
 
             if isinstance(associated_user_ids, str):
                 associated_user_ids = [
@@ -436,6 +446,21 @@ class DataApi:
 
             if not memory_id or not bot_name or not group_or_user_id or not text:
                 return error_response("缺少必要参数")
+
+            async with self.giftia.db.conn.execute(
+                "SELECT importance, hit_count, last_hit_at FROM memories WHERE memory_id = ?",
+                (memory_id,),
+            ) as cursor:
+                old_row = await cursor.fetchone()
+
+            if importance_raw is None or importance_raw == "":
+                importance = normalize_memory_importance(
+                    old_row["importance"] if old_row else None, 5
+                )
+            else:
+                importance = normalize_memory_importance(importance_raw, 5)
+            hit_count = int(old_row["hit_count"] or 0) if old_row else 0
+            last_hit_at = (old_row["last_hit_at"] or "") if old_row else ""
 
             # Delete old memory first
             await self.giftia.data_cache.delete_memory(memory_id)
@@ -447,6 +472,9 @@ class DataApi:
                 text=text,
                 user_id=user_id,
                 associated_user_ids=associated_user_ids,
+                importance=importance,
+                hit_count=hit_count,
+                last_hit_at=last_hit_at,
             )
 
             if not new_memory_id:

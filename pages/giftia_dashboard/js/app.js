@@ -315,10 +315,10 @@ window.GiftiaApp = {
     // ----------------------------------------------------
     async loadMemories() {
         const listContainer = document.getElementById("memory-list");
-        listContainer.innerHTML = `<tr><td colspan="4" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
         if (!document.getElementById("memory-bot-name").value) {
             this.pagination.memories.total = 0;
-            listContainer.innerHTML = `<tr><td colspan="4" class="no-data-row">暂无可用 Bot</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
             window.renderPagination("memory-pagination", this.pagination.memories, () => {});
             return;
         }
@@ -345,14 +345,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="4" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
         }
     },
 
     renderMemories(items) {
         const container = document.getElementById("memory-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="4" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
+            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
             return;
         }
 
@@ -370,15 +370,24 @@ window.GiftiaApp = {
             const associatedUserIds = associatedUserIdsArray.length > 0
                 ? associatedUserIdsArray.join(', ')
                 : (fallbackUserId || '-');
+            let importance = Number(item.importance || 5);
+            importance = Number.isFinite(importance) ? Math.min(10, Math.max(1, importance)) : 5;
+            const hitCount = Number(item.hit_count || 0);
+            const lastHitAt = item.last_hit_at ? window.formatDate(item.last_hit_at) : "从未命中";
             return `
                 <tr>
                     <td data-label="记忆内容 (Text)">
                         <div style="max-width: 550px; word-break: break-all;">${window.escapeHtml(item.text)}</div>
                     </td>
                     <td data-label="关联用户">${associatedUserIds}</td>
+                    <td data-label="重要度">${importance}</td>
+                    <td data-label="活跃度">
+                        <div>${hitCount} 次</div>
+                        <div class="muted-text">${lastHitAt}</div>
+                    </td>
                     <td data-label="创建时间">${window.formatDate(item.created_at)}</td>
                     <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}')">编辑</button>
+                        <button class="btn btn-secondary btn-small" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}', ${importance})">编辑</button>
                         <button class="btn btn-danger btn-small" onclick="window.deleteMemory('${item.memory_id}')">删除</button>
                     </td>
                 </tr>

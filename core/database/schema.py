@@ -226,16 +226,49 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 text TEXT NOT NULL,
                 vector BLOB,
                 metadata TEXT,
+                importance INTEGER DEFAULT 5,
+                hit_count INTEGER DEFAULT 0,
+                last_hit_at DATETIME,
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """)
+        for sql, column_name in (
+            (
+                "ALTER TABLE memories ADD COLUMN importance INTEGER DEFAULT 5",
+                "importance",
+            ),
+            (
+                "ALTER TABLE memories ADD COLUMN hit_count INTEGER DEFAULT 0",
+                "hit_count",
+            ),
+            (
+                "ALTER TABLE memories ADD COLUMN last_hit_at DATETIME",
+                "last_hit_at",
+            ),
+        ):
+            try:
+                await cursor.execute(sql)
+            except aiosqlite.OperationalError as e:
+                if (
+                    "duplicate" not in str(e).lower()
+                    and "already exists" not in str(e).lower()
+                ):
+                    logger.warning(
+                        f"Failed to add {column_name} column to memories: {e}"
+                    )
         # 创建索引
         await cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_id_unique ON memories (memory_id)"
         )
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_group_id_bot_name_created_at_index ON memories (group_or_user_id, bot_name, created_at)"
+        )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_group_bot_importance ON memories (group_or_user_id, bot_name, importance)"
+        )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_group_bot_activity ON memories (group_or_user_id, bot_name, hit_count, last_hit_at)"
         )
         # 创建键值对表
         await cursor.execute(

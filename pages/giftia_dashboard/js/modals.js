@@ -14,11 +14,20 @@ window.closeModal = function(id) {
     }
 };
 
+function normalizeMemoryImportance(value) {
+    let importance = Number(value || 5);
+    if (!Number.isFinite(importance)) {
+        importance = 5;
+    }
+    return Math.min(10, Math.max(1, importance));
+}
+
 // 1. Add Memory
 window.openAddMemoryModal = function() {
     document.getElementById("add-mem-bot").value = "";
     document.getElementById("add-mem-group").value = "";
     document.getElementById("add-mem-associated-ids").value = "";
+    document.getElementById("add-mem-importance").value = "5";
     document.getElementById("add-mem-text").value = "";
     window.openModal("add-memory-modal");
 };
@@ -27,6 +36,7 @@ window.submitAddMemory = async function() {
     const botName = document.getElementById("add-mem-bot").value.trim();
     const groupId = document.getElementById("add-mem-group").value.trim();
     const associatedIds = document.getElementById("add-mem-associated-ids").value.trim();
+    const importance = normalizeMemoryImportance(document.getElementById("add-mem-importance").value);
     const text = document.getElementById("add-mem-text").value.trim();
 
     if (!botName || !groupId || !text) {
@@ -40,7 +50,8 @@ window.submitAddMemory = async function() {
             group_or_user_id: groupId,
             text: text,
             user_id: "admin",
-            associated_user_ids: associatedIds
+            associated_user_ids: associatedIds,
+            importance: importance
         });
         if (res.status === "success") {
             window.showToast("保存记忆成功！");
@@ -55,12 +66,13 @@ window.submitAddMemory = async function() {
 };
 
 // 2. Edit Memory
-window.openEditMemoryModal = function(id, bot, group, textEncoded, associatedIds) {
+window.openEditMemoryModal = function(id, bot, group, textEncoded, associatedIds, importance) {
     const text = decodeURIComponent(textEncoded);
     document.getElementById("edit-mem-id").value = id;
     document.getElementById("edit-mem-bot").value = bot;
     document.getElementById("edit-mem-group").value = group;
     document.getElementById("edit-mem-associated-ids").value = associatedIds || "";
+    document.getElementById("edit-mem-importance").value = normalizeMemoryImportance(importance);
     document.getElementById("edit-mem-text").value = text;
     window.openModal("edit-memory-modal");
 };
@@ -70,6 +82,7 @@ window.submitEditMemory = async function() {
     const bot = document.getElementById("edit-mem-bot").value;
     const group = document.getElementById("edit-mem-group").value;
     const associatedIds = document.getElementById("edit-mem-associated-ids").value.trim();
+    const importance = normalizeMemoryImportance(document.getElementById("edit-mem-importance").value);
     const text = document.getElementById("edit-mem-text").value.trim();
 
     if (!text) {
@@ -84,7 +97,8 @@ window.submitEditMemory = async function() {
             group_or_user_id: group,
             text: text,
             user_id: "admin",
-            associated_user_ids: associatedIds
+            associated_user_ids: associatedIds,
+            importance: importance
         });
         if (res.status === "success") {
             window.showToast("保存成功！");

@@ -310,6 +310,12 @@ html[data-theme="dark"] .status-pill-action {
     color: #5eead4;
 }
 
+.muted-text {
+    color: var(--font-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 /* Inset Thought Box */
 .status-thought-box {
     background-color: rgba(0, 0, 0, 0.02);
@@ -1246,5 +1252,4 @@ html[data-theme="dark"] .sub-nav-tab.active {
     from { opacity: 0; transform: translateY(2px); }
     to { opacity: 1; transform: translateY(0); }
 }
-
 

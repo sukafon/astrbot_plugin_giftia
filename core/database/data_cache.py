@@ -17,6 +17,7 @@ from ..utils.schemas import (
     MessageData,
     SessionRecallMemory,
     Status,
+    normalize_memory_importance,
 )
 from .database import Database
 
@@ -733,11 +734,20 @@ class DataCache:
         text: str,
         user_id: str,
         associated_user_ids: list[str] = None,
+        importance: int = 5,
+        hit_count: int = 0,
+        last_hit_at: str = "",
     ) -> str | None:
         """添加记忆"""
         fmt_key = f"{bot_name}:{group_or_user_id}"
         now = datetime.now().isoformat()
-        meta_dict = {"user_id": user_id}
+        importance = normalize_memory_importance(importance)
+        try:
+            hit_count = max(0, int(hit_count or 0))
+        except (TypeError, ValueError):
+            hit_count = 0
+        last_hit_at = str(last_hit_at or "")
+        meta_dict = {"user_id": user_id, "importance": importance}
         if associated_user_ids:
             meta_dict["associated_user_ids"] = associated_user_ids
         meta_str = json.dumps(meta_dict)
@@ -759,6 +769,9 @@ class DataCache:
             metadata=meta_str,
             updated_at=now,
             created_at=now,
+            importance=importance,
+            hit_count=hit_count,
+            last_hit_at=last_hit_at,
         )
         self.memories[fmt_key].append(memory)
         # 将记忆写入数据库
@@ -766,6 +779,32 @@ class DataCache:
             bot_name=bot_name, group_or_user_id=group_or_user_id, memory=memory
         )
         return memory_id
+
+    async def record_memory_hits(self, memories: list[dict] | None) -> None:
+        """记录长期记忆的有效召回命中。"""
+        if not memories:
+            return
+
+        memory_ids = []
+        seen = set()
+        for memory in memories:
+            memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
+            if memory_id and memory_id not in seen:
+                seen.add(memory_id)
+                memory_ids.append(memory_id)
+
+        if not memory_ids:
+            return
+
+        hit_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await self.db.record_memory_hits(memory_ids, hit_at=hit_at)
+
+        memory_id_set = set(memory_ids)
+        for memory_deque in self.memories.values():
+            for memory in memory_deque:
+                if memory.memory_id in memory_id_set:
+                    memory.hit_count = int(memory.hit_count or 0) + 1
+                    memory.last_hit_at = hit_at
 
     async def delete_memory(self, memory_id: str) -> bool:
         """删除记忆"""

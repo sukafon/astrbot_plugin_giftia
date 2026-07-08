@@ -4,6 +4,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 
+from ..utils.schemas import normalize_memory_importance
 from .passive_context import PassiveContextMixin
 
 RELATION_DELTA_LIMIT = 5
@@ -81,12 +82,20 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         )
 
         memory_matches = re.finditer(
-            r'<memory(?:\s+users=["\']([^"\']*)["\'])?>(.*?)</memory>',
+            r"<memory([^>]*)>(.*?)</memory>",
             completion_text,
             re.DOTALL,
         )
         for match in memory_matches:
-            users_attr = match.group(1) or ""
+            attrs = {
+                key: value
+                for key, value in re.findall(
+                    r'([a-zA-Z_][\w-]*)=["\']([^"\']*)["\']',
+                    match.group(1) or "",
+                )
+            }
+            users_attr = attrs.get("users", "")
+            importance = normalize_memory_importance(attrs.get("importance"), 5)
             text = match.group(2).strip()
 
             if not text or text == "无":
@@ -108,9 +117,10 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 text=text,
                 user_id=primary_user,
                 associated_user_ids=associated_ids,
+                importance=importance,
             )
             logger.info(
-                f"[Giftia Passive Memory] 已成功记录长期记忆: {text} (关联用户: {associated_ids})"
+                f"[Giftia Passive Memory] 已成功记录长期记忆: {text} (关联用户: {associated_ids}, 重要度: {importance})"
             )
         return True
 

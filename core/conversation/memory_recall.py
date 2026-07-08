@@ -75,6 +75,8 @@ async def search_memories_with_rerank(
                 top_k=conf_int(plugin.rerank_conf, "top_k", search_limit),
                 threshold=conf_float(plugin.rerank_conf, "threshold", 0.45),
             )
+        if memories:
+            await plugin.data_cache.record_memory_hits(memories)
         return memories or []
     except Exception as e:
         logger.warning(f"[Giftia] {log_context}失败: {e}")
