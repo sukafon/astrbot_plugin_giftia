@@ -1334,6 +1334,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const btn = e.target.closest(".media-tab-btn");
         if (btn) {
             const tabName = btn.getAttribute("data-mediatab");
+            const memoryCleanModal = btn.closest("#memory-clean-modal");
+            if (
+                memoryCleanModal &&
+                typeof window.GiftiaModalActions?.setMemoryCleanMode === "function"
+            ) {
+                window.GiftiaModalActions.setMemoryCleanMode(tabName);
+                return;
+            }
+
             const parent = btn.closest(".edit-media-tabs");
             if (parent) {
                 parent.querySelectorAll(".media-tab-btn").forEach(b => b.classList.remove("active"));
@@ -1360,25 +1369,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     } else if (tabName === "clean-auto") {
                         if (btnManualCalc) btnManualCalc.style.display = "none";
                         if (btnManualSubmit) btnManualSubmit.style.display = "none";
-                        if (btnAutoTrigger) btnAutoTrigger.style.display = "inline-block";
-                        if (btnAutoSave) btnAutoSave.style.display = "inline-block";
-                    }
-                }
-
-                const memoryCleanModal = btn.closest("#memory-clean-modal");
-                if (memoryCleanModal) {
-                    const btnManualFilter = memoryCleanModal.querySelector("#btn-memory-manual-filter");
-                    const btnManualClean = memoryCleanModal.querySelector("#btn-clean-selected-memories");
-                    const btnAutoTrigger = memoryCleanModal.querySelector("#btn-auto-clean-mem-trigger");
-                    const btnAutoSave = memoryCleanModal.querySelector("#btn-auto-clean-mem-save");
-                    if (tabName === "memory-clean-manual") {
-                        if (btnManualFilter) btnManualFilter.style.display = "inline-block";
-                        if (btnManualClean) btnManualClean.style.display = "inline-block";
-                        if (btnAutoTrigger) btnAutoTrigger.style.display = "none";
-                        if (btnAutoSave) btnAutoSave.style.display = "none";
-                    } else if (tabName === "memory-clean-auto") {
-                        if (btnManualFilter) btnManualFilter.style.display = "none";
-                        if (btnManualClean) btnManualClean.style.display = "none";
                         if (btnAutoTrigger) btnAutoTrigger.style.display = "inline-block";
                         if (btnAutoSave) btnAutoSave.style.display = "inline-block";
                     }

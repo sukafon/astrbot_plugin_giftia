@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 from collections import defaultdict, deque
+from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import datetime
 
@@ -780,7 +781,7 @@ class DataCache:
         )
         return memory_id
 
-    async def record_memory_hits(self, memories: list[dict] | None) -> None:
+    async def record_memory_hits(self, memories: Iterable[dict | object] | None) -> None:
         """记录长期记忆的有效召回命中。"""
         if not memories:
             return
@@ -788,7 +789,13 @@ class DataCache:
         memory_ids = []
         seen = set()
         for memory in memories:
-            memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
+            if isinstance(memory, dict):
+                raw_memory_id = memory.get("memory_id") or memory.get("id")
+            else:
+                raw_memory_id = getattr(memory, "memory_id", None) or getattr(
+                    memory, "id", None
+                )
+            memory_id = str(raw_memory_id or "").strip()
             if memory_id and memory_id not in seen:
                 seen.add(memory_id)
                 memory_ids.append(memory_id)
