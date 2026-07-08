@@ -215,6 +215,7 @@ class ChatManager:
             should_reply,
             relevant_memories,
             is_just_at,
+            pending_recall_memories,
         ) = await self.decision_engine.evaluate_decision(
             event=event,
             bot_name=bot_name,
@@ -233,6 +234,8 @@ class ChatManager:
         self.plugin.replying_status[reply_key] = (
             self.plugin.replying_status.get(reply_key, 0) + 1
         )
+        if pending_recall_memories is None:
+            pending_recall_memories = []
 
         try:
             has_sent_reply = False
@@ -245,6 +248,7 @@ class ChatManager:
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 relevant_memories=relevant_memories,
+                pending_recall_memories=pending_recall_memories,
             ):
                 if chunk:
                     if isinstance(chunk, XmlLlmResult):
@@ -284,6 +288,11 @@ class ChatManager:
                 logger.info(
                     f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
                 )
+            self.reply_pipeline.commit_pending_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                pending_recall_memories=pending_recall_memories,
+            )
         finally:
             self.plugin.replying_status[reply_key] = max(
                 0, self.plugin.replying_status.get(reply_key, 0) - 1
@@ -323,12 +332,14 @@ class ChatManager:
             adapter_id=adapter_id,
         )
         has_sent_reply = False
+        pending_recall_memories = []
         async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
             event=mock_event,
             bot_name=bot_name,
             nickname=nickname,
             group_or_user_id=group_or_user_id,
             remind_message=f"[定时任务唤醒] {user_name}({user_id}): {remind_message}",
+            pending_recall_memories=pending_recall_memories,
         ):
             if chunk:
                 if isinstance(chunk, XmlLlmResult):
@@ -368,6 +379,11 @@ class ChatManager:
             logger.info(
                 f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"
             )
+        self.reply_pipeline.commit_pending_session_recalled_memories(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            pending_recall_memories=pending_recall_memories,
+        )
 
     def fake_event(
         self,

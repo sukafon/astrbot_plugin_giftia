@@ -9,6 +9,7 @@ from astrbot.api.message_components import At
 
 from ..llm.prompt import build_decision_prompt
 from ..utils.schemas import MessageData
+from .memory_recall import search_memories_with_rerank
 
 
 class DecisionEngine:
@@ -74,10 +75,10 @@ class DecisionEngine:
         current_message: MessageData,
         image_urls: list[str],
         audio_urls: list[str],
-    ) -> tuple[bool, list[str] | None, bool]:
+    ) -> tuple[bool, list[str] | None, bool, list[dict] | None]:
         """
         进行接话决策。
-        返回: (should_reply, relevant_memories, is_just_at)
+        返回: (should_reply, relevant_memories, is_just_at, pending_recall_memories)
         """
         bot_conf = self.plugin.bot_map[bot_name]
         decision_conf = bot_conf.get("decision_conf", {})
@@ -110,12 +111,12 @@ class DecisionEngine:
                 decision_conf.get("provider_ids") or decision_conf.get("provider_id")
             ):
                 logger.debug("没有at机器人且未开启决策，跳过处理")
-                return False, None, False
+                return False, None, False, None
             if decision_conf.get(
                 "group_whitelist"
             ) and group_or_user_id not in decision_conf.get("group_whitelist"):
                 logger.debug("没有at机器人且当前群组不在决策白名单内，跳过处理")
-                return False, None, False
+                return False, None, False, None
 
             # 活跃窗口与主动接话概率检查
             fmt_key = f"{bot_name}:{group_or_user_id}"
@@ -178,17 +179,17 @@ class DecisionEngine:
                 logger.debug(
                     "没有at机器人且不满足接话分析窗口、主动概率或关键词触发，跳过处理"
                 )
-                return False, None, False
+                return False, None, False, None
 
         # 跳过空消息
         if not current_message.content and not image_urls and not audio_urls:
             logger.debug("消息为空，跳过处理")
-            return False, None, False
+            return False, None, False, None
 
         # 跳过已唤醒的消息
         if event._has_send_oper:
             logger.debug(f"{bot_name} 跳过已唤醒的消息: {current_message.content}")
-            return False, None, False
+            return False, None, False, None
 
         # 防抖延迟等待
         if self.plugin.user_debounce_time > 0:
@@ -213,7 +214,7 @@ class DecisionEngine:
                 await asyncio.sleep(self.plugin.user_debounce_time)
                 if self.plugin.debounce_map.get(debounce_key) != current_time:
                     logger.debug(f"{bot_name} 消息 {debounce_key} 触发防抖，跳过处理")
-                    return False, None, False
+                    return False, None, False, None
                 else:
                     self.plugin.debounce_start_map.pop(debounce_key, None)
                     self.plugin.debounce_at_map.pop(debounce_key, None)
@@ -237,7 +238,7 @@ class DecisionEngine:
                 logger.debug(
                     f"{bot_name} 消息 {reply_key} 正在回复中，私聊防并发单线程拦截"
                 )
-                return False, None, True
+                return False, None, True, None
 
             await self.plugin.db.update_message_decision(
                 bot_name=bot_name,
@@ -246,12 +247,12 @@ class DecisionEngine:
                 reply_decision=3,
                 use_rag=2,
             )
-            return True, None, True
+            return True, None, True, None
 
         # 非 @ 消息进行 LLM 决策
         if self.plugin.replying_status.get(reply_key, 0) > 0:
             logger.debug(f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策")
-            return False, None, False
+            return False, None, False, None
 
         # 节流判断
         if not is_private:
@@ -260,27 +261,27 @@ class DecisionEngine:
                 user_throttle_key, self.plugin.user_throttle_time
             ):
                 logger.info(f"{bot_name} 消息用户{user_throttle_key}节流中，跳过处理")
-                return False, None, False
+                return False, None, False, None
 
             group_throttle_key = f"{bot_name}:{event.get_group_id()}"
             if self.plugin.group_throttle_time > 0 and not self.can_execute(
                 group_throttle_key, self.plugin.group_throttle_time
             ):
                 logger.info(f"{bot_name} 消息群组{group_throttle_key}节流中，跳过处理")
-                return False, None, False
+                return False, None, False, None
 
         # 并发锁判断
         fmt_user_lock = f"{bot_name}:{group_or_user_id}:{event.get_sender_id()}"
         user_lock = self.plugin.user_locks[fmt_user_lock]
         if user_lock.locked():
             logger.info(f"{bot_name} 用户{fmt_user_lock}正在决策中，跳过处理")
-            return False, None, False
+            return False, None, False, None
 
         fmt_lock = f"{bot_name}:{group_or_user_id}"
         lock = self.plugin.group_locks[fmt_lock]
         if self.plugin.concurrent_strategy == "discard" and lock.locked():
             logger.info(f"{bot_name} 消息群组{fmt_lock}并发数已达上限，跳过处理")
-            return False, None, False
+            return False, None, False, None
 
         relevant_memories = None
 
@@ -291,7 +292,7 @@ class DecisionEngine:
                     logger.debug(
                         f"{bot_name} 消息 {reply_key} 正在回复中，跳过决策 (队列拦截)"
                     )
-                    return False, None, False
+                    return False, None, False, None
 
                 # 获取决策所需上下文
                 recent_messages = await self.plugin.data_cache.get_recent_message(
@@ -367,11 +368,11 @@ class DecisionEngine:
                         )
                     else:
                         logger.error(f"{bot_name} 未配置决策模型ID")
-                        return False, None, False
+                        return False, None, False, None
                 provider_ids = [p for p in provider_ids if p]
                 if not provider_ids:
                     logger.error(f"{bot_name} 未配置决策模型ID")
-                    return False, None, False
+                    return False, None, False, None
 
                 # 递减分析窗口
                 if decrement_counter:
@@ -394,7 +395,7 @@ class DecisionEngine:
 
                 if result is None:
                     logger.error(f"{bot_name} LLM决策失败，默认判定为不回复")
-                    return False, None, False
+                    return False, None, False, None
 
                 # 更新消息决策表
                 if result.reply_decision != 2 or result.use_rag != 2:
@@ -408,7 +409,7 @@ class DecisionEngine:
 
                 if result.reply_decision == 0 or result.reply_decision == 2:
                     logger.info(f"{bot_name} LLM决策判定：不回复")
-                    return False, None, False
+                    return False, None, False, None
 
                 logger.info(f"{bot_name} LLM决策判定：回复")
 
@@ -424,25 +425,15 @@ class DecisionEngine:
                 if result.use_rag == 1 and self.plugin.embedding_conf.get(
                     "enabled", False
                 ):
-                    embedding_memories = await self.plugin.passive_memory_manager.search_and_filter_memories(
+                    memory_results = await search_memories_with_rerank(
+                        self.plugin,
                         bot_name=bot_name,
                         group_or_user_id=group_or_user_id,
                         query=result.rag_query,
                         recent_messages=recent_messages,
-                        limit=self.plugin.embedding_conf.get("limit", 5),
-                        threshold=self.plugin.embedding_conf.get("threshold", 0.7),
+                        log_context="决策 RAG 记忆召回",
                     )
-                    if len(embedding_memories) > 0 and self.plugin.rerank_conf.get(
-                        "enabled", False
-                    ):
-                        rerank_memories = await self.plugin.ltm.rerank_memories(
-                            query=result.rag_query,
-                            memories=embedding_memories,
-                            top_k=self.plugin.rerank_conf.get("top_k", 5),
-                            threshold=self.plugin.rerank_conf.get("threshold", 0.45),
-                        )
-                        relevant_memories = [m["text"] for m in rerank_memories]
-                    else:
-                        relevant_memories = [m["text"] for m in embedding_memories]
+                    relevant_memories = [m["text"] for m in memory_results]
+                    return True, relevant_memories, False, memory_results
 
-                return True, relevant_memories, False
+                return True, relevant_memories, False, None

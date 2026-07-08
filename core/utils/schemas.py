@@ -76,6 +76,20 @@ class MemoryItem:
 
 
 @dataclass(repr=False, slots=True)
+class SessionRecallMemory:
+    memory_id: str
+    text: str
+    metadata: str = "{}"
+    score: float = 0.0
+    distance: float = 1.0
+    hit_count: int = 1
+    first_recalled_at: float = 0.0
+    last_recalled_at: float = 0.0
+    updated_at: str = ""
+    created_at: str = ""
+
+
+@dataclass(repr=False, slots=True)
 class Sticker:
     sticker_id: str
     name: str

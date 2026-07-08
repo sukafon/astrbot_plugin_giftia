@@ -3,7 +3,15 @@ from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
-from ..utils.schemas import MediaCaption, MemoryItem, MessageData, ShortTask, Status, extract_media_ids
+from ..utils.schemas import (
+    MediaCaption,
+    MemoryItem,
+    MessageData,
+    SessionRecallMemory,
+    ShortTask,
+    Status,
+    extract_media_ids,
+)
 
 # 构造消息的XML标签的属性，属性按顺序添加。MessageData对象的属性若不在这或者值为空，将不添加该属性
 MSG_PROPS = [
@@ -198,6 +206,7 @@ def build_reply_prompt(
     remind_message: str | None = None,
     tool_results: list[dict[str, str]] | None = None,
     long_memories: list[MemoryItem] | None = None,
+    session_recalled_memories: list[SessionRecallMemory] | None = None,
     relevant_memories: list[str] | None = None,
     user_profile: str | dict | None = None,
     group_profile: str | None = None,
@@ -260,6 +269,13 @@ def build_reply_prompt(
     if long_memories:
         user_prompt.append(
             f"<long_memories>\n{build_long_memories(long_memories)}\n</long_memories>"
+        )
+    # 当前会话累计召回的相关长期记忆
+    if session_recalled_memories:
+        user_prompt.append(
+            "<session_recalled_memories>\n"
+            f"{build_session_recalled_memories(session_recalled_memories)}\n"
+            "</session_recalled_memories>"
         )
     # 媒体转述
     if remaining_captions:
@@ -413,12 +429,73 @@ def parse_status_to_str(status: Status) -> str:
 能量：{energy_val:.0f}"""
 
 
+def build_memory_attrs(
+    memory_id: str,
+    created_at: str = "",
+    updated_at: str = "",
+) -> str:
+    memory_time = format_memory_time(select_memory_time(created_at, updated_at))
+    attrs = [f"id={quoteattr(memory_id)}"]
+    if memory_time:
+        attrs.append(f"time={quoteattr(memory_time)}")
+    return " " + " ".join(attrs)
+
+
+def select_memory_time(created_at: str, updated_at: str) -> str:
+    """Return the latest meaningful timestamp for a memory item."""
+    if not updated_at:
+        return created_at or ""
+    if not created_at:
+        return updated_at
+
+    try:
+        created_dt = datetime.fromisoformat(str(created_at).strip())
+        updated_dt = datetime.fromisoformat(str(updated_at).strip())
+        return updated_at if updated_dt >= created_dt else created_at
+    except (TypeError, ValueError):
+        return updated_at
+
+
+def format_memory_time(value: str) -> str:
+    """Format memory timestamps to minute precision for prompt injection."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    try:
+        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        normalized = text.replace("T", " ")
+        if "." in normalized:
+            normalized = normalized.split(".", 1)[0]
+        return normalized[:16] if len(normalized) >= 16 else normalized
+
+
+def build_memory_items(memories) -> str:
+    """构建长期记忆 XML，兼容数据库记忆和会话召回记忆。"""
+    xmls = []
+    for memory in memories:
+        attrs = build_memory_attrs(
+            memory_id=memory.memory_id,
+            created_at=memory.created_at,
+            updated_at=memory.updated_at,
+        )
+        xmls.append(f"<memory{attrs}>{memory.text}</memory>")
+    return "\n".join(xmls)
+
+
 def build_long_memories(long_memories: list[MemoryItem]) -> str:
     """构建长期记忆的提示词"""
-    xmls = []
-    for memory in long_memories:
-        xmls.append(f"<memory id={memory.memory_id}>{memory.text}</memory>")
-    return "\n".join(xmls)
+    return build_memory_items(long_memories)
+
+
+def build_session_recalled_memories(
+    session_recalled_memories: list[SessionRecallMemory],
+) -> str:
+    """构建当前会话累计召回记忆的提示词"""
+    return build_memory_items(session_recalled_memories)
 
 
 def build_rag_results(rag_memories: list[str]) -> str:
