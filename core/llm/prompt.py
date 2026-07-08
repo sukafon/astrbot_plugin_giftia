@@ -655,6 +655,7 @@ def build_short_task_board(
     return (
         f"<task_board active_count={quoteattr(str(len(task_blocks)))} "
         f"limit={quoteattr(str(short_task_limit))}>\n"
+        "<rule>以下任务默认保持进行中；除非已实际完成任务要求，或用户明确确认完成，否则不要变更为完成。</rule>\n"
         + "\n".join(task_blocks)
         + "\n</task_board>"
     )
