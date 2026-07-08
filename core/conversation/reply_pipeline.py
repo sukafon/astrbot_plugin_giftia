@@ -10,6 +10,7 @@ from ..llm.prompt import build_reply_prompt
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MessageData
 from .media_captioner import MediaCaptioner
+from .memory_recall import conf_int, search_memories_with_rerank
 from .tool_executor import ToolExecutor
 
 
@@ -46,6 +47,91 @@ class ReplyPipeline:
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
 
+    @staticmethod
+    def _conf_int(conf: dict, key: str, default: int) -> int:
+        return conf_int(conf, key, default)
+
+    def _session_recall_limits(self) -> tuple[int, int]:
+        conf = self.plugin.embedding_conf
+        return (
+            self._conf_int(conf, "inject_limit", 20),
+            self._conf_int(conf, "session_recall_ttl_seconds", 1800),
+        )
+
+    @staticmethod
+    def _append_relevant_memory_texts(
+        relevant_memories: list[str],
+        memories: list[dict] | None,
+    ) -> None:
+        if not memories:
+            return
+        seen = set(relevant_memories)
+        for memory in memories:
+            text = str(memory.get("text") or "").strip()
+            if text and text not in seen:
+                relevant_memories.append(text)
+                seen.add(text)
+
+    def commit_pending_session_recalled_memories(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        pending_recall_memories: list[dict] | None,
+    ) -> None:
+        if not pending_recall_memories or not self.plugin.embedding_conf.get(
+            "session_recall_enabled", True
+        ):
+            return
+        deduped_memories = {}
+        fallback_index = 0
+        for memory in pending_recall_memories:
+            memory_id = str(memory.get("memory_id") or memory.get("id") or "").strip()
+            if not memory_id:
+                memory_id = f"__fallback_{fallback_index}"
+                fallback_index += 1
+            deduped_memories[memory_id] = memory
+        max_items, ttl_seconds = self._session_recall_limits()
+        self.plugin.data_cache.merge_session_recalled_memories(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            memories=list(deduped_memories.values()),
+            max_items=max_items,
+            ttl_seconds=ttl_seconds,
+        )
+        pending_recall_memories.clear()
+
+    async def _search_current_recall_memories(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        current_message: MessageData | None,
+        remind_message: str | None,
+        recent_messages: list[MessageData],
+    ) -> list[dict]:
+        conf = self.plugin.embedding_conf
+        if not conf.get("enabled", False) or not conf.get(
+            "session_recall_enabled", True
+        ):
+            return []
+
+        query = ""
+        if current_message and current_message.content:
+            query = current_message.content.strip()
+        elif remind_message:
+            query = remind_message.strip()
+        if not query:
+            return []
+
+        return await search_memories_with_rerank(
+            self.plugin,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            query=query,
+            recent_messages=recent_messages,
+            limit_key="session_recall_search_limit",
+            log_context="会话记忆自动召回",
+        )
+
     async def dispatch_llm_reply_loop(
         self,
         event: AstrMessageEvent,
@@ -57,6 +143,7 @@ class ReplyPipeline:
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
         relevant_memories: list[str] | None = None,
+        pending_recall_memories: list[dict] | None = None,
         tool_results: list[dict[str, str]] | None = None,
         other_data: list[str] | None = None,
         times: int = 0,
@@ -68,6 +155,8 @@ class ReplyPipeline:
         is_first_turn = sent_messages is None
         if sent_messages is None:
             sent_messages = []
+        if pending_recall_memories is None:
+            pending_recall_memories = []
         bot_conf = self.plugin.bot_map[bot_name]
         iso_string = datetime.now().isoformat()
         max_loop = self.plugin.tools_config.get("max_loop", 10)
@@ -110,6 +199,35 @@ class ReplyPipeline:
             caption_config=caption_config,
         )
 
+        if relevant_memories is None:
+            relevant_memories = []
+
+        if times == 0:
+            current_recall_memories = await self._search_current_recall_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                current_message=current_message,
+                remind_message=remind_message,
+                recent_messages=recent_messages,
+            )
+            if current_recall_memories:
+                pending_recall_memories.extend(current_recall_memories)
+                self._append_relevant_memory_texts(
+                    relevant_memories, current_recall_memories
+                )
+
+        session_recalled_memories = []
+        if self.plugin.embedding_conf.get("session_recall_enabled", True):
+            max_items, ttl_seconds = self._session_recall_limits()
+            session_recalled_memories = (
+                self.plugin.data_cache.get_session_recalled_memories(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    max_items=max_items,
+                    ttl_seconds=ttl_seconds,
+                )
+            )
+
         # 2. 读取画像、关系与状态数据
         bot_status = await self.plugin.data_cache.get_bot_status(
             bot_name=bot_name,
@@ -148,11 +266,16 @@ class ReplyPipeline:
 
         # 读取长期记忆
         long_memories = []
-        if self.plugin.embedding_conf.get("enabled", False):
+        inject_limit = self._conf_int(self.plugin.embedding_conf, "inject_limit", 20)
+        if (
+            self.plugin.embedding_conf.get("enabled", False)
+            and not self.plugin.embedding_conf.get("session_recall_enabled", True)
+            and inject_limit > 0
+        ):
             long_memories = await self.plugin.data_cache.get_memories(
                 bot_name=bot_name,
                 group_or_user_id=group_or_user_id,
-                limit=self.plugin.embedding_conf.get("inject_limit", 20),
+                limit=inject_limit,
             )
 
         # 获取表情包池并抽取随机样本
@@ -176,6 +299,7 @@ class ReplyPipeline:
             bot_status=bot_status,
             tool_results=tool_results,
             long_memories=long_memories,
+            session_recalled_memories=session_recalled_memories,
             relevant_memories=relevant_memories,
             user_profile=user_profile,
             group_profile=group_profile,
@@ -275,8 +399,6 @@ class ReplyPipeline:
         # 初始化参数用于潜在的下一次递归
         if other_data is None:
             other_data = []
-        if relevant_memories is None:
-            relevant_memories = []
         if tool_results is None:
             tool_results = []
 
@@ -319,6 +441,7 @@ class ReplyPipeline:
                 group_or_user_id=group_or_user_id,
                 current_message=current_message,
                 relevant_memories=relevant_memories,
+                pending_recall_memories=pending_recall_memories,
                 tool_results=tool_results,
                 remind_message=remind_message,
                 image_urls=image_base64,

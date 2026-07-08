@@ -11,7 +11,13 @@ from astrbot.api import logger
 
 from ..memory.memory import LTM
 from ..utils.http_manager import HttpManager
-from ..utils.schemas import MediaCaption, MemoryItem, MessageData, Status
+from ..utils.schemas import (
+    MediaCaption,
+    MemoryItem,
+    MessageData,
+    SessionRecallMemory,
+    Status,
+)
 from .database import Database
 
 MAX_CAPTION_CACHE_SIZE = 500
@@ -69,6 +75,10 @@ class DataCache:
         self.memories: defaultdict[str, deque[MemoryItem]] = defaultdict(
             lambda: deque(maxlen=self.memory_number)
         )
+        # 会话级临时召回记忆池，重启后自然清空
+        self.session_recalled_memories: defaultdict[
+            str, dict[str, SessionRecallMemory]
+        ] = defaultdict(dict)
 
     async def get_recent_message(
         self, bot_name: str, group_id: str, limit: int = 50
@@ -539,6 +549,167 @@ class DataCache:
 
         return briefs
 
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _session_recall_score(memory: dict) -> tuple[float, float]:
+        distance = DataCache._safe_float(memory.get("_distance"), 1.0)
+        if "score" in memory:
+            score = DataCache._safe_float(memory.get("score"), 0.0)
+        else:
+            score = max(0.0, 1.0 - distance)
+        return score, distance
+
+    @staticmethod
+    def _session_recall_rank(memory: SessionRecallMemory, now: float) -> float:
+        age_minutes = max(0.0, (now - memory.last_recalled_at) / 60.0)
+        recency_bonus = 0.2 / (1.0 + age_minutes)
+        hit_bonus = min(memory.hit_count, 6) * 0.04
+        return memory.score + recency_bonus + hit_bonus
+
+    def _prune_session_recalled_memories(
+        self,
+        fmt_key: str,
+        max_items: int,
+        ttl_seconds: int = 0,
+    ) -> None:
+        pool = self.session_recalled_memories.get(fmt_key)
+        if not pool:
+            return
+
+        now = time.time()
+        if ttl_seconds and ttl_seconds > 0:
+            expired_ids = [
+                memory_id
+                for memory_id, memory in pool.items()
+                if now - memory.last_recalled_at > ttl_seconds
+            ]
+            for memory_id in expired_ids:
+                pool.pop(memory_id, None)
+
+        if max_items <= 0:
+            pool.clear()
+            return
+
+        if len(pool) <= max_items:
+            return
+
+        ranked = sorted(
+            pool.values(),
+            key=lambda memory: self._session_recall_rank(memory, now),
+            reverse=True,
+        )
+        keep_ids = {memory.memory_id for memory in ranked[:max_items]}
+        for memory_id in list(pool.keys()):
+            if memory_id not in keep_ids:
+                pool.pop(memory_id, None)
+
+    def merge_session_recalled_memories(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        memories: list[dict] | None,
+        max_items: int = 20,
+        ttl_seconds: int = 0,
+    ) -> list[SessionRecallMemory]:
+        """合并当前会话的语义召回结果，并在超限时淘汰低价值旧召回。"""
+        if not memories:
+            return self.get_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                max_items=max_items,
+                ttl_seconds=ttl_seconds,
+            )
+
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        pool = self.session_recalled_memories[fmt_key]
+        now = time.time()
+
+        for raw_memory in memories:
+            memory_id = str(
+                raw_memory.get("memory_id") or raw_memory.get("id") or ""
+            ).strip()
+            text = str(raw_memory.get("text") or "").strip()
+            if not memory_id or not text:
+                continue
+
+            score, distance = self._session_recall_score(raw_memory)
+            metadata = str(raw_memory.get("metadata") or "{}")
+            updated_at = str(raw_memory.get("updated_at") or "")
+            created_at = str(raw_memory.get("created_at") or "")
+
+            if memory_id in pool:
+                memory = pool[memory_id]
+                memory.text = text
+                memory.metadata = metadata
+                memory.score = max(memory.score, score)
+                memory.distance = min(memory.distance, distance)
+                memory.hit_count += 1
+                memory.last_recalled_at = now
+                memory.updated_at = updated_at or memory.updated_at
+                memory.created_at = created_at or memory.created_at
+            else:
+                pool[memory_id] = SessionRecallMemory(
+                    memory_id=memory_id,
+                    text=text,
+                    metadata=metadata,
+                    score=score,
+                    distance=distance,
+                    hit_count=1,
+                    first_recalled_at=now,
+                    last_recalled_at=now,
+                    updated_at=updated_at,
+                    created_at=created_at,
+                )
+
+        self._prune_session_recalled_memories(fmt_key, max_items, ttl_seconds)
+        return self.get_session_recalled_memories(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            max_items=max_items,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def get_session_recalled_memories(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        max_items: int = 20,
+        ttl_seconds: int = 0,
+    ) -> list[SessionRecallMemory]:
+        """获取当前会话可注入的临时召回记忆。"""
+        fmt_key = f"{bot_name}:{group_or_user_id}"
+        self._prune_session_recalled_memories(fmt_key, max_items, ttl_seconds)
+        pool = self.session_recalled_memories.get(fmt_key)
+        if not pool or max_items <= 0:
+            return []
+
+        now = time.time()
+        ranked = sorted(
+            pool.values(),
+            key=lambda memory: self._session_recall_rank(memory, now),
+            reverse=True,
+        )
+
+        selected = []
+        for memory in ranked:
+            if len(selected) >= max_items:
+                break
+            selected.append(memory)
+        return selected
+
+    def remove_session_recalled_memory(self, memory_id: str) -> None:
+        """从所有会话临时召回池中移除一条长期记忆。"""
+        if not memory_id:
+            return
+        for pool in self.session_recalled_memories.values():
+            pool.pop(memory_id, None)
+
     async def get_memories(
         self, bot_name: str, group_or_user_id: str, limit: int = 20
     ) -> list[MemoryItem]:
@@ -608,6 +779,7 @@ class DataCache:
                 if memory.memory_id == memory_id:
                     memories.remove(memory)
                     break
+        self.remove_session_recalled_memory(memory_id)
         return True
 
     async def delete_all_memories(self, bot_name: str, group_or_user_id: str):
@@ -618,6 +790,7 @@ class DataCache:
             self.memories,
             self.bot_status,
             self.recent_messages,
+            self.session_recalled_memories,
         ]
         for cache in targets:
             cache.pop(fmt_key, None)

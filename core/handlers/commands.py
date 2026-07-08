@@ -119,7 +119,9 @@ class CommandHandler:
             bot_name,
             group_or_user_id,
             rag_queries,
-            limit=self.plugin.embedding_conf.get("limit", 5),
+            limit=self.plugin.embedding_conf.get(
+                "limit", self.plugin.embedding_conf.get("top_k", 5)
+            ),
             threshold=self.plugin.embedding_conf.get("threshold", 0.7),
         )
         if self.plugin.rerank_conf.get("enabled", False):

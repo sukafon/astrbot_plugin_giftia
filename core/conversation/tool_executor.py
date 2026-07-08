@@ -8,6 +8,7 @@ from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContex
 from astrbot.core.astr_agent_tool_exec import FunctionToolExecutor
 
 from ..utils.schemas import MessageData, XmlLlmResult
+from .memory_recall import search_memories_with_rerank
 
 
 class ToolExecutor:
@@ -51,30 +52,27 @@ class ToolExecutor:
         if llm_result.search_memories and self.plugin.embedding_conf.get(
             "enabled", False
         ):
+            found_memory = False
+            seen_memory_texts = set(relevant_memories)
             for target_group_or_user_id, query in llm_result.search_memories:
-                embedding_memories = (
-                    await self.plugin.passive_memory_manager.search_and_filter_memories(
-                        bot_name=bot_name,
-                        group_or_user_id=target_group_or_user_id,
-                        query=query,
-                        recent_messages=recent_messages,
-                        limit=self.plugin.embedding_conf.get("limit", 5),
-                        threshold=self.plugin.embedding_conf.get("threshold", 0.7),
-                    )
+                memory_results = await search_memories_with_rerank(
+                    self.plugin,
+                    bot_name=bot_name,
+                    group_or_user_id=target_group_or_user_id,
+                    query=query,
+                    recent_messages=recent_messages,
+                    log_context="工具记忆检索",
                 )
-                if embedding_memories and self.plugin.rerank_conf.get("enabled", False):
-                    rerank_memories = await self.plugin.ltm.rerank_memories(
-                        query=query,
-                        memories=embedding_memories,
-                        top_k=self.plugin.rerank_conf.get("top_k", 5),
-                        threshold=self.plugin.rerank_conf.get("threshold", 0.45),
-                    )
-                    for memory in rerank_memories:
-                        relevant_memories.append(memory["text"])
-                else:
-                    for memory in embedding_memories:
-                        relevant_memories.append(memory["text"])
-            if len(relevant_memories) == 0:
+
+                if memory_results:
+                    found_memory = True
+
+                for memory in memory_results:
+                    memory_text = memory["text"]
+                    if memory_text not in seen_memory_texts:
+                        relevant_memories.append(memory_text)
+                        seen_memory_texts.add(memory_text)
+            if not found_memory and len(relevant_memories) == 0:
                 relevant_memories.append("没有找到相关记忆")
 
         # 3. 搜索聊天历史记录
