@@ -153,28 +153,17 @@
                             <input type="text" id="memory-search" placeholder="搜索关键词...">
                         </div>
                     </div>
-                    <button class="btn btn-primary" onclick="openAddMemoryModal()">
-                        <span class="btn-icon">+</span> 新增记忆
-                    </button>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" onclick="openMemoryCleanModal()">清理记忆</button>
+                        <button class="btn btn-primary" onclick="openAddMemoryModal()">
+                            <span class="btn-icon">+</span> 新增记忆
+                        </button>
+                    </div>
                 </div>
 
-                <div class="data-card card">
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>记忆内容 (Text)</th>
-                                    <th>关联用户</th>
-                                    <th>重要度</th>
-                                    <th>活跃度</th>
-                                    <th>创建时间</th>
-                                    <th class="text-right">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="memory-list">
-                                <!-- Dynamic rows -->
-                            </tbody>
-                        </table>
+                <div class="memories-grid-container">
+                    <div class="memory-grid" id="memory-list">
+                        <!-- Dynamic cards -->
                     </div>
                     <div class="pagination-container" id="memory-pagination">
                         <!-- Pagination -->
@@ -333,9 +322,7 @@
             <div class="modal-body" id="forward-detail-body">
                 <!-- Dynamic forward detail -->
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('forward-detail-modal')">关闭</button>
-            </div>
+
         </div>
     </div>
 
@@ -369,8 +356,138 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('add-memory-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitAddMemory()">确认保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Clean Memories -->
+    <div id="memory-clean-modal" class="modal-overlay">
+        <div class="modal-card card memory-clean-modal-card">
+            <div class="modal-header">
+                <h2>清理长期记忆</h2>
+                <button class="modal-close-btn" onclick="closeModal('memory-clean-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="edit-media-tabs">
+                    <div class="edit-media-tab-header">
+                        <button type="button" class="media-tab-btn active" data-mediatab="memory-clean-manual">条件清理</button>
+                        <button type="button" class="media-tab-btn" data-mediatab="memory-clean-auto" onclick="loadAutoCleanMemoryConfig()">自动清理管理</button>
+                    </div>
+                    <div class="edit-media-tab-content">
+                        <div id="mediatab-memory-clean-manual" class="media-tab-panel active">
+                            <div class="clean-layout-split">
+                                <div class="clean-layout-left">
+                                    <div class="form-row">
+                                        <div class="form-group flex-grow">
+                                            <label>Bot名称 <span class="required">*</span></label>
+                                            <input type="text" id="clean-mem-bot" placeholder="例如: Arisu">
+                                        </div>
+                                        <div class="form-group flex-grow">
+                                            <label>群聊/用户ID</label>
+                                            <input type="text" id="clean-mem-group" placeholder="留空表示全部会话">
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group flex-grow">
+                                            <label>关联用户ID</label>
+                                            <input type="text" id="clean-mem-associated-user-id" placeholder="可选">
+                                        </div>
+                                        <div class="form-group flex-grow">
+                                            <label>搜索记忆内容</label>
+                                            <input type="text" id="clean-mem-search" placeholder="可选关键词">
+                                        </div>
+                                    </div>
+                                    <div class="clean-filter-grid">
+                                        <div class="form-group">
+                                            <label>最大重要度</label>
+                                            <input type="number" id="clean-mem-max-importance" min="1" max="10" value="3">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>最大命中次数</label>
+                                            <input type="number" id="clean-mem-max-hit-count" min="0" value="1">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>至少创建天数</label>
+                                            <input type="number" id="clean-mem-min-age-days" min="0" value="60">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>最近未命中天数</label>
+                                            <input type="number" id="clean-mem-last-hit-before-days" min="0" value="30">
+                                        </div>
+                                    </div>
+                                    <label class="memory-clean-inline-check" style="margin-top: 8px;">
+                                        <input type="checkbox" id="clean-mem-include-never-hit" checked>
+                                        <span>包含从未命中的记忆</span>
+                                    </label>
+                                    
+                                    <button id="btn-memory-manual-filter" class="btn btn-secondary" style="width: 100%; margin-top: 16px;" onclick="loadMemoryCleanCandidates()">筛选候选记忆</button>
+                                </div>
+                                
+                                <div class="clean-layout-right">
+                                    <div id="memory-clean-summary" class="memory-clean-summary">
+                                        设置条件后点击“筛选候选记忆”。
+                                    </div>
+                                    <div id="memory-clean-selection-tools" class="memory-clean-selection-tools" style="display: none;">
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllMemoryCleanCandidates(true)">全选</button>
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="toggleAllMemoryCleanCandidates(false)">全不选</button>
+                                        <button type="button" class="btn btn-secondary btn-small" onclick="invertMemoryCleanCandidates()">反选</button>
+                                        <span id="memory-clean-selected-count" class="muted-text">已选择 0 条</span>
+                                    </div>
+                                    <div id="memory-clean-candidate-list" class="memory-clean-candidate-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="mediatab-memory-clean-auto" class="media-tab-panel">
+                            <div class="form-row" style="display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <strong>开启定时自动清理</strong>
+                                    <div class="muted-text" style="margin-top: 4px;">启用后每天凌晨 03:30 自动清理低重要、低活跃、足够旧的长期记忆。</div>
+                                </div>
+                                <div class="switch-container">
+                                    <input type="checkbox" id="auto-clean-mem-enabled" class="switch-checkbox">
+                                    <label for="auto-clean-mem-enabled" class="switch-label"></label>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>最大重要度</label>
+                                    <input type="number" id="auto-clean-mem-max-importance" min="1" max="7" value="3">
+                                </div>
+                                <div class="form-group">
+                                    <label>最大命中次数</label>
+                                    <input type="number" id="auto-clean-mem-max-hit-count" min="0" value="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>至少创建天数</label>
+                                    <input type="number" id="auto-clean-mem-min-age-days" min="7" value="60">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>最近未命中天数</label>
+                                    <input type="number" id="auto-clean-mem-last-hit-before-days" min="7" value="30">
+                                </div>
+                                <div class="form-group">
+                                    <label>单次最多删除</label>
+                                    <input type="number" id="auto-clean-mem-max-delete-per-run" min="1" max="200" value="20">
+                                </div>
+                            </div>
+                            <label class="memory-clean-inline-check">
+                                <input type="checkbox" id="auto-clean-mem-include-never-hit" checked>
+                                <span>包含从未命中的记忆</span>
+                            </label>
+                            <div id="auto-clean-memory-summary" class="memory-clean-summary">
+                                自动清理不会删除重要度 8 以上、创建不足 7天、最近 7 天命中过的记忆。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-clean-selected-memories" class="btn btn-danger" onclick="cleanSelectedMemories()" disabled>清理选中记忆</button>
+                <button id="btn-auto-clean-mem-trigger" class="btn btn-primary" style="display: none;" onclick="triggerAutoCleanMemoriesImmediately()">立即执行清理</button>
+                <button id="btn-auto-clean-mem-save" class="btn btn-danger" style="display: none;" onclick="saveAutoCleanMemoryConfig()">保存配置</button>
             </div>
         </div>
     </div>
@@ -406,7 +523,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('edit-memory-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditMemory()">保存修改</button>
             </div>
         </div>
@@ -459,7 +575,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('edit-media-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditMedia()">确认保存</button>
             </div>
         </div>
@@ -493,7 +608,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('edit-status-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditStatus()">确认修改</button>
             </div>
         </div>
@@ -532,7 +646,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('task-board-modal')">关闭</button>
                 <button class="btn btn-primary" onclick="refreshTaskBoardModal()">刷新</button>
             </div>
         </div>
@@ -593,7 +706,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('edit-user-profile-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditUserProfile()">确认保存</button>
             </div>
         </div>
@@ -640,9 +752,7 @@
                     </table>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('user-aliases-modal')">关闭</button>
-            </div>
+
         </div>
     </div>
 
@@ -662,7 +772,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('edit-group-profile-modal')">取消</button>
                 <button class="btn btn-primary" onclick="submitEditGroupProfile()">确认保存</button>
             </div>
         </div>
@@ -751,7 +860,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('clean-cache-modal')">关闭</button>
                 <button id="btn-manual-calc" class="btn btn-secondary" onclick="calculateCleanSpace()">计算清理空间</button>
                 <button id="btn-manual-submit" class="btn btn-danger" onclick="submitCleanCache()">确认清理</button>
                 <button id="btn-auto-trigger" class="btn btn-primary" style="display: none;" onclick="triggerAutoCleanImmediately()">立即执行清理</button>

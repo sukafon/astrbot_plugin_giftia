@@ -960,12 +960,6 @@ html[data-theme="dark"] .sub-nav-tab.active {
     #tab-chat-history th,
     #tab-chat-history td,
     #tab-chat-history tr,
-    #tab-memories table,
-    #tab-memories thead,
-    #tab-memories tbody,
-    #tab-memories th,
-    #tab-memories td,
-    #tab-memories tr,
     #tab-forward-messages table,
     #tab-forward-messages thead,
     #tab-forward-messages tbody,
@@ -976,7 +970,6 @@ html[data-theme="dark"] .sub-nav-tab.active {
     }
 
     #tab-chat-history thead tr,
-    #tab-memories thead tr,
     #tab-forward-messages thead tr {
         position: absolute;
         top: -9999px;
@@ -984,7 +977,6 @@ html[data-theme="dark"] .sub-nav-tab.active {
     }
 
     #tab-chat-history tr,
-    #tab-memories tr,
     #tab-forward-messages tr {
         border: 1px solid var(--border-color);
         border-radius: 8px;
@@ -995,7 +987,6 @@ html[data-theme="dark"] .sub-nav-tab.active {
     }
 
     #tab-chat-history td,
-    #tab-memories td,
     #tab-forward-messages td {
         border: none;
         border-bottom: 1px solid var(--border-color);
@@ -1010,13 +1001,11 @@ html[data-theme="dark"] .sub-nav-tab.active {
     }
 
     #tab-chat-history td:last-child,
-    #tab-memories td:last-child,
     #tab-forward-messages td:last-child {
         border-bottom: none;
     }
 
     #tab-chat-history td::before,
-    #tab-memories td::before,
     #tab-forward-messages td::before {
         content: attr(data-label);
         position: absolute;
@@ -1253,3 +1242,258 @@ html[data-theme="dark"] .sub-nav-tab.active {
     to { opacity: 1; transform: translateY(0); }
 }
 
+/* ==========================================================================
+   Memory Card Grid Styles
+   ========================================================================== */
+.memory-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+.memory-card {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+}
+
+.memory-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+}
+
+.memory-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+/* Importance badges */
+.memory-importance-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 20px;
+    gap: 6px;
+}
+
+.memory-importance-badge.importance-low {
+    background-color: rgba(156, 163, 175, 0.1);
+    color: var(--font-secondary);
+}
+.memory-importance-badge.importance-low .importance-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #9ca3af;
+}
+
+.memory-importance-badge.importance-medium {
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+.memory-importance-badge.importance-medium .importance-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--primary);
+}
+
+.memory-importance-badge.importance-high {
+    background-color: var(--danger-bg);
+    color: var(--danger);
+}
+.memory-importance-badge.importance-high .importance-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--danger);
+}
+
+/* Activity Badge */
+.memory-activity-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--font-secondary);
+    background-color: rgba(0, 0, 0, 0.03);
+    border-radius: 20px;
+    gap: 4px;
+}
+
+html[data-theme="dark"] .memory-activity-badge {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.activity-icon {
+    color: #eab308;
+    font-size: 12px;
+}
+
+/* Card Body & Collapse */
+.memory-card-body {
+    flex-grow: 1;
+    margin-bottom: 12px;
+    position: relative;
+}
+
+.memory-text-container {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--font-color);
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.memory-text-container.collapsed {
+    -webkit-line-clamp: 3;
+    max-height: 68px; /* ~3 lines */
+}
+
+.memory-text-container.expanded {
+    -webkit-line-clamp: unset;
+    max-height: 1000px;
+}
+
+.btn-text-toggle {
+    background: none;
+    border: none;
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 0 0 0;
+    margin-top: 4px;
+    display: inline-flex;
+    align-items: center;
+    transition: color 0.2s ease;
+}
+
+.btn-text-toggle:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+/* Card Footer */
+.memory-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 12px;
+    margin-top: auto;
+    gap: 8px;
+}
+
+.memory-associated-users {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 75%;
+}
+
+.user-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 12px;
+    background-color: var(--primary-light);
+    color: var(--primary);
+    cursor: pointer;
+    font-weight: 500;
+    transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.user-pill:hover {
+    opacity: 0.85;
+    transform: scale(1.05);
+}
+
+.user-pill-raw {
+    background-color: rgba(0, 0, 0, 0.05);
+    color: var(--font-secondary);
+}
+
+html[data-theme="dark"] .user-pill-raw {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Actions in Card */
+.memory-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-icon-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background-color: transparent;
+    color: var(--font-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-icon-action:hover {
+    background-color: rgba(0, 0, 0, 0.03);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+html[data-theme="dark"] .btn-icon-action:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.btn-icon-action.danger:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+    background-color: var(--danger-bg);
+}
+
+.memory-time-details {
+    font-size: 11px;
+    color: var(--font-secondary);
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    opacity: 0.75;
+}
+
+.memory-grid .loading-row,
+.memory-grid .no-data-row {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 60px 0;
+    color: var(--font-secondary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    font-size: 14px;
+    background-color: var(--card-bg);
+    border-radius: var(--radius);
+    border: 1px dashed var(--border-color);
+    width: 100%;
+    box-sizing: border-box;
+}

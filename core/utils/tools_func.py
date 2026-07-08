@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.core import AstrBotConfig
@@ -11,6 +12,17 @@ from .scheduler import Scheduler
 
 
 class ToolsFunc:
+    DEFAULT_AUTO_CLEAN_MEMORY_CONFIG = {
+        "enabled": False,
+        "max_importance": 3,
+        "max_hit_count": 1,
+        "min_age_days": 60,
+        "last_hit_before_days": 30,
+        "include_never_hit": True,
+        "max_delete_per_run": 20,
+        "cron": "30 3 * * *",
+    }
+
     def __init__(
         self,
         config: AstrBotConfig,
@@ -31,6 +43,7 @@ class ToolsFunc:
             self.add_backup_message_to_r2()
         # 启动时更新自动清理任务
         self.update_auto_clean_media_job()
+        self.update_auto_clean_memory_job()
 
     def register_funcs(self):
         """注册定时任务函数"""
@@ -39,6 +52,9 @@ class ToolsFunc:
         )
         self.task_manager.register_func(
             "auto_clean_media_cache", self.auto_clean_media_cache
+        )
+        self.task_manager.register_func(
+            "auto_clean_memories", self.auto_clean_memories
         )
 
     def add_backup_message_to_r2(self):
@@ -93,6 +109,192 @@ class ToolsFunc:
                 asyncio.run(_update())
         except RuntimeError:
             asyncio.run(_update())
+
+    @classmethod
+    def normalize_auto_clean_memory_config(cls, raw_cfg=None) -> dict:
+        """归一化长期记忆自动清理配置。"""
+        if isinstance(raw_cfg, str):
+            try:
+                raw_cfg = json.loads(raw_cfg) if raw_cfg else {}
+            except Exception:
+                raw_cfg = {}
+        if not isinstance(raw_cfg, dict):
+            raw_cfg = {}
+
+        cfg = dict(cls.DEFAULT_AUTO_CLEAN_MEMORY_CONFIG)
+        cfg.update(raw_cfg)
+
+        def clean_int(key: str, default: int, min_value: int, max_value: int | None = None):
+            try:
+                value = int(cfg.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            value = max(min_value, value)
+            if max_value is not None:
+                value = min(max_value, value)
+            cfg[key] = value
+
+        def clean_bool(key: str, default: bool):
+            value = cfg.get(key, default)
+            if value is None:
+                cfg[key] = default
+                return
+            if isinstance(value, bool):
+                cfg[key] = value
+                return
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {"1", "true", "yes", "on"}:
+                    cfg[key] = True
+                    return
+                if lowered in {"0", "false", "no", "off"}:
+                    cfg[key] = False
+                    return
+            cfg[key] = bool(value)
+
+        clean_bool("enabled", False)
+        clean_bool("include_never_hit", True)
+        clean_int("max_importance", 3, 1, 7)
+        clean_int("max_hit_count", 1, 0, None)
+        clean_int("min_age_days", 60, 7, None)
+        clean_int("last_hit_before_days", 30, 7, None)
+        clean_int("max_delete_per_run", 20, 1, 200)
+        cron = str(cfg.get("cron") or "30 3 * * *").strip()
+        cfg["cron"] = cron or "30 3 * * *"
+        return cfg
+
+    def update_auto_clean_memory_job(self):
+        """添加/更新或移除自动清理长期记忆的定时任务"""
+
+        async def _update():
+            raw_cfg = await self.db.get_kv_data("auto_clean_memory_config")
+            cfg = self.normalize_auto_clean_memory_config(raw_cfg)
+
+            if cfg.get("enabled", False):
+                self.task_manager.add_job(
+                    task_id="system_auto_clean_memories",
+                    func_name="auto_clean_memories",
+                    time_expr=cfg.get("cron", "30 3 * * *"),
+                )
+            else:
+                self.task_manager.remove_job("system_auto_clean_memories")
+
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(_update())
+            else:
+                asyncio.run(_update())
+        except RuntimeError:
+            asyncio.run(_update())
+
+    def _build_auto_clean_memory_query(self, cfg: dict) -> tuple[str, list]:
+        max_importance = min(int(cfg.get("max_importance", 3)), 7)
+        max_hit_count = max(0, int(cfg.get("max_hit_count", 1)))
+        min_age_days = max(7, int(cfg.get("min_age_days", 60)))
+        last_hit_before_days = max(7, int(cfg.get("last_hit_before_days", 30)))
+        include_never_hit = bool(cfg.get("include_never_hit", True))
+        max_delete_per_run = max(1, min(200, int(cfg.get("max_delete_per_run", 20))))
+
+        created_cutoff = (
+            datetime.now() - timedelta(days=min_age_days)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        hit_cutoff = (
+            datetime.now() - timedelta(days=last_hit_before_days)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        conditions = [
+            "COALESCE(importance, 5) <= ?",
+            "COALESCE(hit_count, 0) <= ?",
+            "datetime(created_at) <= datetime(?)",
+        ]
+        params = [max_importance, max_hit_count, created_cutoff]
+
+        if include_never_hit:
+            conditions.append(
+                "((last_hit_at IS NULL OR last_hit_at = '') OR datetime(last_hit_at) <= datetime(?))"
+            )
+        else:
+            conditions.append(
+                "last_hit_at IS NOT NULL AND last_hit_at != '' AND datetime(last_hit_at) <= datetime(?)"
+            )
+        params.append(hit_cutoff)
+
+        sql = f"""
+            SELECT memory_id, bot_name, group_or_user_id, text, importance,
+                   hit_count, last_hit_at, created_at
+            FROM memories
+            WHERE {' AND '.join(conditions)}
+            ORDER BY COALESCE(importance, 5) ASC,
+                     COALESCE(hit_count, 0) ASC,
+                     datetime(created_at) ASC
+            LIMIT ?
+        """
+        params.append(max_delete_per_run)
+        return sql, params
+
+    async def auto_clean_memories(self) -> dict:
+        """自动清理低重要度、低活跃度、足够旧的长期记忆。"""
+        logger.info("[Giftia] 开始自动清理长期记忆...")
+        try:
+            raw_cfg = await self.db.get_kv_data("auto_clean_memory_config")
+            cfg = self.normalize_auto_clean_memory_config(raw_cfg)
+            sql, params = self._build_auto_clean_memory_query(cfg)
+
+            async with self.db.conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+
+            candidates = [
+                {
+                    "memory_id": row["memory_id"],
+                    "bot_name": row["bot_name"],
+                    "group_or_user_id": row["group_or_user_id"],
+                    "text": row["text"],
+                    "importance": row["importance"],
+                    "hit_count": row["hit_count"],
+                    "last_hit_at": row["last_hit_at"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+                if row["memory_id"]
+            ]
+
+            deleted_count = 0
+            failed_ids = []
+            if not self.data_cache:
+                return {
+                    "status": "error",
+                    "message": "自动清理长期记忆失败: data_cache 未初始化",
+                }
+
+            for item in candidates:
+                memory_id = item["memory_id"]
+                try:
+                    success = await self.data_cache.delete_memory(memory_id)
+                except Exception as e:
+                    logger.error(f"[Giftia] 自动清理长期记忆失败 {memory_id}: {e}")
+                    success = False
+
+                if success:
+                    deleted_count += 1
+                else:
+                    failed_ids.append(memory_id)
+
+            msg = f"自动清理完成，共删除 {deleted_count} 条长期记忆"
+            if failed_ids:
+                msg += f"，{len(failed_ids)} 条删除失败"
+            logger.info(f"[Giftia] {msg}")
+            return {
+                "status": "success",
+                "count": deleted_count,
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids,
+                "candidates": candidates,
+                "message": msg,
+            }
+        except Exception as e:
+            logger.error(f"[Giftia] 自动清理长期记忆失败: {e}")
+            return {"status": "error", "message": f"自动清理长期记忆失败: {str(e)}"}
 
     async def auto_clean_media_cache(self) -> dict:
         """自动清理非表情包类型的超出会话窗口的媒体文件"""

@@ -315,10 +315,10 @@ window.GiftiaApp = {
     // ----------------------------------------------------
     async loadMemories() {
         const listContainer = document.getElementById("memory-list");
-        listContainer.innerHTML = `<tr><td colspan="6" class="loading-row"><span class="loader"></span> 加载数据中...</td></tr>`;
+        listContainer.innerHTML = `<div class="loading-row"><span class="loader"></span> 加载数据中...</div>`;
         if (!document.getElementById("memory-bot-name").value) {
             this.pagination.memories.total = 0;
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无可用 Bot</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row">暂无可用 Bot</div>`;
             window.renderPagination("memory-pagination", this.pagination.memories, () => {});
             return;
         }
@@ -336,7 +336,7 @@ window.GiftiaApp = {
             const res = await window.apiGet("/memories", params);
             if (res.status === "success" && res.data) {
                 this.pagination.memories.total = res.data.total;
-                this.renderMemories(res.data.items);
+                this.renderMemories(res.data.items, res.data.user_id_to_name || {});
                 window.renderPagination("memory-pagination", this.pagination.memories, (page) => {
                     this.pagination.memories.page = page;
                     this.loadMemories();
@@ -345,14 +345,14 @@ window.GiftiaApp = {
                 throw new Error(res.message || "请求失败");
             }
         } catch (e) {
-            listContainer.innerHTML = `<tr><td colspan="6" class="no-data-row">加载数据失败: ${e.message}</td></tr>`;
+            listContainer.innerHTML = `<div class="no-data-row">加载数据失败: ${e.message}</div>`;
         }
     },
 
-    renderMemories(items) {
+    renderMemories(items, userIdToName = {}) {
         const container = document.getElementById("memory-list");
         if (!items || items.length === 0) {
-            container.innerHTML = `<tr><td colspan="6" class="no-data-row">暂无相关长期记忆记录</td></tr>`;
+            container.innerHTML = `<div class="no-data-row">暂无相关长期记忆记录</div>`;
             return;
         }
 
@@ -367,30 +367,84 @@ window.GiftiaApp = {
             const associatedUserIdsList = associatedUserIdsArray.length > 0
                 ? associatedUserIdsArray.join(',')
                 : fallbackUserId;
-            const associatedUserIds = associatedUserIdsArray.length > 0
-                ? associatedUserIdsArray.join(', ')
-                : (fallbackUserId || '-');
-            let importance = Number(item.importance || 5);
-            importance = Number.isFinite(importance) ? Math.min(10, Math.max(1, importance)) : 5;
+
+            // Render associated user tags
+            let associatedUsersHtml = "";
+            const uniqueUserIds = [...new Set(associatedUserIdsArray.length > 0 ? associatedUserIdsArray : (fallbackUserId ? [fallbackUserId] : []))];
+            if (uniqueUserIds.length > 0) {
+                associatedUsersHtml = uniqueUserIds.map(uid => {
+                    const cleanUid = String(uid).trim();
+                    const nickname = userIdToName[cleanUid];
+                    if (nickname) {
+                        return `<span class="user-pill" onclick="window.filterMemoryByUser('${cleanUid}')" title="ID: ${cleanUid} (点击筛选)">${window.escapeHtml(nickname)}</span>`;
+                    } else {
+                        return `<span class="user-pill user-pill-raw" onclick="window.filterMemoryByUser('${cleanUid}')" title="ID: ${cleanUid} (点击筛选)">${cleanUid}</span>`;
+                    }
+                }).join("");
+            } else {
+                associatedUsersHtml = `<span class="muted-text" style="font-size: 11px;">无关联用户</span>`;
+            }
+
+            // Importance rating category mapping
+            const importance = Number(item.importance || 5);
+            let importanceCategory = "medium";
+            if (importance <= 3) {
+                importanceCategory = "low";
+            } else if (importance >= 8) {
+                importanceCategory = "high";
+            }
+
             const hitCount = Number(item.hit_count || 0);
             const lastHitAt = item.last_hit_at ? window.formatDate(item.last_hit_at) : "从未命中";
+            const formattedCreatedAt = window.formatDate(item.created_at);
+
+            // Collapsible check
+            const textContent = item.text || "";
+            const isLong = textContent.length > 120 || (textContent.match(/\n/g) || []).length >= 3;
+
             return `
-                <tr>
-                    <td data-label="记忆内容 (Text)">
-                        <div style="max-width: 550px; word-break: break-all;">${window.escapeHtml(item.text)}</div>
-                    </td>
-                    <td data-label="关联用户">${associatedUserIds}</td>
-                    <td data-label="重要度">${importance}</td>
-                    <td data-label="活跃度">
-                        <div>${hitCount} 次</div>
-                        <div class="muted-text">${lastHitAt}</div>
-                    </td>
-                    <td data-label="创建时间">${window.formatDate(item.created_at)}</td>
-                    <td data-label="操作" class="text-right">
-                        <button class="btn btn-secondary btn-small" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}', ${importance})">编辑</button>
-                        <button class="btn btn-danger btn-small" onclick="window.deleteMemory('${item.memory_id}')">删除</button>
-                    </td>
-                </tr>
+                <div class="memory-card">
+                    <div class="memory-card-header">
+                        <div class="memory-importance-badge importance-${importanceCategory}">
+                            <span class="importance-dot"></span>
+                            重要度 ${importance}
+                        </div>
+                        <div class="memory-activity-badge" title="上次命中: ${lastHitAt}">
+                            <span class="activity-icon">⚡</span>
+                            <span>${hitCount} 次命中</span>
+                        </div>
+                    </div>
+                    
+                    <div class="memory-card-body">
+                        <div class="memory-text-container collapsed" id="memory-text-${item.memory_id}">
+                            ${window.escapeHtml(textContent).replace(/\n/g, '<br>')}
+                        </div>
+                        ${isLong ? `
+                            <button class="btn-text-toggle" id="btn-toggle-${item.memory_id}" onclick="window.toggleMemoryText('${item.memory_id}')">
+                                展开全部
+                            </button>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="memory-card-footer">
+                        <div class="memory-associated-users">
+                            ${associatedUsersHtml}
+                        </div>
+                        <div class="memory-actions">
+                            <button class="btn-icon-action" onclick="window.openEditMemoryModal('${item.memory_id}', '${item.bot_name}', '${item.group_or_user_id}', '${encodedText}', '${associatedUserIdsList}', ${importance})" title="编辑">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                            </button>
+                            <button class="btn-icon-action danger" onclick="window.deleteMemory('${item.memory_id}')" title="删除">
+                                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="memory-time-details">
+                        <span>创建于 ${formattedCreatedAt}</span>
+                        ${hitCount > 0 ? `<span class="muted-text" title="上次命中: ${lastHitAt}">上次命中: ${lastHitAt.split(' ')[0]}</span>` : ''}
+                    </div>
+                </div>
             `;
         }).join("");
     },
@@ -1310,6 +1364,25 @@ document.addEventListener("DOMContentLoaded", () => {
                         if (btnAutoSave) btnAutoSave.style.display = "inline-block";
                     }
                 }
+
+                const memoryCleanModal = btn.closest("#memory-clean-modal");
+                if (memoryCleanModal) {
+                    const btnManualFilter = memoryCleanModal.querySelector("#btn-memory-manual-filter");
+                    const btnManualClean = memoryCleanModal.querySelector("#btn-clean-selected-memories");
+                    const btnAutoTrigger = memoryCleanModal.querySelector("#btn-auto-clean-mem-trigger");
+                    const btnAutoSave = memoryCleanModal.querySelector("#btn-auto-clean-mem-save");
+                    if (tabName === "memory-clean-manual") {
+                        if (btnManualFilter) btnManualFilter.style.display = "inline-block";
+                        if (btnManualClean) btnManualClean.style.display = "inline-block";
+                        if (btnAutoTrigger) btnAutoTrigger.style.display = "none";
+                        if (btnAutoSave) btnAutoSave.style.display = "none";
+                    } else if (tabName === "memory-clean-auto") {
+                        if (btnManualFilter) btnManualFilter.style.display = "none";
+                        if (btnManualClean) btnManualClean.style.display = "none";
+                        if (btnAutoTrigger) btnAutoTrigger.style.display = "inline-block";
+                        if (btnAutoSave) btnAutoSave.style.display = "inline-block";
+                    }
+                }
             }
         }
     });
@@ -1372,3 +1445,32 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 });
+
+// Memory list global interaction handlers
+window.toggleMemoryText = function(memoryId) {
+    const textContainer = document.getElementById(`memory-text-${memoryId}`);
+    const btnToggle = document.getElementById(`btn-toggle-${memoryId}`);
+    if (textContainer && btnToggle) {
+        const isCollapsed = textContainer.classList.contains("collapsed");
+        if (isCollapsed) {
+            textContainer.classList.remove("collapsed");
+            textContainer.classList.add("expanded");
+            btnToggle.textContent = "收起全部";
+        } else {
+            textContainer.classList.remove("expanded");
+            textContainer.classList.add("collapsed");
+            btnToggle.textContent = "展开全部";
+        }
+    }
+};
+
+window.filterMemoryByUser = async function(userId) {
+    const input = document.getElementById("memory-associated-user-id");
+    if (input) {
+        input.value = userId;
+        // Trigger the search to reload list
+        const app = window.GiftiaApp;
+        app.resetPagination("memories");
+        await app.loadMemories();
+    }
+};

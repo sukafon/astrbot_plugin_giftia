@@ -106,6 +106,36 @@ class WebUIManager:
             desc="Delete memory",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/clean/candidates",
+            view_handler=self.web_api.get_memory_clean_candidates,
+            methods=["POST"],
+            desc="Preview memory cleanup candidates",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/clean",
+            view_handler=self.web_api.clean_selected_memories,
+            methods=["POST"],
+            desc="Clean selected memories",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/auto_clean/config",
+            view_handler=self.web_api.get_auto_clean_memory_config,
+            methods=["GET"],
+            desc="Get memory auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/auto_clean/config",
+            view_handler=self.web_api.set_auto_clean_memory_config,
+            methods=["POST"],
+            desc="Set memory auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/memories/auto_clean/trigger",
+            view_handler=self.web_api.trigger_auto_clean_memories,
+            methods=["POST"],
+            desc="Manually trigger memory auto cleanup",
+        )
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/status",
             view_handler=self.web_api.get_bot_status,
             methods=["GET"],

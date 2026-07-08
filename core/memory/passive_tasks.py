@@ -102,14 +102,26 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                 continue
 
             associated_ids = []
+            seen_associated_ids = set()
+            self_id_str = str(self_id)
             if users_attr:
                 for u in re.split(r"[,，]", users_attr):
                     u = u.strip()
                     resolved_uid = context["nickname_to_user_id"].get(u, u)
-                    if resolved_uid:
+                    resolved_uid = str(resolved_uid).strip() if resolved_uid else ""
+                    if not resolved_uid or resolved_uid == self_id_str:
+                        continue
+                    if resolved_uid not in seen_associated_ids:
                         associated_ids.append(resolved_uid)
+                        seen_associated_ids.add(resolved_uid)
 
-            primary_user = associated_ids[0] if associated_ids else self_id
+            if not associated_ids:
+                logger.info(
+                    f"[Giftia Passive Memory] 跳过长期记忆入库：未关联到除机器人自身以外的用户。记忆内容: {text}"
+                )
+                continue
+
+            primary_user = associated_ids[0]
 
             await self.plugin.data_cache.add_memory(
                 bot_name=bot_name,
