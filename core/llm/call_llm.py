@@ -112,6 +112,7 @@ class CallLLM:
         use_source_tools: bool = False,
         force_xml_tools: bool = False,
         enabled_features: list[str] | None = None,
+        tts_instruction: str = "",
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
     ) -> XmlLlmResult | None:
@@ -125,6 +126,8 @@ class CallLLM:
                 try:
                     xml_inst = build_xml_instructions(enabled_features)
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
+                    if tts_instruction:
+                        actual_system_prompt += "\n\n" + tts_instruction
                     tools_set = None
                     if use_source_tools or force_xml_tools:
                         tool_manager = self.context.get_llm_tool_manager()

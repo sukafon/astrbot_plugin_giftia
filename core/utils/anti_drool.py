@@ -211,6 +211,7 @@ def filter_duplicate_replies(llm_result, sent_messages: list[str]) -> None:
     filtered_chains = []
     filtered_logs = []
     filtered_texts = []
+    message_index_map = {}
     
     # 提取已发送历史的归一化核心内容集合，避免重复归一化
     normalized_sent = {normalize_text_for_dedup(m) for m in sent_messages if m}
@@ -230,6 +231,7 @@ def filter_duplicate_replies(llm_result, sent_messages: list[str]) -> None:
             normalized_sent.add(normalized)
             sent_messages.append(log)
             
+        message_index_map[i] = len(filtered_chains)
         filtered_chains.append(chain)
         filtered_logs.append(log)
         filtered_texts.append(text)
@@ -237,3 +239,12 @@ def filter_duplicate_replies(llm_result, sent_messages: list[str]) -> None:
     llm_result.msg_chains = filtered_chains
     llm_result.msg_logs = filtered_logs
     llm_result.msg_texts = filtered_texts
+    if getattr(llm_result, "output_order", None):
+        new_order = []
+        for kind, old_index in llm_result.output_order:
+            if kind == "message":
+                if old_index in message_index_map:
+                    new_order.append((kind, message_index_map[old_index]))
+            else:
+                new_order.append((kind, old_index))
+        llm_result.output_order = new_order

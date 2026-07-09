@@ -44,6 +44,7 @@ class ReplyPipeline:
             "search_histories",
             "get_message_contexts",
             "task_board_actions",
+            "tts_segments",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
 
@@ -346,6 +347,9 @@ class ReplyPipeline:
             enabled_features=self.plugin.tools_config.get(
                 "enabled_interactive_features"
             ),
+            tts_instruction=self.plugin.tts_manager.build_prompt_instruction()
+            if hasattr(self.plugin, "tts_manager")
+            else "",
             image_urls=image_urls,
             audio_urls=audio_urls,
             timeout=self.plugin.tools_config.get("timeout", 120),

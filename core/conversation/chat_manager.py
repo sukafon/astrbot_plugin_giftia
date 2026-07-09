@@ -260,7 +260,12 @@ class ChatManager:
                             group_or_user_id=group_or_user_id,
                             llm_result=chunk,
                         )
-                        if chunk.msg_chains or chunk.repeat_message_ids:
+                        has_tts_reply = (
+                            bool(chunk.tts_segments)
+                            and hasattr(self.plugin, "tts_manager")
+                            and self.plugin.tts_manager.enabled()
+                        )
+                        if chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids:
                             has_sent_reply = True
                 else:
                     logger.error(f"{bot_name} 生成消息失败，收到空消息块")
@@ -352,13 +357,38 @@ class ChatManager:
                                 group_or_user_id=group_or_user_id,
                                 llm_result=chunk,
                             )
-                            if chunk.msg_chains or chunk.repeat_message_ids:
+                            has_tts_reply = (
+                                bool(chunk.tts_segments)
+                                and hasattr(self.plugin, "tts_manager")
+                                and self.plugin.tts_manager.enabled()
+                            )
+                            if (
+                                chunk.msg_chains
+                                or has_tts_reply
+                                or chunk.repeat_message_ids
+                            ):
                                 has_sent_reply = True
                             continue
                     # 降级到普通消息发送
-                    if not chunk.msg_chains:
+                    if not chunk.msg_chains and not chunk.tts_segments:
                         continue
-                    for msg_chain in chunk.msg_chains:
+                    for item_type, item_index in self.action_dispatcher._output_order(
+                        chunk
+                    ):
+                        if item_type == "message":
+                            if item_index < 0 or item_index >= len(chunk.msg_chains):
+                                continue
+                            msg_chain = chunk.msg_chains[item_index]
+                        elif item_type == "tts":
+                            msg_chain, _ = (
+                                await self.action_dispatcher._build_tts_message_chain(
+                                    mock_event, chunk, item_index
+                                )
+                            )
+                        else:
+                            continue
+                        if not msg_chain:
+                            continue
                         await self.plugin.context.send_message(
                             unified_msg_origin, MessageChain(msg_chain)
                         )

@@ -131,6 +131,13 @@ class ShortTask:
 
 
 @dataclass(repr=False, slots=True)
+class TTSRequest:
+    text: str
+    lang: str = ""
+    emotion: str = ""
+
+
+@dataclass(repr=False, slots=True)
 class BotSticker:
     timestamp: float  # 缓存时间戳
     sticker_list: list[str]  # 完整的sticker_id列表
@@ -186,3 +193,7 @@ class XmlLlmResult:
     get_message_contexts: list[dict] = field(default_factory=list)
     # 短期任务看板操作
     task_board_actions: list[dict] = field(default_factory=list)
+    # TTS 语音输出
+    tts_segments: list[TTSRequest] = field(default_factory=list)
+    # 保留 message / tts 在 LLM XML 中的出现顺序
+    output_order: list[tuple[str, int]] = field(default_factory=list)

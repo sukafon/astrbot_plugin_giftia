@@ -12,7 +12,7 @@ from astrbot.core.message.components import BaseMessageComponent
 
 from ..database.data_cache import DataCache
 from ..utils.emoji_manager import EmojiManager
-from ..utils.schemas import Decision, XmlLlmResult
+from ..utils.schemas import Decision, TTSRequest, XmlLlmResult
 from ..utils.anti_drool import clean_llm_completion
 
 
@@ -164,6 +164,22 @@ class XmlParse:
                     result.msg_chains.append(sub_chain)
                     result.msg_texts.append(sub_text)
                     result.msg_logs.append(sub_log)
+                    result.output_order.append(("message", len(result.msg_chains) - 1))
+
+                elif tag_name == "tts":
+                    text = child.get_text("", strip=True)
+                    if text:
+                        result.tts_segments.append(
+                            TTSRequest(
+                                text=text,
+                                lang=self._attr_str(child, "lang", "")
+                                or self._attr_str(child, "language", ""),
+                                emotion=self._attr_str(child, "emotion", ""),
+                            )
+                        )
+                        result.output_order.append(
+                            ("tts", len(result.tts_segments) - 1)
+                        )
 
                 elif tag_name == "at":
                     if self._attr_str(child, "user_id", ""):
@@ -173,10 +189,14 @@ class XmlParse:
                         result.msg_logs.append(
                             f"<@{self._attr_str(child, 'user_id', '')}>"
                         )
+                        result.output_order.append(
+                            ("message", len(result.msg_chains) - 1)
+                        )
 
                 elif tag_name == "sticker":
                     sticker_id = self._attr_str(child, "sticker_id", "")
                     if sticker_id:
+                        before_msg_count = len(result.msg_chains)
                         local_path = self.emoji_manager.get_sticker_path(sticker_id)
                         if local_path:
                             img = Image.fromFileSystem(str(local_path))
@@ -192,8 +212,12 @@ class XmlParse:
                                 logger.error(
                                     f"未找到图片: {sticker_id}, xml_str: {xml_str[:1000]}"
                                 )
-                        result.send_stickers.append(sticker_id)
-                        result.msg_logs.append(f"[图片:{sticker_id}]")
+                        if len(result.msg_chains) > before_msg_count:
+                            result.send_stickers.append(sticker_id)
+                            result.msg_logs.append(f"[图片:{sticker_id}]")
+                            result.output_order.append(
+                                ("message", len(result.msg_chains) - 1)
+                            )
                 elif tag_name == "emoji_like":
                     if self._attr_str(child, "message_id", "") and self._attr_str(
                         child, "emoji_id", ""
@@ -489,6 +513,7 @@ class XmlParse:
             "task_board",
             "short_task",
             "add_sticker",
+            "tts",
             "decision",
             "caption",
         ]
