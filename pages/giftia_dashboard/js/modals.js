@@ -209,6 +209,8 @@ function setMemoryCleanMode(mode) {
     if (autoTrigger) autoTrigger.style.display = manualMode ? "none" : "inline-block";
     if (autoSave) autoSave.style.display = manualMode ? "none" : "inline-block";
 }
+window.GiftiaModalActions = window.GiftiaModalActions || {};
+window.GiftiaModalActions.setMemoryCleanMode = setMemoryCleanMode;
 
 function collectMemoryCleanCriteria() {
     return {
