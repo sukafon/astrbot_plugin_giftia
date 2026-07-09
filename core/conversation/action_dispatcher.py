@@ -7,6 +7,7 @@ from xml.sax.saxutils import quoteattr
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
+from astrbot.api.message_components import Plain
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -96,6 +97,184 @@ class ActionDispatcher:
             )
 
         return logs
+
+    @staticmethod
+    def _output_order(llm_result: XmlLlmResult) -> list[tuple[str, int]]:
+        if llm_result.output_order:
+            return list(llm_result.output_order)
+        order = [("message", index) for index in range(len(llm_result.msg_chains))]
+        order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
+        return order
+
+    async def _build_tts_message_chain(
+        self,
+        event: AstrMessageEvent,
+        llm_result: XmlLlmResult,
+        index: int,
+    ):
+        if not hasattr(self.plugin, "tts_manager"):
+            return None, ""
+        if not self.plugin.tts_manager.enabled():
+            return None, ""
+        if index < 0 or index >= len(llm_result.tts_segments):
+            return None, ""
+
+        segment = llm_result.tts_segments[index]
+        record = await self.plugin.tts_manager.build_record(event, segment)
+        if record:
+            return [record], segment.text
+
+        logger.warning("[Giftia TTS] 语音合成失败，使用纯文本作为降级回复。")
+        return [Plain(segment.text)], segment.text
+
+    async def _dispatch_aiocqhttp_outputs(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        llm_result: XmlLlmResult,
+    ) -> None:
+        sent_index = 0
+        for item_type, item_index in self._output_order(llm_result):
+            if item_type == "message":
+                if item_index < 0 or item_index >= len(llm_result.msg_chains):
+                    continue
+                msg_chain = llm_result.msg_chains[item_index]
+                if not msg_chain:
+                    continue
+                msg_str = (
+                    llm_result.msg_logs[item_index]
+                    if llm_result.msg_logs and item_index < len(llm_result.msg_logs)
+                    else ""
+                )
+            elif item_type == "tts":
+                msg_chain, msg_str = await self._build_tts_message_chain(
+                    event, llm_result, item_index
+                )
+                if not msg_chain:
+                    continue
+            else:
+                continue
+
+            if sent_index > 0:
+                interval = random.randint(
+                    self.plugin.min_reply_interval, self.plugin.max_reply_interval
+                )
+                await asyncio.sleep(interval)
+
+            success, message_id = await self.plugin.aiocqhttp.send_message(
+                event,
+                msg_chain,
+            )
+            sent_index += 1
+            if success and message_id:
+                iso_string = datetime.now().isoformat()
+                media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
+                if item_type == "tts":
+                    segment = llm_result.tts_segments[item_index]
+                    attrs = []
+                    if segment.lang:
+                        attrs.append(f'lang="{segment.lang}"')
+                    if segment.emotion:
+                        attrs.append(f'emotion="{segment.emotion}"')
+                    attrs_str = " " + " ".join(attrs) if attrs else ""
+                    db_content = f"<tts{attrs_str}>{segment.text}</tts>"
+                else:
+                    db_content = msg_str
+                msg_data = MessageData(
+                    nickname=nickname,
+                    user_id=event.get_self_id(),
+                    group_or_user_id=group_or_user_id,
+                    time=iso_string,
+                    message_id=str(message_id),
+                    content=db_content,
+                    is_recalled=False,
+                    media_id_list=media_id_list,
+                )
+                await self.plugin.data_cache.add_message(
+                    bot_name, group_or_user_id, msg_data
+                )
+
+    async def _dispatch_generic_outputs(
+        self,
+        event: AstrMessageEvent,
+        bot_name: str,
+        nickname: str,
+        group_or_user_id: str,
+        llm_result: XmlLlmResult,
+    ) -> None:
+        sent_index = 0
+        for item_type, item_index in self._output_order(llm_result):
+            is_tts = item_type == "tts"
+            if item_type == "message":
+                if item_index < 0 or item_index >= len(llm_result.msg_chains):
+                    continue
+                msg_chain = llm_result.msg_chains[item_index]
+                if not msg_chain:
+                    continue
+            elif is_tts:
+                msg_chain, tts_text = await self._build_tts_message_chain(
+                    event, llm_result, item_index
+                )
+                if not msg_chain:
+                    continue
+            else:
+                continue
+
+            if sent_index > 0:
+                interval = random.randint(
+                    self.plugin.min_reply_interval, self.plugin.max_reply_interval
+                )
+                await asyncio.sleep(interval)
+
+            try:
+                try:
+                    event._giftia_bypass_logging = True
+                    await event.send(MessageChain(msg_chain))
+                finally:
+                    event._giftia_bypass_logging = False
+                iso_string = datetime.now().isoformat()
+                if is_tts:
+                    segment = llm_result.tts_segments[item_index]
+                    attrs = []
+                    if segment.lang:
+                        attrs.append(f'lang="{segment.lang}"')
+                    if segment.emotion:
+                        attrs.append(f'emotion="{segment.emotion}"')
+                    attrs_str = " " + " ".join(attrs) if attrs else ""
+                    db_content = f"<tts{attrs_str}>{segment.text}</tts>"
+                    msg_data = MessageData(
+                        nickname=nickname,
+                        user_id=event.get_self_id(),
+                        group_or_user_id=group_or_user_id,
+                        time=iso_string,
+                        message_id="",
+                        content=db_content,
+                        is_recalled=False,
+                        media_id_list=[],
+                    )
+                else:
+                    parsed_msg = await self.plugin.message_parser.chain_to_result(
+                        msg_chain, event=event
+                    )
+                    msg_data = MessageData(
+                        nickname=nickname,
+                        user_id=event.get_self_id(),
+                        group_or_user_id=group_or_user_id,
+                        time=iso_string,
+                        message_id="",
+                        content=parsed_msg.content,
+                        is_recalled=False,
+                        media_id_list=parsed_msg.media_id_list,
+                        forward_messages=parsed_msg.forward_messages,
+                    )
+                await self.plugin.data_cache.add_message(
+                    bot_name, group_or_user_id, msg_data
+                )
+                sent_index += 1
+            except Exception as e:
+                logger.error(f"{bot_name} 通用平台发送消息失败: {e}")
 
     async def dispatch_actions(
         self,
@@ -362,41 +541,14 @@ class ActionDispatcher:
                         f"<add_sticker media_id={sticker_id} result='success'/>"
                     )
 
-            # 11. 发送消息链
-            for index, msg_chain in enumerate(llm_result.msg_chains):
-                if not msg_chain:
-                    continue
-                # 随机延迟发送
-                if index > 0:
-                    interval = random.randint(
-                        self.plugin.min_reply_interval, self.plugin.max_reply_interval
-                    )
-                    await asyncio.sleep(interval)
-                success, message_id = await self.plugin.aiocqhttp.send_message(
-                    event,
-                    msg_chain,
-                )
-                if success and message_id:
-                    iso_string = datetime.now().isoformat()
-                    msg_str = (
-                        llm_result.msg_logs[index]
-                        if llm_result.msg_logs and index < len(llm_result.msg_logs)
-                        else ""
-                    )
-                    media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
-                    msg_data = MessageData(
-                        nickname=nickname,
-                        user_id=event.get_self_id(),
-                        group_or_user_id=group_or_user_id,
-                        time=iso_string,
-                        message_id=str(message_id),
-                        content=msg_str,
-                        is_recalled=False,
-                        media_id_list=media_id_list,
-                    )
-                    await self.plugin.data_cache.add_message(
-                        bot_name, group_or_user_id, msg_data
-                    )
+            # 11. 发送消息链 / TTS 语音
+            await self._dispatch_aiocqhttp_outputs(
+                event=event,
+                bot_name=bot_name,
+                nickname=nickname,
+                group_or_user_id=group_or_user_id,
+                llm_result=llm_result,
+            )
 
             # 12. 踢人
             if llm_result.kick:
@@ -451,40 +603,15 @@ class ActionDispatcher:
                 )
             return
 
-        # 其它平台普通消息发送
-        if llm_result.msg_chains:
-            for index, msg_chain in enumerate(llm_result.msg_chains):
-                if index > 0:
-                    interval = random.randint(
-                        self.plugin.min_reply_interval, self.plugin.max_reply_interval
-                    )
-                    await asyncio.sleep(interval)
-                try:
-                    try:
-                        event._giftia_bypass_logging = True
-                        await event.send(MessageChain(msg_chain))
-                    finally:
-                        event._giftia_bypass_logging = False
-                    iso_string = datetime.now().isoformat()
-                    parsed_msg = await self.plugin.message_parser.chain_to_result(
-                        msg_chain, event=event
-                    )
-                    msg_data = MessageData(
-                        nickname=nickname,
-                        user_id=event.get_self_id(),
-                        group_or_user_id=group_or_user_id,
-                        time=iso_string,
-                        message_id="",
-                        content=parsed_msg.content,
-                        is_recalled=False,
-                        media_id_list=parsed_msg.media_id_list,
-                        forward_messages=parsed_msg.forward_messages,
-                    )
-                    await self.plugin.data_cache.add_message(
-                        bot_name, group_or_user_id, msg_data
-                    )
-                except Exception as e:
-                    logger.error(f"{bot_name} 通用平台发送消息失败: {e}")
+        # 其它平台普通消息 / TTS 语音发送
+        if llm_result.msg_chains or llm_result.tts_segments:
+            await self._dispatch_generic_outputs(
+                event=event,
+                bot_name=bot_name,
+                nickname=nickname,
+                group_or_user_id=group_or_user_id,
+                llm_result=llm_result,
+            )
 
         if task_board_logs:
             await self.plugin.data_cache.add_message(

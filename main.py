@@ -22,6 +22,7 @@ from .core.llm.llm_tools import (
 from .core.llm.xml_parse import XmlParse
 from .core.memory.memory import LTM
 from .core.memory.passive_memory import PassiveMemoryManager
+from .core.tts.manager import TTSManager
 from .core.utils.aiocqhttp_action import AIoCQHTTPAction
 from .core.utils.emoji_manager import EmojiManager
 from .core.utils.http_manager import HttpManager
@@ -149,6 +150,8 @@ class Giftia(Star):
 
         # LLM工具配置
         self.tools_config = self.conf.get("tools_config", {})
+        # TTS XML 配置
+        self.tts_config = self.conf.get("tts_config", {})
         # 并发锁
         self.group_locks = defaultdict(lambda: asyncio.Semaphore(self.concurrent_limit))
         # 用户并发锁
@@ -231,6 +234,7 @@ class Giftia(Star):
         # 实例化逻辑管理器
         self.task_board = TaskBoardManager(self)
         self.passive_memory_manager = PassiveMemoryManager(self)
+        self.tts_manager = TTSManager(self)
         self.cmd_handler = CommandHandler(self)
         self.chat_manager = ChatManager(self)
 

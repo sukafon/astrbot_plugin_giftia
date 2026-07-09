@@ -6,6 +6,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Image
 
+from ..llm.preset_prompts import build_tts_xml_instructions
 from ..llm.prompt import build_reply_prompt
 from ..utils.anti_drool import filter_duplicate_replies
 from ..utils.schemas import MessageData
@@ -44,6 +45,7 @@ class ReplyPipeline:
             "search_histories",
             "get_message_contexts",
             "task_board_actions",
+            "tts_segments",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
 
@@ -345,6 +347,15 @@ class ReplyPipeline:
             force_xml_tools=self.plugin.tools_config.get("force_xml_tools", False),
             enabled_features=self.plugin.tools_config.get(
                 "enabled_interactive_features"
+            ),
+            tts_instruction=(
+                build_tts_xml_instructions(
+                    self.plugin.tts_manager.provider_type(),
+                    self.plugin.tts_manager.language_options(),
+                )
+                if hasattr(self.plugin, "tts_manager")
+                and self.plugin.tts_manager.enabled()
+                else ""
             ),
             image_urls=image_urls,
             audio_urls=audio_urls,

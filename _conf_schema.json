@@ -193,6 +193,59 @@
             }
         }
     },
+    "tts_config": {
+        "description": "TTS XML 语音配置",
+        "type": "object",
+        "hint": "开启后会向大模型回复提示词注入 <tts lang=\"ja-JP\" emotion=\"happy\">语音文本</tts> 标签说明。语言与供应商映射列表的第一项会作为默认语言和默认供应商。",
+        "items": {
+            "enabled": {
+                "description": "启用 TTS XML 输出",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，大模型可输出 <tts> 标签，由插件按语言映射调用 AstrBot 的 TTS 供应商发送语音。"
+            },
+            "provider_type": {
+                "description": "TTS 供应商类型",
+                "type": "string",
+                "options": [
+                    "minimax",
+                    "fishaudio"
+                ],
+                "default": "minimax",
+                "hint": "影响提示词中的标签与情绪规则。MiniMax 使用固定情绪枚举和括号语气词；FishAudio 使用自由方括号标签。"
+            },
+            "language_provider_map": {
+                "type": "template_list",
+                "description": "语言与 AstrBot TTS 供应商映射",
+                "hint": "目前只支持中文、英文、日文。请为每种语言选择与上方供应商类型相同的 AstrBot TTS 供应商；列表第一项会作为默认语言和默认供应商。",
+                "templates": {
+                    "language_provider": {
+                        "name": "语言供应商映射",
+                        "items": {
+                            "language": {
+                                "description": "语言",
+                                "type": "string",
+                                "options": [
+                                    "中文",
+                                    "英文",
+                                    "日文"
+                                ],
+                                "default": "中文",
+                                "hint": "配置界面显示中文名，插件内部会映射为 zh-CN、en-US、ja-JP。"
+                            },
+                            "provider_id": {
+                                "description": "AstrBot TTS 供应商",
+                                "type": "string",
+                                "_special": "select_provider_tts",
+                                "default": "",
+                                "hint": "请选择与 TTS 供应商类型一致的 AstrBot TTS 供应商，例如 minimax 对应 MiniMax TTS，fishaudio 对应 FishAudio TTS。"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
     "sticker_config": {
         "description": "表情包配置",
         "type": "object",

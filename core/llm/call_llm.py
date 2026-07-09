@@ -112,6 +112,7 @@ class CallLLM:
         use_source_tools: bool = False,
         force_xml_tools: bool = False,
         enabled_features: list[str] | None = None,
+        tts_instruction: str = "",
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
     ) -> XmlLlmResult | None:
@@ -123,7 +124,7 @@ class CallLLM:
                 if i > 0:
                     logger.warning(f"LLM回复失败，{provider_id} 重试第 {i} 次")
                 try:
-                    xml_inst = build_xml_instructions(enabled_features)
+                    xml_inst = build_xml_instructions(enabled_features, tts_instruction)
                     actual_system_prompt = (system_prompt or "") + "\n\n" + xml_inst
                     tools_set = None
                     if use_source_tools or force_xml_tools:
