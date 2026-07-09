@@ -52,7 +52,7 @@ def build_tts_xml_instructions(
     return "\n".join(prompt_lines)
 
 
-def build_xml_instructions(enabled_features: list[str] | None) -> str:
+def build_xml_instructions(enabled_features: list[str] | None, tts_instruction: str = "") -> str:
     """
     根据配置启用的内置交互功能列表，动态生成硬编码的 XML 提示词和交互规范说明。
     """
@@ -160,6 +160,10 @@ def build_xml_instructions(enabled_features: list[str] | None) -> str:
             "你可以根据上下文需要，在回复中输出以下标签来实现特殊互动功能："
         )
         prompt_lines.extend(interactive_lines)
+
+    if tts_instruction:
+        prompt_lines.append("")
+        prompt_lines.append(tts_instruction)
 
     # 3. 输出格式示例与提示
     prompt_lines.extend(

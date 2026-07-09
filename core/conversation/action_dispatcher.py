@@ -171,13 +171,24 @@ class ActionDispatcher:
             if success and message_id:
                 iso_string = datetime.now().isoformat()
                 media_id_list = re.findall(r"\[图片:(.*?)\]", msg_str)
+                if item_type == "tts":
+                    segment = llm_result.tts_segments[item_index]
+                    attrs = []
+                    if segment.lang:
+                        attrs.append(f'lang="{segment.lang}"')
+                    if segment.emotion:
+                        attrs.append(f'emotion="{segment.emotion}"')
+                    attrs_str = " " + " ".join(attrs) if attrs else ""
+                    db_content = f"<tts{attrs_str}>{segment.text}</tts>"
+                else:
+                    db_content = msg_str
                 msg_data = MessageData(
                     nickname=nickname,
                     user_id=event.get_self_id(),
                     group_or_user_id=group_or_user_id,
                     time=iso_string,
                     message_id=str(message_id),
-                    content=msg_str,
+                    content=db_content,
                     is_recalled=False,
                     media_id_list=media_id_list,
                 )
@@ -225,13 +236,21 @@ class ActionDispatcher:
                     event._giftia_bypass_logging = False
                 iso_string = datetime.now().isoformat()
                 if is_tts:
+                    segment = llm_result.tts_segments[item_index]
+                    attrs = []
+                    if segment.lang:
+                        attrs.append(f'lang="{segment.lang}"')
+                    if segment.emotion:
+                        attrs.append(f'emotion="{segment.emotion}"')
+                    attrs_str = " " + " ".join(attrs) if attrs else ""
+                    db_content = f"<tts{attrs_str}>{segment.text}</tts>"
                     msg_data = MessageData(
                         nickname=nickname,
                         user_id=event.get_self_id(),
                         group_or_user_id=group_or_user_id,
                         time=iso_string,
                         message_id="",
-                        content=tts_text,
+                        content=db_content,
                         is_recalled=False,
                         media_id_list=[],
                     )
