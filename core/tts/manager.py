@@ -7,64 +7,7 @@ from astrbot.api.message_components import Record
 from astrbot.core.provider.provider import TTSProvider
 
 from ..utils.schemas import TTSRequest
-
-
-LANGUAGE_LABELS = {
-    "中文": "zh-CN",
-    "汉语": "zh-CN",
-    "普通话": "zh-CN",
-    "zh": "zh-CN",
-    "zh-cn": "zh-CN",
-    "zh-CN": "zh-CN",
-    "英文": "en-US",
-    "英语": "en-US",
-    "en": "en-US",
-    "en-us": "en-US",
-    "en-US": "en-US",
-    "日文": "ja-JP",
-    "日语": "ja-JP",
-    "ja": "ja-JP",
-    "ja-jp": "ja-JP",
-    "ja-JP": "ja-JP",
-}
-LANGUAGE_NAMES = {
-    "zh-CN": "中文",
-    "en-US": "英文",
-    "ja-JP": "日文",
-}
-
-MINIMAX_EMOTIONS = {
-    "happy",
-    "sad",
-    "angry",
-    "fearful",
-    "disgusted",
-    "surprised",
-    "calm",
-    "fluent",
-    "whisper",
-}
-MINIMAX_TONE_TAGS = [
-    "(laughs)",
-    "(chuckle)",
-    "(coughs)",
-    "(clear-throat)",
-    "(groans)",
-    "(breath)",
-    "(pant)",
-    "(inhale)",
-    "(exhale)",
-    "(gasps)",
-    "(sniffs)",
-    "(sighs)",
-    "(snorts)",
-    "(burps)",
-    "(lip-smacking)",
-    "(humming)",
-    "(hissing)",
-    "(emm)",
-    "(sneezes)",
-]
+from .constants import LANGUAGE_LABELS, LANGUAGE_NAMES, MINIMAX_EMOTIONS
 
 
 @dataclass(slots=True)
@@ -125,6 +68,16 @@ class TTSManager:
         items = self._language_items()
         return items[0][0] if items else "zh-CN"
 
+    def language_options(self) -> list[tuple[str, str]]:
+        options = []
+        seen = set()
+        for lang, _provider_id in self._language_items():
+            if lang in seen:
+                continue
+            seen.add(lang)
+            options.append((lang, LANGUAGE_NAMES.get(lang, lang)))
+        return options
+
     def _provider_id_for_language(self, lang: str) -> tuple[str, str]:
         items = self._language_items()
         if not items:
@@ -140,48 +93,6 @@ class TTSManager:
         if provider_id not in self._provider_locks:
             self._provider_locks[provider_id] = asyncio.Lock()
         return self._provider_locks[provider_id]
-
-    def build_prompt_instruction(self) -> str:
-        if not self.enabled():
-            return ""
-
-        default_lang = self.default_language()
-        default_lang_name = LANGUAGE_NAMES.get(default_lang, default_lang)
-        lines = [
-            "",
-            "## TTS 语音输出",
-            '如果需要发送语音，请输出并列的 `<tts lang="语言代码" emotion="情绪">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
-            "可用语言代码仅限：`zh-CN`（中文）、`en-US`（英文）、`ja-JP`（日文）。无法判断语言时使用配置列表第一项作为默认语言："
-            f"`{default_lang}`（{default_lang_name}）。",
-            "`emotion` 为可选属性；没有明确情绪时可以省略。可以连续输出多个 `<tts>` 标签，系统会按出现顺序合成。",
-        ]
-
-        if self.provider_type() == "minimax":
-            lines.extend(
-                [
-                    "",
-                    "### MiniMax TTS 标签规则",
-                    "语音文本中可以插入以下语气词标签，且只能使用这些标签："
-                    + "、".join(f"`{tag}`" for tag in MINIMAX_TONE_TAGS)
-                    + "。",
-                    "情绪 `emotion` 只建议使用："
-                    + "、".join(f"`{emotion}`" for emotion in sorted(MINIMAX_EMOTIONS))
-                    + "。不确定时省略；非法情绪会被系统忽略。",
-                    '示例：`<tts lang="ja-JP" emotion="happy">えへへ (laughs)、任せて！</tts>`',
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    "",
-                    "### FishAudio TTS 标签规则",
-                    "语音文本中可以使用自由的方括号标签，例如 `[softly]`、`[laughing]`、`[whisper]`。",
-                    "情绪 `emotion` 可以更自由，但应保持短小，例如 `happy`、`sad`、`gentle`、`excited`；系统会把它拼到语音文本最前端的方括号标签中。",
-                    '示例：`<tts lang="zh-CN" emotion="gentle">[softly]我在这里。</tts>`',
-                ]
-            )
-
-        return "\n".join(lines)
 
     def _warn_provider_type_mismatch(self, provider: TTSProvider, provider_id: str) -> None:
         expected = {

@@ -1,3 +1,57 @@
+from ..tts.constants import LANGUAGE_NAMES, MINIMAX_EMOTIONS, MINIMAX_TONE_TAGS
+
+
+def build_tts_xml_instructions(
+    provider_type: str,
+    language_options: list[tuple[str, str]],
+) -> str:
+    provider_type = str(provider_type or "minimax").strip().lower()
+    if provider_type not in {"minimax", "fishaudio"}:
+        provider_type = "minimax"
+    if not language_options:
+        return ""
+
+    default_lang, default_lang_name = language_options[0]
+    language_desc = "、".join(
+        f"`{lang}`（{name or LANGUAGE_NAMES.get(lang, lang)}）"
+        for lang, name in language_options
+    )
+    prompt_lines = [
+        "## TTS 语音输出",
+        '如果需要发送语音，请输出并列的 `<tts lang="语言代码" emotion="情绪">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
+        f"可用语言代码仅限：{language_desc}。无法判断语言时使用配置列表第一项作为默认语言："
+        f"`{default_lang}`（{default_lang_name}）。",
+        "`emotion` 为可选属性；没有明确情绪时可以省略。可以连续输出多个 `<tts>` 标签，会按出现顺序发送。",
+    ]
+
+    if provider_type == "minimax":
+        prompt_lines.extend(
+            [
+                "",
+                "### 标签规则",
+                "语音文本中可以插入以下语气词标签，且只能使用这些标签："
+                + "、".join(f"`{tag}`" for tag in MINIMAX_TONE_TAGS)
+                + "。",
+                "情绪 `emotion` 只能使用："
+                + "、".join(f"`{emotion}`" for emotion in sorted(MINIMAX_EMOTIONS))
+                + "。不确定时省略；非法情绪会被系统忽略。",
+                f'示例：`<tts lang="{default_lang}" emotion="happy">语音文本 (laughs)</tts>`',
+            ]
+        )
+    else:
+        prompt_lines.extend(
+            [
+                "",
+                "### 标签规则",
+                "语音文本中可以使用自由的方括号标签，例如 `[softly]`、`[大喊]`，根据文本语言填入，可控制语调。",
+                "情绪 `emotion` 可选，输入与语言匹配的的情绪标签。",
+                f'示例：`<tts lang="{default_lang}" emotion="温柔">[softly]语音文本</tts>`',
+            ]
+        )
+
+    return "\n".join(prompt_lines)
+
+
 def build_xml_instructions(enabled_features: list[str] | None) -> str:
     """
     根据配置启用的内置交互功能列表，动态生成硬编码的 XML 提示词和交互规范说明。
