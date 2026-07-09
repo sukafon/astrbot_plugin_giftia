@@ -47,6 +47,7 @@ def build_decision_prompt(
     active_user_briefs: list[dict] | None = None,
     short_tasks: list[ShortTask] | None = None,
     short_task_limit: int = 3,
+    message_truncate_limit: int = 1500,
 ) -> str:
     user_prompt = []
     # 时间
@@ -91,7 +92,7 @@ def build_decision_prompt(
     # 近期消息
     if recent_messages:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg) for msg in recent_messages
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in recent_messages
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
@@ -99,7 +100,7 @@ def build_decision_prompt(
     # 当前消息
     if current_message:
         user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(current_message)}\n</current_message>"
+            f"<current_message>\n{parse_message_to_str(current_message, truncate_limit=message_truncate_limit)}\n</current_message>"
         )
 
     return "\n\n".join(user_prompt)
@@ -215,6 +216,7 @@ def build_reply_prompt(
     short_task_limit: int = 3,
     other_data: list[str] | None = None,
     bot_sticker: str | None = None,
+    message_truncate_limit: int = 1500,
 ) -> str:
     # 合并近期消息与当前消息进行统一的频次与内联处理
     all_messages = []
@@ -290,7 +292,7 @@ def build_reply_prompt(
     # 近期消息
     if copied_recent:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg) for msg in copied_recent
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in copied_recent
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
@@ -298,7 +300,7 @@ def build_reply_prompt(
     # 当前消息
     if copied_current:
         user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(copied_current)}\n</current_message>"
+            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
         )
     # 机器人状态
     if bot_status:
@@ -324,11 +326,23 @@ def build_reply_prompt(
     return "\n\n".join(user_prompt)
 
 
-def parse_message_to_str(message: MessageData) -> str:
+def truncate_message_content(content: str | None, limit: int = 500) -> str:
+    if not content:
+        return ""
+    if limit <= 0:
+        return content
+    if len(content) > limit:
+        return content[:limit] + "... [内容已截断]"
+    return content
+
+
+def parse_message_to_str(message: MessageData, truncate_limit: int = 500) -> str:
     """构建xml格式的消息，用于提示词传递聊天记录"""
     if getattr(message, "role", "message") == "operation_log":
         time_str = format_time_to_hhmmss(message.time) if message.time else ""
-        return f"<operation_log time={quoteattr(time_str)}>\n{message.content.strip()}\n</operation_log>"
+        content_str = message.content.strip() if message.content else ""
+        truncated_content = truncate_message_content(content_str, limit=truncate_limit)
+        return f"<operation_log time={quoteattr(time_str)}>\n{truncated_content}\n</operation_log>"
 
     props = ""
     for prop in MSG_PROPS:
@@ -342,7 +356,8 @@ def parse_message_to_str(message: MessageData) -> str:
             if prop == "time":
                 value = format_time_to_hhmmss(value)
             props += f" {prop}={quoteattr(str(value))}"
-    return f"<message{props}>{message.content}</message>"
+    truncated_content = truncate_message_content(message.content, limit=truncate_limit)
+    return f"<message{props}>{truncated_content}</message>"
 
 
 def parse_caption_to_str(media_caption: MediaCaption) -> str:

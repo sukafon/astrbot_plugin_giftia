@@ -47,6 +47,7 @@ class DataCache:
         memory_number: int = 20,
         msg_number: int = 50,
         energy_recovery_interval: int = 90,
+        plugin=None,
     ):
         self.db = db
         self.http_manager = http_manager
@@ -54,6 +55,7 @@ class DataCache:
         self.memory_number = memory_number
         self.msg_number = msg_number
         self.energy_recovery_interval = energy_recovery_interval
+        self.plugin = plugin
         self.caption = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
         self.filename_to_hash = LRUCache(maxsize=MAX_CAPTION_CACHE_SIZE)
         # 用户画像缓存
@@ -114,11 +116,23 @@ class DataCache:
             group_or_user_id=group_id, bot_name=bot_name, message_id=message_id
         )
 
+    def _intercept_message(self, msg_data: MessageData) -> None:
+        if msg_data.content and self.plugin:
+            keywords = getattr(self.plugin, "safety_intercept_keywords", None)
+            if keywords:
+                for kw in keywords:
+                    if kw and kw in msg_data.content:
+                        logger.info(f"[Giftia Safety Intercept] 拦截到敏感词: {kw}，已进行消息屏蔽处理")
+                        msg_data.content = "【该消息触发了安全拦截，已被屏蔽】"
+                        break
+
     async def add_message(
         self, bot_name: str, group_id: str, msg_data: MessageData
     ) -> None:
         """添加消息，先加入缓存，再写入数据库"""
         import time
+
+        self._intercept_message(msg_data)
 
         now = time.time()
         if not hasattr(self, "_recent_adds"):
@@ -159,6 +173,7 @@ class DataCache:
         self, bot_name: str, group_id: str, msg_data: MessageData
     ) -> None:
         """添加消息到缓存，不持久化，如点赞失败、撤回、戳一戳等操作，防止AI重复触发"""
+        self._intercept_message(msg_data)
         fmt_key = f"{bot_name}:{group_id}"
         self.recent_messages[fmt_key].append(msg_data)
 

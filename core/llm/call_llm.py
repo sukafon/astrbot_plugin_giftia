@@ -15,6 +15,7 @@ from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
     DEFAULT_AUDIO_CAPTION_PROMPT,
     DEFAULT_IMAGE_CAPTION_PROMPT,
+    DEFAULT_STICKER_ANALYSIS_PROMPT,
     build_xml_instructions,
 )
 from .xml_parse import XmlParse
@@ -27,12 +28,11 @@ class CallLLM:
         xml_parse: XmlParse,
         network_config: dict,
         caption_config: dict,
-        sticker_analysis_prompt: str = "",
     ):
         self.context = context
         self.xml_parse = xml_parse
         self.network_conf = network_config
-        self.sticker_analysis_prompt = sticker_analysis_prompt
+        self.sticker_analysis_prompt = DEFAULT_STICKER_ANALYSIS_PROMPT
         # 图片转述配置
         image_caption_provider_ids = caption_config.get("image_caption_provider_ids")
         if not image_caption_provider_ids:

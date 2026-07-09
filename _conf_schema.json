@@ -251,14 +251,6 @@
         "type": "object",
         "hint": "",
         "items": {
-            "sticker_analysis_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "表情包分析系统提示词",
-                "default": "",
-                "hint": "表情包分析提示词"
-            },
             "random_sticker_count": {
                 "description": "随机提取表情包数量",
                 "type": "int",
@@ -297,6 +289,18 @@
                 "type": "int",
                 "default": 120,
                 "hint": "多少秒恢复一个单位能量。防止机器人把自己能量调到最低假死。"
+            },
+            "reply_message_truncate_limit": {
+                "description": "回复上下文单条消息截断字数",
+                "type": "int",
+                "default": 1500,
+                "hint": "生成回复/决策提示词时单条消息的最大字数限制（防长日志或代码爆上下文/Token），超出的部分将被截断。设为 0 或负数表示不截断。"
+            },
+            "safety_intercept_keywords": {
+                "description": "安全拦截关键词列表",
+                "type": "list",
+                "default": [],
+                "hint": "当用户发送的消息中包含该列表中的任意关键词时，入库和上下文中的消息内容将被自动替换为【该消息触发了安全拦截，已被屏蔽】，以防止 Bot 遭到大模型敏感安全拦截。"
             }
         }
     },
@@ -630,60 +634,6 @@
                 "type": "int",
                 "default": 100,
                 "hint": "当机器人一直活跃时，未总结且已离开上下文窗口的消息达到多少条后触发后台记录。"
-            },
-            "passive_memory_summary_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "长期记忆提炼系统提示词",
-                "default": "# 角色与目标\n你是一个长期记忆提炼器。你需要分析以下群聊片段，只总结与机器人自身（昵称：{nickname}，ID：{self_id}）直接相关、未来值得召回的事件记忆。\n\n# 提炼规则\n- 只记录机器人参与、被提及、有互动的有价值事件，例如约定、承诺、共同经历、明确偏好或重要结论。\n- 每条记忆必须使用第一人称，从机器人的角度描述。\n- 每条记忆控制在 50 字以内，避免流水账和情绪泛化。\n- 必须使用 `users` 属性指出该记忆直接关联的群友 user_id，多用户用逗号分隔。\n- 与特定人无关但对机器人有意义时，可以省略 `users` 属性。\n- 必须使用 `importance` 属性给出重要度，范围 1-10：1-3 为短期闲聊或低价值事实，4-5 为普通偏好或普通互动，6-7 为稳定偏好、明确约定或关系信息，8-10 为长期承诺、禁忌、身份、重大事件或关系转折。\n\n# 输出格式\n请只输出 `<memory>` 标签：\n`<memory users=\"12345\" importance=\"7\">小明约我周末一起打游戏，我答应提醒他。</memory>`\n\n如果没有值得记录的长期记忆，请只输出：\n`<memory>无</memory>`",
-                "hint": "定义长期记忆提炼提示词。该任务只输出 <memory> 标签，不负责画像、好感度或关系头衔。"
-            },
-            "passive_profile_summary_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "关系画像维护系统提示词",
-                "default": "# 角色与目标\n你是一个关系画像维护器。你需要分析以下群聊片段，结合已有画像，维护称呼、外号、互动态度、关键约定、群画像、好感度和关系头衔。\n\n# 提供的现有状态\n- <current_user_profiles>：当前活跃成员的结构化画像、旧画像参考和关系头衔；不会提供具体好感度分数。\n- <current_group_profile>：当前群聊的现有画像。\n\n# 用户画像更新\n如果发现某位用户的新称呼、新外号、与你的互动状态或与你达成的约定，请结合现有画像，输出该用户需要更新的字段。\n\n用户画像字段说明：\n- call_name：你对该成员的称呼。\n- aliases：本段聊天中新观察到的其他群友对该成员的称呼或外号；只输出新增观察，不要重写完整外号列表。\n- attitude：该成员对你（即机器人，昵称：{nickname}）的稳定态度。必须描述其对待你的长期情感或互动基调，严禁描述该成员对待其他群友的态度、本段聊天的即时群内纠纷或与你无关的第三方互动。\n- agreements：与你达成的承诺或共同回忆。\n\n只输出需要更新的字段，不要为无变化字段输出标签。除 `aliases` 外，用户画像字段采用字段级覆盖更新：如果输出某个字段，该字段会替换旧值；因此请结合已有画像输出该字段的最新完整摘要，而不是只写新增片段。未输出的字段会保留旧值。每个字段精炼在一句话、30 字以内。`aliases` 可用逗号分隔多个本段新观察到的外号，后端会累计统计。关系头衔如果没有变化可以省略 `title` 属性。\n\n# 字段更新准则与注意事项（极其重要）\n1. **第二人称视角**：`attitude` 描述的必须是该成员对**你（{nickname}）**的态度，而不是对其他群友的态度。\n2. **事实去处**：如果发现了具体的即时约定、承诺、共同回忆或发生的重要事件，请将其记录在 `agreements`，不要混入 `attitude`。\n\n格式：\n`<summary_user_profile user_id=\"12345\" title=\"挚友\">\n<call_name>小草莓</call_name>\n<aliases>草莓酱</aliases>\n<attitude>经常主动调侃我</attitude>\n<agreements>周末一起打游戏</agreements>\n<update_relation delta=\"+2\">主动表达感谢并延续互动</update_relation>\n</summary_user_profile>`\n\n# 好感度变化\n如果本段聊天明确改变了某位用户与你的关系，请在该用户的 `<summary_user_profile>` 内输出 `<update_relation>`，记录本段互动造成的好感度增量，而不是最新总分。普通闲聊、正常回应、无明确情绪变化时不要输出好感度变化。\n\n`delta` 必须是带正负号的整数，表示本段互动导致的变化值；轻微变化通常为 -2 到 +2，明显正负事件通常为 -5 到 +5，极端事件才使用更大的变化。好感度变化必须写在对应用户的 `<summary_user_profile>` 内，不能作为独立顶层标签输出。如果某位用户只有好感度变化、没有其他画像字段变化，也可以只输出包含 `<update_relation>` 的用户画像块。\n\n# 群画像更新\n如果发现群聊的新特征，请结合现有群画像，输出最新完整群画像：\n- 群聊主题：<群聊定位与核心主题>\n- 氛围特征：<群内氛围与活跃特征>\n- 成员关系：<核心成员互动关系，50 字以内>\n- 核心规则与忌讳：<群规、敏感点或忌讳>\n\n格式：\n`<summary_group_profile>\n- 群聊主题：游戏讨论与日常吹水\n- 氛围特征：气氛轻松，经常开玩笑\n- 成员关系：流萤与爱丽丝关系亲密\n- 核心规则与忌讳：禁止刷屏和恶意复读\n</summary_group_profile>`\n\n# 输出要求\n只输出需要更新的 XML 标签。如果没有任何画像或关系需要更新，请只输出：\n`<profile>无</profile>`",
-                "hint": "定义称呼、外号、互动态度、关键约定、群画像、好感度和关系头衔维护提示词。旧 profile 字段会作为历史画像参考保留。"
-            },
-            "passive_long_profile_summary_prompt": {
-                "type": "text",
-                "editor_mode": true,
-                "editor_language": "markdown",
-                "description": "用户画像维护系统提示词",
-                "default": "# 角色与目标\n你是一个用户画像维护器。你只分析一个用户自己的新增发言样本，并结合该用户已有画像，维护以下用户画像字段：\n- personality：性格风格与长期表达习惯。\n- interests：长期稳定的兴趣话题与关注领域。\n- extra：无法归入其他字段、但长期有助于理解该用户的信息。\n\n# 输入说明\n- <current_user_profile>：该用户当前完整画像，包含结构化画像、旧画像参考、好感度和关系头衔。\n- <user_messages>：该用户最近一批新增发言样本，只包含该用户自己的文本、媒体占位和媒体转述。\n- <media_content>：未内联到消息中的唯一媒体转述。重复媒体不会重复展开，但消息中会保留媒体 ID 引用。\n\n# 更新规则\n1. 只根据长期、稳定、有多条样本支撑的信息更新画像。\n2. 不要因为单次情绪、一次性话题、临时玩笑或孤立事件更新字段。\n3. 媒体转述、语音转写、图片/视频描述、文件摘要都代表用户发送内容，应正常参考。\n4. 重复表情包/重复媒体的出现频率可作为表达风格参考，但不要把媒体 ID 或单次发送事件写入画像。\n5. 如果新样本不足以支持某个字段变化，不要输出该字段的 XML 块。\n6. 字段采用覆盖更新：一旦输出某个字段，必须结合旧画像写成该字段的最新完整摘要，而不是只写新增片段。\n7. 每个字段尽量一句话，控制在 30 字以内；extra 最多 3 条，每条 30 字以内。\n\n# 输出格式\n只输出 `<long_user_profile>` 标签，且只包含确实需要更新的字段：\n`<long_user_profile>\n<personality>表达直接，常从实现复杂度和稳定性角度思考问题。</personality>\n<interests>关注用户画像、长期记忆、异步任务调度和 LLM 插件设计。</interests>\n<extra>正在迭代 AstrBot 插件的画像系统。</extra>\n</long_user_profile>`\n\n如果没有任何字段需要更新，请只输出：\n`<long_user_profile>无</long_user_profile>`",
-                "hint": "定义性格风格、兴趣话题、其他补充维护提示词。该任务只分析单个用户自己的新增发言样本。"
-            },
-            "passive_long_profile_message_threshold": {
-                "description": "用户画像发言触发阈值",
-                "type": "int",
-                "default": 30,
-                "hint": "同一用户自上次用户画像分析后，累计多少条有效发言才触发性格风格、兴趣话题、其他补充更新。"
-            },
-            "passive_long_profile_text_threshold": {
-                "description": "用户画像文本触发阈值",
-                "type": "int",
-                "default": 1500,
-                "hint": "同一用户自上次用户画像分析后，累计多少字有效文本才触发用户画像更新。"
-            },
-            "passive_long_profile_initial_message_threshold": {
-                "description": "空用户画像首次发言阈值",
-                "type": "int",
-                "default": 10,
-                "hint": "当用户性格风格、兴趣话题、其他补充都为空时，首次用户画像更新的发言条数阈值。"
-            },
-            "passive_long_profile_initial_text_threshold": {
-                "description": "空用户画像首次文本阈值",
-                "type": "int",
-                "default": 600,
-                "hint": "当用户性格风格、兴趣话题、其他补充都为空时，首次用户画像更新的文本字数阈值。"
-            },
-            "passive_long_profile_sample_limit": {
-                "description": "用户画像样本上限",
-                "type": "int",
-                "default": 200,
-                "hint": "单次用户画像任务最多取该用户最近多少条待分析发言；超过上限时会省略更旧消息，任务成功后推进游标。"
             }
         }
     },

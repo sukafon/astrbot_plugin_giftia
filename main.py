@@ -99,15 +99,18 @@ class Giftia(Star):
         # 表情包配置
         self.sticker_config = self.conf.get("sticker_config", {})
         self.random_sticker_count = self.sticker_config.get("random_sticker_count", 20)
-        self.sticker_analysis_prompt = self.sticker_config.get(
-            "sticker_analysis_prompt", ""
-        )
         # 常规配置
         self.normal_config = self.conf.get("normal_config", {})
         self.min_reply_interval = self.normal_config.get("min_reply_interval", 2)
         self.max_reply_interval = self.normal_config.get("max_reply_interval", 4)
         self.energy_recovery_interval = self.normal_config.get(
             "energy_recovery_interval", 90
+        )
+        self.reply_message_truncate_limit = self.normal_config.get(
+            "reply_message_truncate_limit", 1500
+        )
+        self.safety_intercept_keywords = self.normal_config.get(
+            "safety_intercept_keywords", []
         )
         # 记忆配置
         memory_config = self.conf.get("memory_config", {})
@@ -122,30 +125,6 @@ class Giftia(Star):
         )
         self.passive_memory_overflow_threshold = memory_config.get(
             "passive_memory_overflow_threshold", 100
-        )
-        self.passive_memory_summary_prompt = memory_config.get(
-            "passive_memory_summary_prompt", ""
-        )
-        self.passive_profile_summary_prompt = memory_config.get(
-            "passive_profile_summary_prompt", ""
-        )
-        self.passive_long_profile_summary_prompt = memory_config.get(
-            "passive_long_profile_summary_prompt", ""
-        )
-        self.passive_long_profile_message_threshold = memory_config.get(
-            "passive_long_profile_message_threshold", 30
-        )
-        self.passive_long_profile_text_threshold = memory_config.get(
-            "passive_long_profile_text_threshold", 1500
-        )
-        self.passive_long_profile_initial_message_threshold = memory_config.get(
-            "passive_long_profile_initial_message_threshold", 10
-        )
-        self.passive_long_profile_initial_text_threshold = memory_config.get(
-            "passive_long_profile_initial_text_threshold", 600
-        )
-        self.passive_long_profile_sample_limit = memory_config.get(
-            "passive_long_profile_sample_limit", 200
         )
 
         # LLM工具配置
@@ -197,6 +176,7 @@ class Giftia(Star):
             ltm=self.ltm,
             msg_number=self.msg_number,
             energy_recovery_interval=self.energy_recovery_interval,
+            plugin=self,
         )
         self.emoji_manager = EmojiManager(
             self.db, random_sticker_count=self.random_sticker_count
@@ -212,7 +192,6 @@ class Giftia(Star):
             xml_parse=self.xml_parse,
             caption_config=self.conf.get("caption_config", {}),
             network_config=self.conf.get("network_config", {}),
-            sticker_analysis_prompt=self.sticker_analysis_prompt,
         )
         self.message_parser = MessageParser(
             data_cache=self.data_cache,

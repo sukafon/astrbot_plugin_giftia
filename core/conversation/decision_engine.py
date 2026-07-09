@@ -357,6 +357,7 @@ class DecisionEngine:
                     active_user_briefs=active_user_briefs,
                     short_tasks=short_tasks,
                     short_task_limit=short_task_limit,
+                    message_truncate_limit=getattr(self.plugin, "reply_message_truncate_limit", 1500),
                 )
 
                 provider_ids = decision_conf.get("provider_ids")

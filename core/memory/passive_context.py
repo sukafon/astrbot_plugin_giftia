@@ -17,15 +17,16 @@ from ..llm.prompt import (
     parse_caption_to_str,
     parse_message_to_str,
     process_media_captions_for_prompt,
+    truncate_message_content,
 )
 
 SESSION_PROFILE_FIELDS = {"call_name", "aliases", "attitude", "agreements"}
 LONG_PROFILE_FIELDS = {"personality", "interests", "extra"}
 DEFAULT_LONG_PROFILE_SAMPLE_LIMIT = 200
-DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD = 30
-DEFAULT_LONG_PROFILE_TEXT_THRESHOLD = 1500
-DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD = 10
-DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD = 600
+DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD = 200
+DEFAULT_LONG_PROFILE_TEXT_THRESHOLD = 5000
+DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD = 200
+DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD = 5000
 
 
 def format_time_to_seconds(db_value: str) -> str:
@@ -39,34 +40,6 @@ def format_time_to_seconds(db_value: str) -> str:
 
 
 class PassiveContextMixin:
-    def _looks_like_legacy_combined_prompt(self, prompt: str) -> bool:
-        legacy_markers = (
-            "summary_user_profile",
-            "summary_group_profile",
-            "update_relation",
-            "set_relation_title",
-            "current_relations",
-        )
-        return any(marker in prompt for marker in legacy_markers)
-
-    def _looks_like_legacy_profile_prompt(self, prompt: str) -> bool:
-        if (
-            "好感度使用最新绝对分数" in prompt
-            or 'relation="12"' in prompt
-            or "<update_relation user_id=" in prompt
-        ):
-            return True
-
-        legacy_markers = (
-            "- personality：性格特征",
-            "- interests：长期稳定",
-            "- extra：无法归入",
-            "<personality>",
-            "<interests>",
-            "<extra>",
-        )
-        return all(marker in prompt for marker in legacy_markers)
-
     def _format_prompt_template(
         self, prompt_template: str, nickname: str, self_id: str
     ) -> str:
@@ -79,56 +52,26 @@ class PassiveContextMixin:
             return prompt_template
 
     def _get_memory_summary_prompt(self) -> str:
-        prompt = getattr(self.plugin, "passive_memory_summary_prompt", "") or ""
-        if not prompt or self._looks_like_legacy_combined_prompt(prompt):
-            return DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT
-        return prompt
+        return DEFAULT_PASSIVE_MEMORY_SUMMARY_PROMPT
 
     def _get_profile_summary_prompt(self) -> str:
-        prompt = getattr(self.plugin, "passive_profile_summary_prompt", "") or ""
-        if not prompt or self._looks_like_legacy_profile_prompt(prompt):
-            return DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT
-        return prompt
+        return DEFAULT_PASSIVE_PROFILE_SUMMARY_PROMPT
 
     def _get_long_profile_summary_prompt(self) -> str:
-        prompt = getattr(self.plugin, "passive_long_profile_summary_prompt", "") or ""
-        return prompt or DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT
-
-    def _get_long_profile_config_int(self, attr_name: str, default: int) -> int:
-        value = getattr(self.plugin, attr_name, default)
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
+        return DEFAULT_PASSIVE_LONG_PROFILE_SUMMARY_PROMPT
 
     def _get_long_profile_sample_limit(self) -> int:
-        return self._get_long_profile_config_int(
-            "passive_long_profile_sample_limit",
-            DEFAULT_LONG_PROFILE_SAMPLE_LIMIT,
-        )
+        return DEFAULT_LONG_PROFILE_SAMPLE_LIMIT
 
     def _get_long_profile_thresholds(self, has_existing_long_profile: bool) -> tuple[int, int]:
         if has_existing_long_profile:
             return (
-                self._get_long_profile_config_int(
-                    "passive_long_profile_message_threshold",
-                    DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD,
-                ),
-                self._get_long_profile_config_int(
-                    "passive_long_profile_text_threshold",
-                    DEFAULT_LONG_PROFILE_TEXT_THRESHOLD,
-                ),
+                DEFAULT_LONG_PROFILE_MESSAGE_THRESHOLD,
+                DEFAULT_LONG_PROFILE_TEXT_THRESHOLD,
             )
         return (
-            self._get_long_profile_config_int(
-                "passive_long_profile_initial_message_threshold",
-                DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD,
-            ),
-            self._get_long_profile_config_int(
-                "passive_long_profile_initial_text_threshold",
-                DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD,
-            ),
+            DEFAULT_LONG_PROFILE_INITIAL_MESSAGE_THRESHOLD,
+            DEFAULT_LONG_PROFILE_INITIAL_TEXT_THRESHOLD,
         )
 
     def _format_user_profile_record_for_summary(
@@ -458,8 +401,9 @@ class PassiveContextMixin:
 
         chat_history_lines = []
         for msg in processed_messages:
+            truncated_content = truncate_message_content(msg.content or "")
             chat_history_lines.append(
-                f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {msg.content or ''}"
+                f"[{format_time_to_seconds(msg.time)}] {msg.nickname}({msg.user_id}): {truncated_content}"
             )
         chat_history_text = "\n".join(chat_history_lines)
 
