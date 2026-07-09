@@ -45,7 +45,8 @@ def build_tts_xml_instructions(
                 "### 标签规则",
                 "语音文本中可以使用自由的方括号标签，例如 `[softly]`、`[大喊]`，根据文本语言填入，可控制语调。",
                 "情绪 `emotion` 可选，输入与语言匹配的的情绪标签。",
-                f'示例：`<tts lang="{default_lang}" emotion="温柔">[softly]语音文本</tts>`',
+                "标签、情绪的语言需要和文本保持一致。",
+                f'示例：`<tts lang="ja-JP" emotion="やさしい">[静かに]语音文本</tts>`',
             ]
         )
 
