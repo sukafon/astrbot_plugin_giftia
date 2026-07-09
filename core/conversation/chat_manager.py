@@ -372,7 +372,7 @@ class ChatManager:
                     # 降级到普通消息发送
                     if not chunk.msg_chains and not chunk.tts_segments:
                         continue
-                    for item_type, item_index in self.action_dispatcher._output_order(
+                    for item_type, item_index in self.action_dispatcher.get_output_order(
                         chunk
                     ):
                         if item_type == "message":
@@ -381,7 +381,7 @@ class ChatManager:
                             msg_chain = chunk.msg_chains[item_index]
                         elif item_type == "tts":
                             msg_chain, _ = (
-                                await self.action_dispatcher._build_tts_message_chain(
+                                await self.action_dispatcher.build_tts_message_chain(
                                     mock_event, chunk, item_index
                                 )
                             )

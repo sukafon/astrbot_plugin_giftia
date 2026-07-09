@@ -99,19 +99,29 @@ class ActionDispatcher:
         return logs
 
     @staticmethod
-    def _output_order(llm_result: XmlLlmResult) -> list[tuple[str, int]]:
+    def get_output_order(llm_result: XmlLlmResult) -> list[tuple[str, int]]:
+        """
+        [Internal Helper] 获取 LLM 输出的顺序列表。
+
+        此方法属于内部辅助函数，主要供 ActionDispatcher 及 ChatManager（用于派发定时任务输出）调用。
+        """
         if llm_result.output_order:
             return list(llm_result.output_order)
         order = [("message", index) for index in range(len(llm_result.msg_chains))]
         order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
         return order
 
-    async def _build_tts_message_chain(
+    async def build_tts_message_chain(
         self,
         event: AstrMessageEvent,
         llm_result: XmlLlmResult,
         index: int,
     ):
+        """
+        [Internal Helper] 构建指定的 TTS 消息链。
+
+        此方法属于内部辅助函数，主要供 ActionDispatcher 及 ChatManager（用于构建定时任务的 TTS 消息）调用。
+        """
         if not hasattr(self.plugin, "tts_manager"):
             return None, ""
         if not self.plugin.tts_manager.enabled():
@@ -136,7 +146,7 @@ class ActionDispatcher:
         llm_result: XmlLlmResult,
     ) -> None:
         sent_index = 0
-        for item_type, item_index in self._output_order(llm_result):
+        for item_type, item_index in self.get_output_order(llm_result):
             if item_type == "message":
                 if item_index < 0 or item_index >= len(llm_result.msg_chains):
                     continue
@@ -149,7 +159,7 @@ class ActionDispatcher:
                     else ""
                 )
             elif item_type == "tts":
-                msg_chain, msg_str = await self._build_tts_message_chain(
+                msg_chain, msg_str = await self.build_tts_message_chain(
                     event, llm_result, item_index
                 )
                 if not msg_chain:
@@ -205,7 +215,7 @@ class ActionDispatcher:
         llm_result: XmlLlmResult,
     ) -> None:
         sent_index = 0
-        for item_type, item_index in self._output_order(llm_result):
+        for item_type, item_index in self.get_output_order(llm_result):
             is_tts = item_type == "tts"
             if item_type == "message":
                 if item_index < 0 or item_index >= len(llm_result.msg_chains):
@@ -214,7 +224,7 @@ class ActionDispatcher:
                 if not msg_chain:
                     continue
             elif is_tts:
-                msg_chain, tts_text = await self._build_tts_message_chain(
+                msg_chain, tts_text = await self.build_tts_message_chain(
                     event, llm_result, item_index
                 )
                 if not msg_chain:
