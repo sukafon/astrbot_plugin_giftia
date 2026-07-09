@@ -45,9 +45,10 @@ class TTSManager:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            lang = self.normalize_language(
+            original_lang = (
                 item.get("language") or item.get("lang") or item.get("语言") or ""
             )
+            lang = self.normalize_language(original_lang)
             provider_id = str(
                 item.get("provider_id")
                 or item.get("provider")
@@ -57,6 +58,11 @@ class TTSManager:
             ).strip()
             if lang:
                 result.append((lang, provider_id))
+            elif original_lang:
+                supported_langs = "/".join(LANGUAGE_NAMES.values())
+                logger.warning(
+                    f"[Giftia TTS] 语言配置错误: 无法识别语言标签 '{original_lang}'，该配置条目已忽略。目前仅支持: {supported_langs}。"
+                )
         return result
 
     @staticmethod
