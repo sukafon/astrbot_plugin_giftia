@@ -135,6 +135,7 @@ class TTSRequest:
     text: str
     lang: str = ""
     emotion: str = ""
+    pre_recorded_path: str = ""
 
 
 @dataclass(repr=False, slots=True)

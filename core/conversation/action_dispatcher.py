@@ -303,6 +303,9 @@ class ActionDispatcher:
             )
             return
 
+        if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
+            self.plugin.tts_manager.preprocess_signatures(llm_result)
+
         task_board_logs = await self._dispatch_task_board_actions(
             event=event,
             bot_name=bot_name,

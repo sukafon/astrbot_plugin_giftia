@@ -348,6 +348,8 @@ class ChatManager:
         ):
             if chunk:
                 if isinstance(chunk, XmlLlmResult):
+                    if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
+                        self.plugin.tts_manager.preprocess_signatures(chunk)
                     if platform_name == "aiocqhttp":
                         if mock_event:
                             await self.action_dispatcher.dispatch_actions(

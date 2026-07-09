@@ -1,12 +1,14 @@
 import asyncio
+import os
 import re
 from dataclasses import dataclass
 
 from astrbot.api import logger
-from astrbot.api.message_components import Record
+from astrbot.api.message_components import Plain, Record
+from astrbot.api.star import StarTools
 from astrbot.core.provider.provider import TTSProvider
 
-from ..utils.schemas import TTSRequest
+from ..utils.schemas import TTSRequest, XmlLlmResult
 from .constants import LANGUAGE_LABELS, LANGUAGE_NAMES, MINIMAX_EMOTIONS
 
 
@@ -24,6 +26,11 @@ class TTSManager:
     def __init__(self, plugin):
         self.plugin = plugin
         self._provider_locks: dict[str, asyncio.Lock] = {}
+        try:
+            self.data_dir = StarTools.get_data_dir("astrbot_plugin_giftia")
+        except Exception as e:
+            logger.warning(f"[Giftia TTS] 获取插件数据目录失败: {e}")
+            self.data_dir = None
 
     @property
     def config(self) -> dict:
@@ -186,6 +193,14 @@ class TTSManager:
                     voice_setting["emotion"] = old_emotion
 
     async def build_record(self, event, segment: TTSRequest) -> Record | None:
+        if segment.pre_recorded_path:
+            resolved_path = self.resolve_audio_path(segment.pre_recorded_path)
+            if not os.path.exists(resolved_path):
+                logger.error(f"[Giftia TTS] 标志性语音文件不存在: {resolved_path}")
+                return None
+            logger.info(f"[Giftia TTS] 使用标志性语音文件: {resolved_path}")
+            return Record.fromFileSystem(resolved_path, text=segment.text)
+
         resolved = self.resolve(segment)
         if not resolved:
             return None
@@ -208,3 +223,305 @@ class TTSManager:
         except Exception as e:
             logger.error(f"[Giftia TTS] 语音合成失败: {e}", exc_info=True)
             return None
+
+    def resolve_audio_path(self, path: str) -> str:
+        path = path.strip()
+        if not path:
+            return ""
+        if os.path.isabs(path):
+            return path
+
+        # 1. Try relative to plugin data directory (where uploaded files are saved)
+        if self.data_dir:
+            data_path = os.path.abspath(os.path.join(str(self.data_dir), path))
+            if os.path.exists(data_path):
+                return data_path
+
+        # 2. Try relative to Cwd (project root)
+        cwd_path = os.path.abspath(os.path.join(os.getcwd(), path))
+        if os.path.exists(cwd_path):
+            return cwd_path
+
+        # 3. Try relative to plugin root (3 levels up from core/tts/manager.py)
+        plugin_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        plugin_path = os.path.abspath(os.path.join(plugin_root, path))
+        if os.path.exists(plugin_path):
+            return plugin_path
+
+        # Fallback to plugin data directory path
+        if self.data_dir:
+            return os.path.abspath(os.path.join(str(self.data_dir), path))
+        return cwd_path
+
+    def split_text_by_signatures(self, text: str, resolved_voices: list[dict] = None) -> list[dict]:
+        voices_conf = self.config.get("signature_voices") or []
+        if not voices_conf:
+            return [{"type": "tts", "text": text}]
+            
+        text = text.strip()
+        if not text:
+            return []
+
+        if resolved_voices is None:
+            # Resolve and cache the selected audio path for each voice item during this split
+            # This handles list of files (picking one randomly) and safeguards against list type stripping errors
+            import random
+            resolved_voices = []
+            for item in voices_conf:
+                audio_val = item.get("audio")
+                if isinstance(audio_val, list):
+                    valid_audios = [str(a).strip() for a in audio_val if a]
+                    audio_path = random.choice(valid_audios) if valid_audios else ""
+                else:
+                    audio_path = str(audio_val or "").strip()
+                
+                if audio_path:
+                    resolved_voices.append({
+                        "audio": audio_path,
+                        "matched_texts": item.get("matched_texts") or []
+                    })
+
+        # Regex for leading emotion tags like [元気に] or (laughs)
+        LEADING_TAGS_RE = re.compile(r'^(\s*(?:\[[^\]]+\]|\([^)]+\))\s*)+')
+        
+        leading_tags = ""
+        content_text = text
+        
+        match = LEADING_TAGS_RE.match(text)
+        if match:
+            leading_tags = match.group(0)
+            content_text = text[match.end():]
+            
+        def find_exact_match(t: str) -> tuple[str, str] | None:
+            t_clean = t.strip(" ,，。！!?？、;；:：.）)]｝}")
+            for item in resolved_voices:
+                audio_path = item.get("audio") or ""
+                matched_texts = item.get("matched_texts") or []
+                if not audio_path or not matched_texts:
+                    continue
+                for kw in matched_texts:
+                    kw = kw.strip()
+                    if not kw:
+                        continue
+                    if t_clean == kw:
+                        return audio_path, kw
+            return None
+
+        exact = find_exact_match(content_text)
+        if exact:
+            audio_path, kw = exact
+            return [{"type": "signature", "path": audio_path, "text": kw}]
+
+        head_match = None
+        longest_head_len = 0
+        for item in resolved_voices:
+            audio_path = item.get("audio") or ""
+            matched_texts = item.get("matched_texts") or []
+            if not audio_path or not matched_texts:
+                continue
+            for kw in matched_texts:
+                kw = kw.strip()
+                if not kw:
+                    continue
+                if content_text.startswith(kw) and len(kw) > longest_head_len:
+                    head_match = (audio_path, kw)
+                    longest_head_len = len(kw)
+
+        remaining_content = content_text
+        segments = []
+
+        if head_match:
+            audio_path, kw = head_match
+            segments.append({"type": "signature", "path": audio_path, "text": kw})
+            remaining_content = content_text[len(kw):]
+            
+        remaining_content_clean = remaining_content.strip(" ,，。！!?？、;；:：.）)]｝}")
+        
+        tail_match = None
+        longest_tail_len = 0
+        for item in resolved_voices:
+            audio_path = item.get("audio") or ""
+            matched_texts = item.get("matched_texts") or []
+            if not audio_path or not matched_texts:
+                continue
+            for kw in matched_texts:
+                kw = kw.strip()
+                if not kw:
+                    continue
+                if remaining_content_clean.endswith(kw) and len(kw) > longest_tail_len:
+                    tail_match = (audio_path, kw)
+                    longest_tail_len = len(kw)
+
+        if tail_match:
+            audio_path, kw = tail_match
+            idx = remaining_content.rfind(kw)
+            if idx != -1:
+                middle = remaining_content[:idx].strip(" ,，。！!?？、;；:：.）)]｝}")
+                tail = remaining_content[idx:]
+            else:
+                middle = remaining_content_clean[:-len(kw)].strip(" ,，。！!?？、;；:：.）)]｝}")
+                tail = kw
+                
+            if middle:
+                segments.append({"type": "tts", "text": leading_tags + middle})
+            segments.append({"type": "signature", "path": audio_path, "text": tail})
+        else:
+            final_remaining = remaining_content.strip(" ,，。！!?？、;；:：.）)]｝}")
+            if final_remaining:
+                segments.append({"type": "tts", "text": leading_tags + final_remaining})
+            elif leading_tags and not segments:
+                segments.append({"type": "tts", "text": text})
+
+        return segments
+
+    def preprocess_signatures(self, llm_result: XmlLlmResult) -> None:
+        if not self.enabled():
+            return
+            
+        voices_conf = self.config.get("signature_voices") or []
+        if not voices_conf:
+            return
+
+        # Resolve once for this entire response turn to ensure random consistency across all segments
+        import random
+        resolved_voices = []
+        for item in voices_conf:
+            audio_val = item.get("audio")
+            if isinstance(audio_val, list):
+                valid_audios = [str(a).strip() for a in audio_val if a]
+                audio_path = random.choice(valid_audios) if valid_audios else ""
+            else:
+                audio_path = str(audio_val or "").strip()
+            
+            if audio_path:
+                resolved_voices.append({
+                    "audio": audio_path,
+                    "matched_texts": item.get("matched_texts") or []
+                })
+
+        if not resolved_voices:
+            return
+
+        # 1. Process TTS segments
+        self._preprocess_tts_segments(llm_result, resolved_voices)
+        
+        # 2. Process message chains (if enabled)
+        if self.config.get("replace_in_message", False):
+            self._preprocess_msg_chains(llm_result, resolved_voices)
+
+    def _preprocess_tts_segments(self, llm_result: XmlLlmResult, resolved_voices: list[dict]) -> None:
+        new_tts_segments: list[TTSRequest] = []
+        index_mapping: dict[int, list[int]] = {}
+        
+        for i, segment in enumerate(llm_result.tts_segments):
+            split_parts = self.split_text_by_signatures(segment.text, resolved_voices)
+            new_indices = []
+            for part in split_parts:
+                if part["type"] == "signature":
+                    new_seg = TTSRequest(
+                        text=part["text"],
+                        lang=segment.lang,
+                        emotion=segment.emotion,
+                        pre_recorded_path=part["path"],
+                    )
+                else:
+                    new_seg = TTSRequest(
+                        text=part["text"],
+                        lang=segment.lang,
+                        emotion=segment.emotion,
+                    )
+                new_indices.append(len(new_tts_segments))
+                new_tts_segments.append(new_seg)
+            index_mapping[i] = new_indices
+            
+        new_output_order: list[tuple[str, int]] = []
+        output_order = llm_result.output_order
+        if not output_order:
+            output_order = [("message", index) for index in range(len(llm_result.msg_chains))]
+            output_order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
+            
+        for item_type, index in output_order:
+            if item_type == "tts":
+                if index in index_mapping:
+                    for new_idx in index_mapping[index]:
+                        new_output_order.append(("tts", new_idx))
+            else:
+                new_output_order.append((item_type, index))
+                
+        llm_result.tts_segments = new_tts_segments
+        llm_result.output_order = new_output_order
+
+    def _preprocess_msg_chains(self, llm_result: XmlLlmResult, resolved_voices: list[dict]) -> None:
+        new_msg_chains = []
+        new_tts_segments = list(llm_result.tts_segments)
+        msg_index_mapping: dict[int, list[tuple[str, int]]] = {}
+
+        for msg_idx, chain in enumerate(llm_result.msg_chains):
+            new_chain_items = []
+            order_mapping = []
+            
+            for component in chain:
+                if isinstance(component, Plain):
+                    split_parts = self.split_text_by_signatures(component.text, resolved_voices)
+                    for part in split_parts:
+                        if part["type"] == "signature":
+                            new_seg = TTSRequest(
+                                text=part["text"],
+                                pre_recorded_path=part["path"],
+                            )
+                            tts_idx = len(new_tts_segments)
+                            new_tts_segments.append(new_seg)
+                            
+                            if new_chain_items:
+                                msg_chain_idx = len(new_msg_chains)
+                                new_msg_chains.append(new_chain_items)
+                                order_mapping.append(("message", msg_chain_idx))
+                                new_chain_items = []
+                                
+                            order_mapping.append(("tts", tts_idx))
+                        else:
+                            new_chain_items.append(Plain(text=part["text"]))
+                else:
+                    new_chain_items.append(component)
+                    
+            if new_chain_items:
+                msg_chain_idx = len(new_msg_chains)
+                new_msg_chains.append(new_chain_items)
+                order_mapping.append(("message", msg_chain_idx))
+                
+            msg_index_mapping[msg_idx] = order_mapping
+
+        new_output_order: list[tuple[str, int]] = []
+        output_order = llm_result.output_order
+        if not output_order:
+            output_order = [("message", index) for index in range(len(llm_result.msg_chains))]
+            output_order.extend(("tts", index) for index in range(len(llm_result.tts_segments)))
+            
+        for item_type, index in output_order:
+            if item_type == "message":
+                if index in msg_index_mapping:
+                    new_output_order.extend(msg_index_mapping[index])
+            else:
+                new_output_order.append((item_type, index))
+
+        new_msg_texts = []
+        new_msg_logs = []
+        for chain in new_msg_chains:
+            text_parts = []
+            log_parts = []
+            for comp in chain:
+                if isinstance(comp, Plain):
+                    text_parts.append(comp.text)
+                    log_parts.append(comp.text)
+                elif hasattr(comp, "qq"):
+                    log_parts.append(f" <@{comp.qq}>")
+                elif hasattr(comp, "path") or hasattr(comp, "url"):
+                    log_parts.append(" [图片]")
+            new_msg_texts.append("".join(text_parts))
+            new_msg_logs.append("".join(log_parts))
+            
+        llm_result.msg_chains = new_msg_chains
+        llm_result.msg_texts = new_msg_texts
+        llm_result.msg_logs = new_msg_logs
+        llm_result.tts_segments = new_tts_segments
+        llm_result.output_order = new_output_order

@@ -243,6 +243,45 @@
                         }
                     }
                 }
+            },
+            "signature_voices": {
+                "type": "template_list",
+                "description": "标志性语音替换列表",
+                "hint": "配置标志性发言文本与语音文件的映射。如果合成的语音文本匹配，将直接发送对应语音文件。",
+                "templates": {
+                    "signature_voice_item": {
+                        "name": "语音映射项",
+                        "items": {
+                            "audio": {
+                                "description": "语音文件",
+                                "type": "file",
+                                "file_types": [
+                                    "wav",
+                                    "mp3",
+                                    "ogg",
+                                    "amr",
+                                    "wma",
+                                    "m4a",
+                                    "silk"
+                                ],
+                                "default": "",
+                                "hint": "上传或选择本条标志性发言对应的语音文件"
+                            },
+                            "matched_texts": {
+                                "description": "匹配文本列表",
+                                "type": "list",
+                                "default": [],
+                                "hint": "可匹配的多个发言文本，例如 ['你好', 'hello', '嗨']"
+                            }
+                        }
+                    }
+                }
+            },
+            "replace_in_message": {
+                "description": "从普通文本消息中替换",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，普通文本消息中的首尾标志性发言也会被摘出并直接发送语音。"
             }
         }
     },
