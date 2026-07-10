@@ -16,39 +16,38 @@ def build_tts_xml_instructions(
         f"`{lang}`（{name or LANGUAGE_NAMES.get(lang, lang)}）"
         for lang, name in language_options
     )
-    prompt_lines = [
-        "## TTS 语音输出",
-        '如果需要发送语音，请输出并列的 `<tts lang="语言代码" emotion="情绪">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
-        f"可用语言代码仅限：{language_desc}。无法判断语言时使用配置列表第一项作为默认语言："
-        f"`{default_lang}`（{default_lang_name}）。",
-        "`emotion` 为可选属性；没有明确情绪时可以省略。可以连续输出多个 `<tts>` 标签，会按出现顺序发送。",
-    ]
 
     if provider_type == "minimax":
-        prompt_lines.extend(
-            [
-                "",
-                "### 标签规则",
-                "语音文本中可以插入以下语气词标签，且只能使用这些标签："
-                + "、".join(f"`{tag}`" for tag in MINIMAX_TONE_TAGS)
-                + "。",
-                "情绪 `emotion` 只能使用："
-                + "、".join(f"`{emotion}`" for emotion in sorted(MINIMAX_EMOTIONS))
-                + "。不确定时省略；非法情绪会被系统忽略。",
-                f'示例：`<tts lang="{default_lang}" emotion="happy">语音文本 (laughs)</tts>`',
-            ]
-        )
+        prompt_lines = [
+            "## TTS 语音输出",
+            '如果需要发送语音，请输出并列的 `<tts lang="语言代码" emotion="情绪">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
+            f"可用语言代码仅限：{language_desc}。无法判断语言时使用配置列表第一项作为默认语言："
+            f"`{default_lang}`（{default_lang_name}）。",
+            "`emotion` 为可选属性；没有明确情绪时可以省略。可以连续输出多个 `<tts>` 标签，会按出现顺序发送。",
+            "",
+            "### 标签规则",
+            "语音文本中可以插入以下语气词标签，且只能使用这些标签："
+            + "、".join(f"`{tag}`" for tag in MINIMAX_TONE_TAGS)
+            + "。",
+            "情绪 `emotion` 只能使用："
+            + "、".join(f"`{emotion}`" for emotion in sorted(MINIMAX_EMOTIONS))
+            + "。不确定时省略；非法情绪会被系统忽略。",
+            f'示例：`<tts lang="{default_lang}" emotion="happy">(chuckle)哼哼，这样爱丽丝的电量就能一直保持在百分之百啦(humming)</tts>`',
+        ]
     else:
-        prompt_lines.extend(
-            [
-                "",
-                "### 标签规则",
-                "语音文本中可以使用自由的方括号标签，例如 `[softly]`、`[大喊]`，根据文本语言填入，可控制语调。",
-                "情绪 `emotion` 可选，输入与语言匹配的的情绪标签。",
-                "标签、情绪的语言需要和文本保持一致。",
-                f'示例：`<tts lang="ja-JP" emotion="やさしい">[静かに]语音文本</tts>`',
-            ]
-        )
+        prompt_lines = [
+            "## TTS 语音输出",
+            '如果需要发送语音，请输出并列的 `<tts lang="语言代码">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
+            f"可用语言代码仅限：{language_desc}。无法判断语言时使用配置列表第一项作为默认语言："
+            f"`{default_lang}`（{default_lang_name}）。",
+            "可以连续输出多个 `<tts>` 标签，会按出现顺序发送。",
+            "",
+            "### 标签规则",
+            "语音文本中可以使用自由的方括号标签，根据文本语言填入，可控制语调。",
+            "标签的语言需要和文本保持一致。",
+            f'示例1：`<tts lang="ja-JP" >[くすくす笑い]ほほ、そうすればアリスの電力はずっと[強調]100%になるのね</tts>`',
+            f'示例2：`<tts lang="zh-CN" >[轻笑]哼哼，这样爱丽丝的电量就能[強調]一直保持在百分之百啦</tts>`',
+        ]
 
     return "\n".join(prompt_lines)
 
