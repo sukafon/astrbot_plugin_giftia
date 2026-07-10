@@ -159,14 +159,13 @@ class TTSManager:
         )
 
     def _adapt_text(self, text: str, emotion: str) -> str:
-        if self.provider_type() != "fishaudio" or not emotion:
-            return text
+        """
+        对语音文本进行预处理或适配。
 
-        tag = re.sub(r"[\[\]\r\n]+", " ", emotion).strip()
-        tag = re.sub(r"\s+", " ", tag)[:40]
-        if not tag:
-            return text
-        return f"[{tag}]{text}"
+        注：目前虽然保留了 `emotion` 参数，但实际上并未在任何现有的供应商中被使用。
+        此处保留该参数及签名，是为未来可能需要根据 emotion 进行文本适配/拼接的其他供应商提供预留与前向兼容性。
+        """
+        return text
 
     async def get_audio_path(self, resolved: ResolvedTTSRequest) -> str:
         lock = self._lock_for_provider(resolved.provider_id)
