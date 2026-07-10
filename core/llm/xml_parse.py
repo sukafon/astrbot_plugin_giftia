@@ -561,16 +561,21 @@ class XmlParse:
         if not xml_raw:
             return ""
 
-        # 先进行防流口水清洗（标签修正、JSON修复、哈希表示清洗、重复标签去重等）
-        clean_raw = clean_llm_completion(xml_raw)
+        # 先移除可能包裹整个 XML 的首尾 ```xml ... ``` 标记，避免其内部合法的 XML 标签被 escape_tags_in_code_blocks 误伤
+        stripped_raw = xml_raw.strip()
+        if stripped_raw.startswith("```") and stripped_raw.endswith("```"):
+            first_newline = stripped_raw.find("\n")
+            if first_newline != -1:
+                stripped_raw = stripped_raw[first_newline + 1 : -3].strip()
 
-        # 移除首尾的 ```xml 等代码块标记
-        clean_str = re.sub(
-            r"```[a-zA-Z]*\s*|\s*```", "", clean_raw, flags=re.IGNORECASE
-        ).strip()
+        # 进行防流口水清洗（标签修正、JSON修复、哈希表示清洗、重复标签去重等）
+        clean_raw = clean_llm_completion(stripped_raw)
+
+        # 兜底清理：移除可能残留的 ``` 代码围栏块（包括 ```xml 等语言标识）
+        clean_raw = re.sub(r"```[a-zA-Z0-9_\-]*", "", clean_raw)
 
         # 自动闭合未闭合的同级标签
-        clean_str = self.close_xml_tags(clean_str)
+        clean_str = self.close_xml_tags(clean_raw)
 
         # 处理 <think>...</think> 标签内部的xml，进行转义
         pattern_think = re.compile(
