@@ -6,6 +6,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import (
     At,
+    Face,
     File,
     Forward,
     Image,
@@ -36,6 +37,7 @@ from .message_media import (
 )
 from .message_parse_types import ChainParseResult
 from .schemas import MediaCaption, MessageData
+from .emoji_constants import EMOJI_MAP
 
 
 class MessageParser:
@@ -137,6 +139,15 @@ class MessageParser:
         return current_name or user_id
 
     @staticmethod
+    def _get_event_field(obj, field_name: str, default=None):
+        """从字典或对象中安全地读取属性/字段"""
+        if obj is None:
+            return default
+        if hasattr(obj, "get"):
+            return obj.get(field_name, default)
+        return getattr(obj, field_name, default)
+
+    @staticmethod
     def _get_poke_target_id(comp: Poke) -> str:
         target_id = (
             comp.target_id()
@@ -188,11 +199,47 @@ class MessageParser:
         group_or_user_id = event.get_group_id() or event.get_sender_id()
         sender_id = event.get_sender_id()
         has_poke = any(isinstance(comp, Poke) for comp in event.get_messages())
+        
+        # Check for reaction notices (e.g. notice.group_react / notice.friend_react / notice.reaction / notice.group_msg_emoji_like)
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        
+        is_reaction = False
+        if raw_message:
+            post_type = self._get_event_field(raw_message, "post_type", "")
+            notice_type = self._get_event_field(raw_message, "notice_type", "")
+            message_name = self._get_event_field(raw_message, "name", "")
+            
+            # Check notice_type or event.name (e.g., support reaction, group_reaction, friend_reaction, group_msg_emoji_like, friend_msg_emoji_like)
+            reaction_types = [
+                "group_react", "friend_react", "reaction", "group_reaction", "friend_reaction", 
+                "group_msg_emoji_like", "friend_msg_emoji_like"
+            ]
+            reaction_names = [f"notice.{t}" for t in reaction_types]
+            
+            if (post_type == "notice" and notice_type in reaction_types) or message_name in reaction_names:
+                is_reaction = True
+                
+                emoji_id = str(self._get_event_field(raw_message, "emoji_id", "") or "")
+                if not emoji_id:
+                    likes = self._get_event_field(raw_message, "likes", [])
+                    if likes and isinstance(likes, list) and len(likes) > 0:
+                        first_like = likes[0]
+                        emoji_id = str(self._get_event_field(first_like, "emoji_id", "") or "")
+                
+                target_msg_id = str(self._get_event_field(raw_message, "message_id", "") or "")
+                
+                emoji_desc = EMOJI_MAP.get(emoji_id, f"表情:{emoji_id}")
+                msg = f'[贴表情回应: {emoji_desc}] <emoji_like message_id="{target_msg_id}" emoji_id="{emoji_id}" />'
+                
+                # Update event's message chain so other downstream components can see it
+                if hasattr(event, "message_obj") and event.message_obj:
+                    event.message_obj.message = [Plain(text=msg)]
+                    
         sender_name = await self._resolve_user_name(
             event=event,
             user_id=sender_id,
             current_name=event.get_sender_name(),
-            force_lookup=has_poke,
+            force_lookup=has_poke or is_reaction,
         )
         if has_poke:
             poke_msg = await self._format_poke_message(
@@ -301,6 +348,10 @@ class MessageParser:
             elif isinstance(comp, File):
                 # 暂不支持文件转述
                 msg_parts.append(f"[文件:{comp.name}]")
+            elif isinstance(comp, Face):
+                emoji_id = str(comp.id)
+                emoji_desc = EMOJI_MAP.get(emoji_id, emoji_id)
+                msg_parts.append(f"[表情:{emoji_desc}]")
             elif isinstance(comp, Poke):
                 target_id = self._get_poke_target_id(comp)
                 msg_parts.append(
