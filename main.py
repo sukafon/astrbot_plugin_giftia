@@ -1,9 +1,10 @@
 import asyncio
+import json
 from collections import defaultdict
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Plain, Reply, Image
 from astrbot.api.star import Context, Star
 from astrbot.core import AstrBotConfig
 
@@ -31,6 +32,7 @@ from .core.utils.scheduler import Scheduler
 from .core.utils.task_board import TaskBoardManager
 from .core.utils.tools_func import ToolsFunc
 from .core.web.webui_manager import WebUIManager
+from .core.utils.schemas import XmlLlmResult
 
 
 class Giftia(Star):
@@ -502,6 +504,115 @@ class Giftia(Star):
             group_or_user_id=group_or_user_id,
             remind_message=remind_message,
         )
+
+    async def on_drawing_complete(
+        self,
+        event: AstrMessageEvent,
+        result: MessageChain,
+        params: dict,
+        unified_msg_origin: str,
+        **kwargs,
+    ):
+        """后台绘图完成回调"""
+
+        # 1. 过滤出真正的图片组件
+        images = [comp for comp in result.chain if isinstance(comp, Image)]
+        
+        # 2. 检查结果文本
+        result_text = ""
+        for comp in result.chain:
+            if isinstance(comp, Plain):
+                result_text += comp.text or ""
+
+        # 3. 判定是否成功
+        # 优先从 kwargs 获取显式成功状态（如果未来绘图后端支持传入 success 参数）
+        is_success = kwargs.get("success")
+        if is_success is None:
+            # 兼容模式：若无显式状态参数，通过消息链内容进行判定。
+            # 大香蕉生成失败时，会向消息链放入包含 "执行失败" 的 Plain 文本，且无图片组件；
+            # 成功时，若不直接发送则包含图片组件，若直接发送则包含 "图片已成功发送给用户" 的 Plain 文本。
+            if len(images) > 0:
+                is_success = True
+            elif "执行失败" in result_text:
+                is_success = False
+            elif "成功" in result_text:
+                is_success = True
+            else:
+                is_success = False
+        
+        error_msg = ""
+        if not is_success:
+            error_msg = result_text if result_text else "未知错误"
+
+        # 4. 如果成功，且包含图片（大香蕉未开启直接发送时），构造只包含图片的 MessageChain 并直接发送给用户
+        if is_success:
+            if len(images) > 0:
+                logger.info(f"[Giftia] 后台绘图完成，正在直接发送生成的图片...")
+                send_chain = []
+                if event.message_obj and hasattr(event.message_obj, "message_id") and event.message_obj.message_id:
+                    send_chain.append(Reply(id=event.message_obj.message_id))
+                send_chain.extend(images)
+                await event.send(event.chain_result(send_chain))
+            else:
+                logger.info(f"[Giftia] 后台绘图完成（大香蕉已直接发送图片），状态: {result_text}")
+        else:
+            logger.warning(f"[Giftia] 后台绘图失败: {error_msg}")
+
+        # 4. 唤醒 Bot 进行后继发言/点评
+        try:
+            bot_name = self.adapter_id_map.get(event.platform_meta.id)
+            if not bot_name:
+                logger.warning("[Giftia] 未找到对应的 Bot 实例，跳过唤醒。")
+                return
+            
+            bot_conf = self.bot_map.get(bot_name, {})
+            nickname = bot_conf.get("nickname", bot_name)
+            group_or_user_id = event.get_group_id() or event.get_sender_id()
+
+            if is_success:
+                remind_msg = (
+                    f"[系统通知] 绘图已完成并且已经发送给用户。"
+                    f"请根据上下文（包含刚刚发送的图片及转述描述），以你的角色口吻和语气进行拟人化对话确认或后续互动。"
+                    f"注意：图片已经被系统自动发出了，不要在你的回复中输出任何图片链接、图片组件或再次调用画图工具，只输出你的文字/角色回复即可。"
+                )
+            else:
+                remind_msg = (
+                    f"[系统通知] 绘图任务执行失败（参数: {json.dumps(params, ensure_ascii=False)}，错误原因: {error_msg}）。"
+                    f"请以你的角色口吻和语气，向用户表达歉意或给出合理的解释，告知绘图失败了。"
+                    f"注意：只需进行普通的对话回复，不要再次调用绘图工具。"
+                )
+
+            # 运行回复流水线
+            logger.info(f"[Giftia] 正在唤醒 Bot {bot_name} 进行回复/点评...")
+            pending_recall_memories = []
+            async for chunk in self.chat_manager.reply_pipeline.dispatch_llm_reply_loop(
+                event=event,
+                bot_name=bot_name,
+                nickname=nickname,
+                group_or_user_id=group_or_user_id,
+                remind_message=remind_msg,
+                image_urls=[],
+                pending_recall_memories=pending_recall_memories,
+            ):
+                if chunk:
+                    if isinstance(chunk, XmlLlmResult):
+                        # 派发动作和消息发送
+                        await self.chat_manager.action_dispatcher.dispatch_actions(
+                            event=event,
+                            bot_name=bot_name,
+                            nickname=nickname,
+                            group_or_user_id=group_or_user_id,
+                            llm_result=chunk,
+                        )
+
+            # 提交记忆
+            self.chat_manager.reply_pipeline.commit_pending_session_recalled_memories(
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+                pending_recall_memories=pending_recall_memories,
+            )
+        except Exception as e:
+            logger.error(f"[Giftia] 唤醒 Bot 回复失败: {e}", exc_info=True)
 
     async def terminate(self):
         """销毁方法"""
