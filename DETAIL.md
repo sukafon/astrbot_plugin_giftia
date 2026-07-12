@@ -46,13 +46,13 @@
 - **主动接话触发概率 (`proactive_probability`)**: 当分析计数为 0 且没有被 `@` 时，群友发来的每条消息按设定概率（0-100%）随机触发接话决策。
 - **启用关键词监听模式 (`keyword_trigger_enabled`)**: 开启后，当群聊消息中提到设置的兴趣关键词时触发接话决策。
 - **兴趣关键词列表 (`keyword_rules`)**: 支持直接输入关键词，或以“关键词:概率”格式（例如 `原神:50`）指定独立触发概率。
-- **小模型判断系统提示词 (`decision_prompt`)**: 控制小模型判断逻辑的系统提示词（模版见 [流萤-小模型判断.md](prompt_example/流萤-小模型判断.md)）。
+- **小模型判断系统提示词 (`decision_prompt`)**: 控制小模型判断逻辑的系统提示词（模版见 [流萤-小模型判断.md](prompt_example/character/流萤-小模型判断.md)）。
 
 ### 3. 大模型回复配置 (`llm_reply_conf`)
 - **启用大模型回复功能 (`enabled`)**: 是否启用大模型回复。
 - **大模型回复提供商 (`provider_ids`)**: 你的核心回复大模型，支持配置多个以自动降级或随机轮询。
 - **多提供商选择模式 (`provider_selection_mode`)**: 支持 `fallback`（按顺序降级尝试）或 `random`（随机打乱顺序使用）。
-- **大模型回复系统提示词 (`llm_reply_prompt`)**: 核心人设提示词（模版见 [天童爱丽丝-大模型回复.md](prompt_example/天童爱丽丝-大模型回复（新格式）.md) 或 [流萤-大模型回复.md](prompt_example/流萤-大模型回复.md)）。
+- **大模型回复系统提示词 (`llm_reply_prompt`)**: 核心人设提示词（模版见 [天童爱丽丝-大模型回复.md](prompt_example/character/天童爱丽丝-大模型回复.md) 或 [流萤-大模型回复.md](prompt_example/character/流萤-大模型回复.md)）。
 
 ### 4. 媒体转述配置 (`caption_config`)
 - **启用图片转述 (`image_caption_enabled`)** / **启用音频转述 (`audio_caption_enabled`)**: 是否开启对多媒体消息的自动多模态识别与文字翻译。
@@ -74,15 +74,15 @@
 插件附带的 `prompt_example` 目录提供了丰富的人设与判断 Prompts 供参考：
 
 ### 核心配置提示词（主要 Bot 人设与决策参考，建议复制并填入插件配置中）
-- [天童爱丽丝-大模型回复（新格式）.md](prompt_example/天童爱丽丝-大模型回复（新格式）.md) / [流萤-大模型回复.md](prompt_example/流萤-大模型回复.md)：大模型生成回复所需的人设提示词参考。
-- [流萤-小模型判断.md](prompt_example/流萤-小模型判断.md)：控制小模型回复决策与何时触发 RAG 记忆检索的逻辑判断提示词参考。
+- [天童爱丽丝-大模型回复.md](prompt_example/character/天童爱丽丝-大模型回复.md) / [流萤-大模型回复.md](prompt_example/character/流萤-大模型回复.md)：大模型生成回复所需的人设提示词参考。
+- [天童爱丽丝-小模型判断.md](prompt_example/character/天童爱丽丝-小模型判断.md) / [流萤-小模型判断.md](prompt_example/character/流萤-小模型判断.md)：控制小模型回复决策与何时触发 RAG 记忆检索的逻辑判断提示词参考。
 
 ### 内置硬编码提示词（仅供查看）
 以下提示词已硬编码嵌入本插件底层，**无需且不支持手动配置**，对应的示例文件仅供开发者与用户查看和了解其内部工作原理：
-- [用户画像维护.md](prompt_example/用户画像维护.md) & [关系画像维护.md](prompt_example/关系画像维护.md) (画像被动记忆归纳)
-- [图片转述.md](prompt_example/图片转述.md) & [音频转述.md](prompt_example/音频转述.md) (多模态转述规则)
-- [记忆总结.md](prompt_example/记忆总结.md) (短期归纳总结)
-- [表情包分析.md](prompt_example/表情包分析.md)
+- [用户画像维护.md](prompt_example/memory/用户画像维护.md) & [关系画像维护.md](prompt_example/memory/关系画像维护.md) (画像被动记忆归纳)
+- [图片转述.md](prompt_example/quote/图片转述.md) & [音频转述.md](prompt_example/quote/音频转述.md) (多模态转述规则)
+- [记忆总结.md](prompt_example/memory/记忆总结.md) (短期归纳总结)
+- [表情包分析.md](prompt_example/quote/表情包分析.md)
 
 ---
 
