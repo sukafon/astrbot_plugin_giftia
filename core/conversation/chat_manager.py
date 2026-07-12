@@ -7,6 +7,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
 from astrbot.api.message_components import At
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.utils.session_lock import session_lock_manager
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
@@ -231,77 +232,78 @@ class ChatManager:
 
         # 6. 进入 LLM 回复流水线
         reply_key = f"{bot_name}:{group_or_user_id}"
-        self.plugin.replying_status[reply_key] = (
-            self.plugin.replying_status.get(reply_key, 0) + 1
-        )
-        if pending_recall_memories is None:
-            pending_recall_memories = []
+        async with session_lock_manager.acquire_lock(event.unified_msg_origin):
+            self.plugin.replying_status[reply_key] = (
+                self.plugin.replying_status.get(reply_key, 0) + 1
+            )
+            if pending_recall_memories is None:
+                pending_recall_memories = []
 
-        try:
-            has_sent_reply = False
-            async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
-                event=event,
-                bot_name=bot_name,
-                nickname=nickname,
-                group_or_user_id=group_or_user_id,
-                current_message=current_message,
-                image_urls=image_urls,
-                audio_urls=audio_urls,
-                relevant_memories=relevant_memories,
-                pending_recall_memories=pending_recall_memories,
-            ):
-                if chunk:
-                    if isinstance(chunk, XmlLlmResult):
-                        # 派发具体写操作和消息发送
-                        await self.action_dispatcher.dispatch_actions(
-                            event=event,
-                            bot_name=bot_name,
-                            nickname=nickname,
-                            group_or_user_id=group_or_user_id,
-                            llm_result=chunk,
-                        )
-                        has_tts_reply = (
-                            bool(chunk.tts_segments)
-                            and hasattr(self.plugin, "tts_manager")
-                            and self.plugin.tts_manager.enabled()
-                        )
-                        if chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids:
-                            has_sent_reply = True
-                else:
-                    logger.error(f"{bot_name} 生成消息失败，收到空消息块")
-
-            if has_sent_reply:
-                fmt_key = f"{bot_name}:{group_or_user_id}"
-                active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
-                decision_conf = bot_conf.get("decision_conf", {})
-                window_size = decision_conf.get("reply_active_window", 10)
-                self.plugin.active_reply_counters[fmt_key] = window_size
-
-                trigger_msg_id = None
-                if (
-                    active_counter == 0
-                    and "current_message" in locals()
-                    and current_message
+            try:
+                has_sent_reply = False
+                async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
+                    event=event,
+                    bot_name=bot_name,
+                    nickname=nickname,
+                    group_or_user_id=group_or_user_id,
+                    current_message=current_message,
+                    image_urls=image_urls,
+                    audio_urls=audio_urls,
+                    relevant_memories=relevant_memories,
+                    pending_recall_memories=pending_recall_memories,
                 ):
-                    trigger_msg_id = current_message.message_id
+                    if chunk:
+                        if isinstance(chunk, XmlLlmResult):
+                            # 派发具体写操作和消息发送
+                            await self.action_dispatcher.dispatch_actions(
+                                event=event,
+                                bot_name=bot_name,
+                                nickname=nickname,
+                                group_or_user_id=group_or_user_id,
+                                llm_result=chunk,
+                            )
+                            has_tts_reply = (
+                                bool(chunk.tts_segments)
+                                and hasattr(self.plugin, "tts_manager")
+                                and self.plugin.tts_manager.enabled()
+                            )
+                            if chunk.msg_chains or has_tts_reply or chunk.repeat_message_ids:
+                                has_sent_reply = True
+                    else:
+                        logger.error(f"{bot_name} 生成消息失败，收到空消息块")
 
-                await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                if has_sent_reply:
+                    fmt_key = f"{bot_name}:{group_or_user_id}"
+                    active_counter = self.plugin.active_reply_counters.get(fmt_key, 0)
+                    decision_conf = bot_conf.get("decision_conf", {})
+                    window_size = decision_conf.get("reply_active_window", 10)
+                    self.plugin.active_reply_counters[fmt_key] = window_size
+
+                    trigger_msg_id = None
+                    if (
+                        active_counter == 0
+                        and "current_message" in locals()
+                        and current_message
+                    ):
+                        trigger_msg_id = current_message.message_id
+
+                    await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        trigger_msg_id=trigger_msg_id,
+                    )
+                    logger.info(
+                        f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
+                    )
+                self.reply_pipeline.commit_pending_session_recalled_memories(
                     bot_name=bot_name,
                     group_or_user_id=group_or_user_id,
-                    trigger_msg_id=trigger_msg_id,
+                    pending_recall_memories=pending_recall_memories,
                 )
-                logger.info(
-                    f"{bot_name} 机器人发言，重置接话分析窗口计数为 {window_size}"
+            finally:
+                self.plugin.replying_status[reply_key] = max(
+                    0, self.plugin.replying_status.get(reply_key, 0) - 1
                 )
-            self.reply_pipeline.commit_pending_session_recalled_memories(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-                pending_recall_memories=pending_recall_memories,
-            )
-        finally:
-            self.plugin.replying_status[reply_key] = max(
-                0, self.plugin.replying_status.get(reply_key, 0) - 1
-            )
 
     def get_platform_adapter(
         self, adapter_id: str
@@ -328,94 +330,104 @@ class ChatManager:
         remind_message: str,
     ):
         """处理定时任务调度提醒"""
-        mock_event = self.fake_event(
-            self_id=self_id,
-            sender_id=user_id,
-            sender_name=user_name,
-            group_id=group_id,
-            unified_msg_origin=unified_msg_origin,
-            adapter_id=adapter_id,
-        )
-        has_sent_reply = False
-        pending_recall_memories = []
-        async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
-            event=mock_event,
-            bot_name=bot_name,
-            nickname=nickname,
-            group_or_user_id=group_or_user_id,
-            remind_message=f"[定时任务唤醒] {user_name}({user_id}): {remind_message}",
-            pending_recall_memories=pending_recall_memories,
-        ):
-            if chunk:
-                if isinstance(chunk, XmlLlmResult):
-                    if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
-                        self.plugin.tts_manager.preprocess_signatures(chunk)
-                    if platform_name == "aiocqhttp":
-                        if mock_event:
-                            await self.action_dispatcher.dispatch_actions(
-                                event=mock_event,
-                                bot_name=bot_name,
-                                nickname=nickname,
-                                group_or_user_id=group_or_user_id,
-                                llm_result=chunk,
-                            )
-                            has_tts_reply = (
-                                bool(chunk.tts_segments)
-                                and hasattr(self.plugin, "tts_manager")
-                                and self.plugin.tts_manager.enabled()
-                            )
-                            if (
-                                chunk.msg_chains
-                                or has_tts_reply
-                                or chunk.repeat_message_ids
-                            ):
-                                has_sent_reply = True
-                            continue
-                    # 降级到普通消息发送
-                    if not chunk.msg_chains and not chunk.tts_segments:
-                        continue
-                    for item_type, item_index in self.action_dispatcher.get_output_order(
-                        chunk
-                    ):
-                        if item_type == "message":
-                            if item_index < 0 or item_index >= len(chunk.msg_chains):
+        reply_key = f"{bot_name}:{group_or_user_id}"
+        async with session_lock_manager.acquire_lock(unified_msg_origin):
+            self.plugin.replying_status[reply_key] = (
+                self.plugin.replying_status.get(reply_key, 0) + 1
+            )
+            try:
+                mock_event = self.fake_event(
+                    self_id=self_id,
+                    sender_id=user_id,
+                    sender_name=user_name,
+                    group_id=group_id,
+                    unified_msg_origin=unified_msg_origin,
+                    adapter_id=adapter_id,
+                )
+                has_sent_reply = False
+                pending_recall_memories = []
+                async for chunk in self.reply_pipeline.dispatch_llm_reply_loop(
+                    event=mock_event,
+                    bot_name=bot_name,
+                    nickname=nickname,
+                    group_or_user_id=group_or_user_id,
+                    remind_message=f"[定时任务唤醒] {user_name}({user_id}): {remind_message}",
+                    pending_recall_memories=pending_recall_memories,
+                ):
+                    if chunk:
+                        if isinstance(chunk, XmlLlmResult):
+                            if hasattr(self.plugin, "tts_manager") and self.plugin.tts_manager.enabled():
+                                self.plugin.tts_manager.preprocess_signatures(chunk)
+                            if platform_name == "aiocqhttp":
+                                if mock_event:
+                                    await self.action_dispatcher.dispatch_actions(
+                                        event=mock_event,
+                                        bot_name=bot_name,
+                                        nickname=nickname,
+                                        group_or_user_id=group_or_user_id,
+                                        llm_result=chunk,
+                                    )
+                                    has_tts_reply = (
+                                        bool(chunk.tts_segments)
+                                        and hasattr(self.plugin, "tts_manager")
+                                        and self.plugin.tts_manager.enabled()
+                                    )
+                                    if (
+                                        chunk.msg_chains
+                                        or has_tts_reply
+                                        or chunk.repeat_message_ids
+                                    ):
+                                        has_sent_reply = True
+                                    continue
+                            # 降级到普通消息发送
+                            if not chunk.msg_chains and not chunk.tts_segments:
                                 continue
-                            msg_chain = chunk.msg_chains[item_index]
-                        elif item_type == "tts":
-                            msg_chain, _ = (
-                                await self.action_dispatcher.build_tts_message_chain(
-                                    mock_event, chunk, item_index
+                            for item_type, item_index in self.action_dispatcher.get_output_order(
+                                chunk
+                            ):
+                                if item_type == "message":
+                                    if item_index < 0 or item_index >= len(chunk.msg_chains):
+                                        continue
+                                    msg_chain = chunk.msg_chains[item_index]
+                                elif item_type == "tts":
+                                    msg_chain, _ = (
+                                        await self.action_dispatcher.build_tts_message_chain(
+                                            mock_event, chunk, item_index
+                                        )
+                                    )
+                                else:
+                                    continue
+                                if not msg_chain:
+                                    continue
+                                await self.plugin.context.send_message(
+                                    unified_msg_origin, MessageChain(msg_chain)
                                 )
-                            )
-                        else:
-                            continue
-                        if not msg_chain:
-                            continue
-                        await self.plugin.context.send_message(
-                            unified_msg_origin, MessageChain(msg_chain)
-                        )
-                        has_sent_reply = True
-            else:
-                logger.error(f"{bot_name} 定时任务调度失败，未获取到回复内容")
+                                has_sent_reply = True
+                    else:
+                        logger.error(f"{bot_name} 定时任务调度失败，未获取到回复内容")
 
-        if has_sent_reply:
-            fmt_key = f"{bot_name}:{group_or_user_id}"
-            bot_conf = self.plugin.bot_map.get(bot_name, {})
-            decision_conf = bot_conf.get("decision_conf", {})
-            window_size = decision_conf.get("reply_active_window", 10)
-            self.plugin.active_reply_counters[fmt_key] = window_size
-            await self.plugin.passive_memory_manager.mark_silence_summary_armed(
-                bot_name=bot_name,
-                group_or_user_id=group_or_user_id,
-            )
-            logger.info(
-                f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"
-            )
-        self.reply_pipeline.commit_pending_session_recalled_memories(
-            bot_name=bot_name,
-            group_or_user_id=group_or_user_id,
-            pending_recall_memories=pending_recall_memories,
-        )
+                if has_sent_reply:
+                    fmt_key = f"{bot_name}:{group_or_user_id}"
+                    bot_conf = self.plugin.bot_map.get(bot_name, {})
+                    decision_conf = bot_conf.get("decision_conf", {})
+                    window_size = decision_conf.get("reply_active_window", 10)
+                    self.plugin.active_reply_counters[fmt_key] = window_size
+                    await self.plugin.passive_memory_manager.mark_silence_summary_armed(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                    )
+                    logger.info(
+                        f"{bot_name} 定时任务发言，重置接话分析窗口计数为 {window_size}"
+                    )
+                self.reply_pipeline.commit_pending_session_recalled_memories(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    pending_recall_memories=pending_recall_memories,
+                )
+            finally:
+                self.plugin.replying_status[reply_key] = max(
+                    0, self.plugin.replying_status.get(reply_key, 0) - 1
+                )
 
     def fake_event(
         self,
