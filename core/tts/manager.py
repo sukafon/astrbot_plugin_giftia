@@ -9,7 +9,12 @@ from astrbot.api.star import StarTools
 from astrbot.core.provider.provider import TTSProvider
 
 from ..utils.schemas import TTSRequest, XmlLlmResult
-from .constants import LANGUAGE_LABELS, LANGUAGE_NAMES, MINIMAX_EMOTIONS
+from .constants import (
+    LANGUAGE_LABELS,
+    LANGUAGE_NAMES,
+    MINIMAX_EMOTIONS,
+    SUPPORTED_PROVIDER_TYPES,
+)
 
 
 @dataclass(slots=True)
@@ -41,7 +46,7 @@ class TTSManager:
 
     def provider_type(self) -> str:
         provider_type = str(self.config.get("provider_type", "minimax")).strip().lower()
-        return provider_type if provider_type in {"minimax", "fishaudio"} else "minimax"
+        return provider_type if provider_type in SUPPORTED_PROVIDER_TYPES else "minimax"
 
     def _language_items(self) -> list[tuple[str, str]]:
         items = self.config.get("language_provider_map") or []
@@ -111,6 +116,7 @@ class TTSManager:
         expected = {
             "minimax": "minimax_tts_api",
             "fishaudio": "fishaudio_tts_api",
+            "gsvtts": "gsv_tts_selfhost",
         }.get(self.provider_type())
         actual = ""
         try:

@@ -1,4 +1,9 @@
-from ..tts.constants import LANGUAGE_NAMES, MINIMAX_EMOTIONS, MINIMAX_TONE_TAGS
+from ..tts.constants import (
+    LANGUAGE_NAMES,
+    MINIMAX_EMOTIONS,
+    MINIMAX_TONE_TAGS,
+    SUPPORTED_PROVIDER_TYPES,
+)
 
 
 def build_tts_xml_instructions(
@@ -6,7 +11,7 @@ def build_tts_xml_instructions(
     language_options: list[tuple[str, str]],
 ) -> str:
     provider_type = str(provider_type or "minimax").strip().lower()
-    if provider_type not in {"minimax", "fishaudio"}:
+    if provider_type not in SUPPORTED_PROVIDER_TYPES:
         provider_type = "minimax"
     if not language_options:
         return ""
@@ -34,7 +39,7 @@ def build_tts_xml_instructions(
             + "。不确定时省略；非法情绪会被系统忽略。",
             f'示例：`<tts lang="{default_lang}" emotion="happy">(chuckle)哼哼，这样爱丽丝的电量就能一直保持在百分之百啦(humming)</tts>`',
         ]
-    else:
+    elif provider_type == "fishaudio":
         prompt_lines = [
             "## TTS 语音输出",
             '如果需要发送语音，请输出并列的 `<tts lang="语言代码">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
@@ -48,6 +53,16 @@ def build_tts_xml_instructions(
             f'示例1：`<tts lang="ja-JP" >[くすくす笑い]ほほ、そうすればアリスの電力はずっと[強調]100%になるのね</tts>`',
             f'示例2：`<tts lang="zh-CN" >[轻笑]哼哼，这样爱丽丝的电量就能[强调]一直保持在百分之百啦</tts>`',
         ]
+    elif provider_type == "gsvtts":
+        prompt_lines = [
+            "## TTS 语音输出",
+            '如果需要发送语音，请输出并列的 `<tts lang="语言代码">语音文本</tts>` 标签；不要把 `<tts>` 放进 `<message>` 内。',
+            f"可用语言代码仅限：{language_desc}。无法判断语言时使用配置列表第一项作为默认语言："
+            f"`{default_lang}`（{default_lang_name}）。",
+            "可以连续输出多个 `<tts>` 标签，会按出现顺序发送。",
+        ]
+    else:
+        prompt_lines = []
 
     return "\n".join(prompt_lines)
 
