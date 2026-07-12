@@ -16,6 +16,7 @@ from .preset_prompts import (
     DEFAULT_AUDIO_CAPTION_PROMPT,
     DEFAULT_IMAGE_CAPTION_PROMPT,
     DEFAULT_STICKER_ANALYSIS_PROMPT,
+    DEFAULT_DECISION_RULES,
     build_xml_instructions,
 )
 from .xml_parse import XmlParse
@@ -67,8 +68,14 @@ class CallLLM:
         audio_urls: list[str] | None = None,
     ) -> Decision | None:
         """调用LLM进行决策"""
-        # logger.info(f"\n<system_prompt>{system_prompt}</system_prompt>")
-        # logger.info(f"\n<user_prompt>{user_prompt}</user_prompt>")
+        if system_prompt:
+            actual_system_prompt = system_prompt.strip() + "\n\n" + DEFAULT_DECISION_RULES
+        else:
+            actual_system_prompt = DEFAULT_DECISION_RULES
+
+        logger.debug(f"\n<system_prompt>{actual_system_prompt}</system_prompt>")
+        logger.debug(f"\n<user_prompt>{user_prompt}</user_prompt>")
+
         for provider_id in provider_ids:
             for i in range(self.network_conf["decision_retry_times"]):
                 if i > 0:
@@ -76,7 +83,7 @@ class CallLLM:
                 try:
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
-                        system_prompt=system_prompt,
+                        system_prompt=actual_system_prompt,
                         prompt=user_prompt,
                         image_urls=image_urls,
                         audio_urls=audio_urls,
