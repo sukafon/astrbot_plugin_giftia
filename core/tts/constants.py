@@ -56,3 +56,5 @@ MINIMAX_TONE_TAGS = [
     "(emm)",
     "(sneezes)",
 ]
+
+SUPPORTED_PROVIDER_TYPES = {"minimax", "fishaudio", "gsvtts"}

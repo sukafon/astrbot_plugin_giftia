@@ -209,10 +209,11 @@
                 "type": "string",
                 "options": [
                     "minimax",
-                    "fishaudio"
+                    "fishaudio",
+                    "gsvtts"
                 ],
                 "default": "minimax",
-                "hint": "影响提示词中的标签与情绪规则。MiniMax 使用固定情绪枚举和括号语气词；FishAudio 使用自由方括号标签。"
+                "hint": "影响提示词中的标签与情绪规则。MiniMax 使用固定情绪枚举和括号语气词；FishAudio 使用自由方括号标签；gsvtts 为简单无情绪/标签的 TTS 输出。"
             },
             "language_provider_map": {
                 "type": "template_list",
