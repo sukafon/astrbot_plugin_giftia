@@ -147,6 +147,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         sys_prompt = self._format_prompt_template(
             self._get_profile_summary_prompt(), nickname=nickname, self_id=self_id
         )
+        logger.debug(f"[Giftia Passive Memory] 关系画像维护系统提示词:\n{sys_prompt}")
         user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
             "关系画像维护", sys_prompt, user_prompt
@@ -302,6 +303,7 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         sys_prompt = self._format_prompt_template(
             self._get_long_profile_summary_prompt(), nickname=nickname, self_id=self_id
         )
+        logger.debug(f"[Giftia Passive Memory] 用户画像维护({user_id})系统提示词:\n{sys_prompt}")
         user_prompt = await self._build_long_profile_user_prompt(
             bot_name=bot_name,
             group_or_user_id=group_or_user_id,
