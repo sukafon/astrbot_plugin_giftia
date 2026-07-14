@@ -113,6 +113,7 @@ window.GiftiaApp = {
 
     populateSessionSelect(selectEl, sessions, selectedSession) {
         if (!selectEl) return;
+        if (selectEl.tagName !== "SELECT") return;
         selectEl.innerHTML = "";
         if (!sessions || sessions.length === 0) {
             selectEl.append(new Option("暂无会话", ""));
@@ -147,19 +148,18 @@ window.GiftiaApp = {
 
             this.populateBotSelect(botEl, bots, selectedBotName);
 
-            const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
-                ? currentSession
-                : (sessions[0] ? sessions[0].group_or_user_id : "");
-
-            if (groupEl) {
+            if (groupEl && groupEl.tagName === "SELECT") {
+                const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
+                    ? currentSession
+                    : (sessions[0] ? sessions[0].group_or_user_id : "");
                 groupEl.value = nextSession;
+                this.populateSessionSelect(groupEl, sessions, nextSession);
             }
-            this.populateSessionSelect(groupEl, sessions, nextSession);
         } catch (e) {
-            if (groupEl) {
+            if (groupEl && groupEl.tagName === "SELECT") {
                 groupEl.value = "";
+                this.populateSessionSelect(groupEl, [], "");
             }
-            this.populateSessionSelect(groupEl, [], "");
         }
     },
 
@@ -1250,7 +1250,7 @@ window.GiftiaApp = {
 
         container.innerHTML = items.map(item => {
             const encodedProfile = encodeURIComponent(item.profile || "");
-            const profileHtml = window.renderProfileCard(item.profile || "", null);
+            const profileHtml = window.renderProfileCard(item.profile || "", null, true);
             
             return `
                 <div class="profile-item-card card">

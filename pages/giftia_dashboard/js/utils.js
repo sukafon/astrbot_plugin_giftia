@@ -191,7 +191,7 @@ window.downloadMedia = async function(hash, mimeType) {
     }
 };
 
-window.renderProfileCard = function(rawProfile, structured) {
+window.renderProfileCard = function(rawProfile, structured, isGroup) {
     // If we have structured details, or we can extract them from rawProfile
     let fields = {
         "你的称呼": "",
@@ -254,12 +254,14 @@ window.renderProfileCard = function(rawProfile, structured) {
     }
     
     // 2. Render Tabs Header
-    html += `
-        <div class="card-tabs-header">
-            <button class="card-tab-btn active" onclick="window.switchCardTab(this, 'profile')">画像</button>
-            <button class="card-tab-btn" onclick="window.switchCardTab(this, 'relation')">关系</button>
-        </div>
-    `;
+    if (!isGroup) {
+        html += `
+            <div class="card-tabs-header">
+                <button class="card-tab-btn active" onclick="window.switchCardTab(this, 'profile')">画像</button>
+                <button class="card-tab-btn" onclick="window.switchCardTab(this, 'relation')">关系</button>
+            </div>
+        `;
+    }
 
     // Extract fields
     const profileFields = [
@@ -295,22 +297,24 @@ window.renderProfileCard = function(rawProfile, structured) {
     html += `</div>`;
 
     // --- Tab 2: 关系 ---
-    html += `<div class="card-tab-content card-tab-relation" style="display: none;">`;
-    if (relationFields.length > 0) {
-        html += `<div class="profile-grid">`;
-        relationFields.forEach((field) => {
-            html += `
-                <div class="profile-grid-item ${field.class}" style="border-left: 3px solid ${field.color}">
-                    <div class="profile-grid-label">${field.label}</div>
-                    <div class="profile-grid-value"><span class="text-content">${window.escapeHtml(field.val)}</span></div>
-                </div>
-            `;
-        });
+    if (!isGroup) {
+        html += `<div class="card-tab-content card-tab-relation" style="display: none;">`;
+        if (relationFields.length > 0) {
+            html += `<div class="profile-grid">`;
+            relationFields.forEach((field) => {
+                html += `
+                    <div class="profile-grid-item ${field.class}" style="border-left: 3px solid ${field.color}">
+                        <div class="profile-grid-label">${field.label}</div>
+                        <div class="profile-grid-value"><span class="text-content">${window.escapeHtml(field.val)}</span></div>
+                    </div>
+                `;
+            });
+            html += `</div>`;
+        } else {
+            html += `<div class="profile-grid-empty" style="color: var(--font-secondary); padding: 12px; text-align: center; font-size: 13px;">暂无关系数据</div>`;
+        }
         html += `</div>`;
-    } else {
-        html += `<div class="profile-grid-empty" style="color: var(--font-secondary); padding: 12px; text-align: center; font-size: 13px;">暂无关系数据</div>`;
     }
-    html += `</div>`;
     
     html += `</div>`;
     return html;
