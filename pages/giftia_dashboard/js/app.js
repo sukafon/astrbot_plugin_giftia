@@ -45,14 +45,14 @@ window.GiftiaApp = {
                 endpoint: "/profiles/user",
                 filterEndpoint: "/profiles/user/filter_options",
                 botInputId: "profile-bot-name",
-                groupInputId: "profile-group-id",
+                groupInputId: "profile-group-id-select",
                 paginationKey: "userProfiles",
             },
             groupProfiles: {
                 endpoint: "/profiles/group",
                 filterEndpoint: "/profiles/group/filter_options",
                 botInputId: "profile-bot-name",
-                groupInputId: "profile-group-id",
+                groupInputId: "profile-group-id-input",
                 paginationKey: "groupProfiles",
             }
         };
@@ -1088,11 +1088,19 @@ window.GiftiaApp = {
 
     updateProfileFilterVisibility() {
         const userFilterGroup = document.getElementById("profile-user-filter-group");
+        const groupSelectGroup = document.getElementById("profile-group-select-group");
+        const groupInputGroup = document.getElementById("profile-group-input-group");
         const userPanel = document.getElementById("subpanel-user-profiles");
         const groupPanel = document.getElementById("subpanel-group-profiles");
         const isUserProfiles = this.activeSubTab === "user-profiles";
         if (userFilterGroup) {
             userFilterGroup.style.display = isUserProfiles ? "" : "none";
+        }
+        if (groupSelectGroup) {
+            groupSelectGroup.style.display = isUserProfiles ? "" : "none";
+        }
+        if (groupInputGroup) {
+            groupInputGroup.style.display = isUserProfiles ? "none" : "";
         }
         if (userPanel) {
             userPanel.classList.toggle("active", isUserProfiles);
@@ -1116,7 +1124,7 @@ window.GiftiaApp = {
             page: this.pagination.userProfiles.page,
             limit: this.pagination.userProfiles.limit,
             bot_name: document.getElementById("profile-bot-name").value,
-            group_or_user_id: document.getElementById("profile-group-id").value,
+            group_or_user_id: document.getElementById("profile-group-id-select").value,
             user_id: document.getElementById("profile-user-id").value
         };
 
@@ -1221,7 +1229,7 @@ window.GiftiaApp = {
             page: this.pagination.groupProfiles.page,
             limit: this.pagination.groupProfiles.limit,
             bot_name: document.getElementById("profile-bot-name").value,
-            group_or_user_id: document.getElementById("profile-group-id").value
+            group_or_user_id: document.getElementById("profile-group-id-input").value
         };
 
         try {
@@ -1384,7 +1392,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
         "media-type", "media-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",
-        "profile-type", "profile-bot-name", "profile-group-id", "profile-user-id"
+        "profile-type", "profile-bot-name", "profile-group-id-select", "profile-group-id-input", "profile-user-id"
     ];
 
     filterInputIds.forEach(id => {
