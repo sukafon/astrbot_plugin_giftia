@@ -174,12 +174,14 @@ def process_media_captions_for_prompt(
             for hash_val in msg.media_id_list:
                 if hash_val in inline_hashes:
                     formatted = format_inline_caption(caption_map[hash_val])
-                    msg.content = msg.content.replace(
-                        f"[图片:{hash_val}]", f"[图片: {formatted}]"
-                    )
-                    msg.content = msg.content.replace(
-                        f"[语音:{hash_val}]", f"[语音: {formatted}]"
-                    )
+                    if f"[图片:{hash_val}][描述:" not in msg.content:
+                        msg.content = msg.content.replace(
+                            f"[图片:{hash_val}]", f"[图片:{hash_val}][描述:{formatted}]"
+                        )
+                    if f"[语音:{hash_val}][描述:" not in msg.content:
+                        msg.content = msg.content.replace(
+                            f"[语音:{hash_val}]", f"[语音:{hash_val}][描述:{formatted}]"
+                        )
                 elif hash_val not in caption_map:
                     # 缺失的媒体替换为 generic 占位符
                     msg.content = msg.content.replace(f"[图片:{hash_val}]", "[图片]")
