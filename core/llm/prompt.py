@@ -35,6 +35,49 @@ USER_PROFILE_FIELDS = [
 ]
 
 
+def _apply_call_names_to_messages(
+    messages: list[MessageData],
+    user_id: str,
+    user_profile: str | dict | None,
+    active_user_briefs: list[dict] | None,
+) -> list[MessageData]:
+    """
+    将消息列表中的用户平台昵称安全替换为自定义称呼（如果存在）。
+    该函数返回新列表，并且不就地修改传入的消息对象。
+    """
+    if not messages:
+        return []
+
+    # 1. 构造映射：user_id -> call_name
+    user_id_to_call_name = {}
+    if isinstance(user_profile, dict):
+        cname = user_profile.get("call_name")
+        if cname:
+            user_id_to_call_name[str(user_id)] = cname
+
+    if active_user_briefs:
+        for brief in active_user_briefs:
+            uid = brief.get("user_id")
+            cname = brief.get("call_name")
+            if uid and cname:
+                user_id_to_call_name[str(uid)] = cname
+
+    if not user_id_to_call_name:
+        return messages
+
+    # 2. 生成替换后（不改变原对象）的副本列表
+    copied_messages = []
+    for msg in messages:
+        uid = str(msg.user_id) if msg.user_id else ""
+        if uid in user_id_to_call_name:
+            # 只有在需要修改时才通过 replace 复制新的 dataclass 实例，确保原对象不被篡改
+            copied_messages.append(replace(msg, nickname=user_id_to_call_name[uid]))
+        else:
+            copied_messages.append(msg)
+            
+    return copied_messages
+
+
 def build_decision_prompt(
     user_id: str,
     group_data: str,
@@ -49,6 +92,33 @@ def build_decision_prompt(
     short_task_limit: int = 3,
     message_truncate_limit: int = 1500,
 ) -> str:
+    # 1. Get original platform nickname for the current user
+    curr_nickname = ""
+    if current_message and str(current_message.user_id) == str(user_id):
+        curr_nickname = current_message.nickname
+    elif recent_messages:
+        for msg in reversed(recent_messages):
+            if str(msg.user_id) == str(user_id) and msg.nickname:
+                curr_nickname = msg.nickname
+                break
+
+    # Apply call names using the helper
+    copied_recent = _apply_call_names_to_messages(
+        messages=recent_messages,
+        user_id=user_id,
+        user_profile=user_profile,
+        active_user_briefs=active_user_briefs,
+    )
+
+    copied_current = None
+    if current_message:
+        copied_current = _apply_call_names_to_messages(
+            messages=[current_message],
+            user_id=user_id,
+            user_profile=user_profile,
+            active_user_briefs=active_user_briefs,
+        )[0]
+
     user_prompt = []
     # 时间
     user_prompt.append(
@@ -69,6 +139,7 @@ def build_decision_prompt(
         user_id=user_id,
         user_profile=user_profile,
         user_relation=user_relation,
+        nickname=curr_nickname,
     )
     if user_profile_block:
         user_prompt.append(user_profile_block)
@@ -82,25 +153,25 @@ def build_decision_prompt(
         user_prompt.append(task_board_block)
     # 合并转发消息内容
     decision_messages = []
-    if recent_messages:
-        decision_messages.extend(recent_messages)
-    if current_message:
-        decision_messages.append(current_message)
+    if copied_recent:
+        decision_messages.extend(copied_recent)
+    if copied_current:
+        decision_messages.append(copied_current)
     forwarded_messages_block = build_forwarded_messages_block(decision_messages)
     if forwarded_messages_block:
         user_prompt.append(forwarded_messages_block)
     # 近期消息
-    if recent_messages:
+    if copied_recent:
         recent_messages_str = "\n".join(
-            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in recent_messages
+            parse_message_to_str(msg, truncate_limit=message_truncate_limit) for msg in copied_recent
         )
         user_prompt.append(
             f"<recent_messages>\n{recent_messages_str}\n</recent_messages>"
         )
     # 当前消息
-    if current_message:
+    if copied_current:
         user_prompt.append(
-            f"<current_message>\n{parse_message_to_str(current_message, truncate_limit=message_truncate_limit)}\n</current_message>"
+            f"<current_message>\n{parse_message_to_str(copied_current, truncate_limit=message_truncate_limit)}\n</current_message>"
         )
 
     return "\n\n".join(user_prompt)
@@ -233,6 +304,14 @@ def build_reply_prompt(
         threshold=100,
     )
 
+    # Apply call names using the helper
+    processed_messages = _apply_call_names_to_messages(
+        messages=processed_messages,
+        user_id=user_id,
+        user_profile=user_profile,
+        active_user_briefs=active_user_briefs,
+    )
+
     # 拆分回 recent_messages 和 current_message
     copied_recent = (
         processed_messages[: len(recent_messages)] if recent_messages else []
@@ -258,6 +337,7 @@ def build_reply_prompt(
         user_id=user_id,
         user_profile=user_profile,
         user_relation=user_relation,
+        nickname=nickname,
     )
     if user_profile_block:
         user_prompt.append(user_profile_block)
@@ -574,6 +654,7 @@ def build_user_profile_block(
     user_id: str,
     user_profile: str | dict | None,
     user_relation: tuple[int, str] | None,
+    nickname: str | None = None,
 ) -> str:
     parts = []
 
@@ -603,7 +684,10 @@ def build_user_profile_block(
         return ""
 
     content = "\n".join(parts)
-    return f"<user_profile user_id={quoteattr(str(user_id))}>\n{content}\n</user_profile>"
+    props = f" user_id={quoteattr(str(user_id))}"
+    if nickname:
+        props += f" nickname={quoteattr(nickname)}"
+    return f"<user_profile{props}>\n{content}\n</user_profile>"
 
 
 def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
@@ -618,6 +702,8 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
 
         props = f" user_id={quoteattr(str(user_id))}"
         nickname = normalize_profile_value(item.get("nickname"))
+        call_name = normalize_profile_value(item.get("call_name"))
+
         if nickname:
             props += f" nickname={quoteattr(nickname)}"
 
@@ -628,7 +714,6 @@ def build_active_user_briefs(active_user_briefs: list[dict] | None) -> str:
         title = normalize_profile_value(item.get("title"))
         if title:
             lines.append(f"关系头衔：{title}")
-        call_name = normalize_profile_value(item.get("call_name"))
         if call_name:
             lines.append(f"你的称呼：{call_name}")
         aliases = normalize_profile_value(item.get("aliases"))
