@@ -298,7 +298,7 @@ class ReplyPipeline:
                 else ""
             ),
             user_id=event.get_sender_id(),
-            nickname=nickname,
+            nickname=event.get_sender_name() or "",
             bot_status=bot_status,
             tool_results=tool_results,
             long_memories=long_memories,
