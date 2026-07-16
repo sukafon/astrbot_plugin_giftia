@@ -210,3 +210,78 @@ class MediaCaptioner:
                     await self.plugin.emoji_manager.add_sticker(
                         bot_name=bot_name, media_id=sticker_id, sticker=sticker
                     )
+
+    async def retranscribe_media_with_question(
+        self, bot_name: str, hash_val: str, question: str
+    ) -> MediaCaption | None:
+        """
+        强制针对给定的 media_id (hash_val) 和额外关注的问题，进行重新转述，并更新缓存与数据库。
+        """
+        media_caption = await self.plugin.data_cache.get_caption_by_hash(hash_val)
+        if not media_caption:
+            logger.warning(f"[Giftia] 重新转述失败：未找到对应的媒体缓存 hash={hash_val}")
+            return None
+
+        logger.info(
+            f"[Giftia] 重新转述处理 (bot_name={bot_name}): hash={hash_val}, type={media_caption.media_type}, question={question}"
+        )
+        try:
+            cache_file = (
+                StarTools.get_data_dir("astrbot_plugin_giftia")
+                / "media_cache"
+                / hash_val
+            )
+            if media_caption.media_type == "audio":
+                audio_urls = (
+                    [str(cache_file)]
+                    if cache_file.exists()
+                    else [media_caption.url]
+                )
+                if audio_urls and audio_urls[0]:
+                    transcribed = await self.plugin.call_llm.call_llm_audio_caption(
+                        audio_urls, question=question
+                    )
+                    if transcribed:
+                        media_caption.genre = transcribed.genre
+                        media_caption.character = transcribed.character
+                        media_caption.source = transcribed.source
+                        media_caption.text = transcribed.text
+                        media_caption.caption = transcribed.caption
+                        media_caption.is_captioned = True
+                        await self.plugin.data_cache.update_caption(media_caption)
+                        return media_caption
+            else:  # image or other media
+                image_bytes = None
+                if cache_file.exists():
+                    try:
+                        image_bytes = cache_file.read_bytes()
+                    except Exception as e:
+                        logger.error(f"[Giftia] 读取图片缓存失败: {e}")
+                if not image_bytes and media_caption.url:
+                    image_bytes = (
+                        await self.plugin.http_manager.download_media(
+                            media_caption.url
+                        )
+                    )
+                if image_bytes:
+                    base64s, is_animated = await asyncio.to_thread(
+                        self.plugin.http_manager.handle_image,
+                        image_bytes,
+                    )
+                    if base64s:
+                        transcribed = await self.plugin.call_llm.call_llm_image_caption(
+                            base64s, question=question
+                        )
+                        if transcribed:
+                            media_caption.genre = transcribed.genre
+                            media_caption.character = transcribed.character
+                            media_caption.source = transcribed.source
+                            media_caption.text = transcribed.text
+                            media_caption.caption = transcribed.caption
+                            media_caption.is_captioned = True
+                            await self.plugin.data_cache.update_caption(media_caption)
+                            return media_caption
+        except Exception as e:
+            logger.error(f"[Giftia] 重新转述处理失败: {e}", exc_info=True)
+            raise e
+        return None

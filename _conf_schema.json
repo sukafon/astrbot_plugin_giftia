@@ -520,7 +520,8 @@
                     "task_board(短期任务看板)",
                     "leave(退群)",
                     "sticker(表情包发送与收集)",
-                    "memory_query_delete(记忆查询与删除)"
+                    "memory_query_delete(记忆查询与删除)",
+                    "recaption(重新转述媒体)"
                 ],
                 "default": [
                     "poke(戳一戳)",
@@ -532,7 +533,8 @@
                     "schedule_task(设置/查看/删除定时任务)",
                     "task_board(短期任务看板)",
                     "sticker(表情包发送与收集)",
-                    "memory_query_delete(记忆查询与删除)"
+                    "memory_query_delete(记忆查询与删除)",
+                    "recaption(重新转述媒体)"
                 ]
             }
         }

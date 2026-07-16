@@ -46,6 +46,7 @@ class ReplyPipeline:
             "get_message_contexts",
             "task_board_actions",
             "tts_segments",
+            "recaption_requests",
         )
         return any(bool(getattr(llm_result, field, None)) for field in action_fields)
 
@@ -444,6 +445,7 @@ class ReplyPipeline:
             or len(llm_result.all_tasks) > 0
             or len(llm_result.search_histories) > 0
             or len(llm_result.get_message_contexts) > 0
+            or (hasattr(llm_result, "recaption_requests") and len(llm_result.recaption_requests) > 0)
         ):
             logger.debug(f"{bot_name} llm step {times + 1} ...")
             async for chunk in self.dispatch_llm_reply_loop(

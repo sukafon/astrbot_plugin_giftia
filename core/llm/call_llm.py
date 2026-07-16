@@ -308,7 +308,7 @@ class CallLLM:
         return None
 
     async def call_llm_image_caption(
-        self, image_urls: list[str]
+        self, image_urls: list[str], question: str | None = None
     ) -> MediaCaption | None:
         """调用LLM生成图片描述"""
         logger.info(f"调用LLM生成图片描述，共{len(image_urls)}张图片")
@@ -333,6 +333,12 @@ class CallLLM:
                     # This prevents any upstream proxy or API-level cache from returning
                     # a stale description if they compute cache keys based purely on the text prompt.
                     unique_prompt = f"{self.image_caption_prompt}\n\n[Image Fingerprint: {','.join(b64_hashes)}]"
+                    if question:
+                        unique_prompt += (
+                            f"\n\n# 额外关注的确定问题\n"
+                            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\"（如果是画面描述相关）或 \"text\"（如果是图片内文字相关）字段中**：\n"
+                            f"{question}"
+                        )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
@@ -356,7 +362,7 @@ class CallLLM:
         return None
 
     async def call_llm_audio_caption(
-        self, audio_urls: list[str]
+        self, audio_urls: list[str], question: str | None = None
     ) -> MediaCaption | None:
         """调用LLM生成音频描述"""
         logger.info(f"调用LLM生成音频描述，共{len(audio_urls)}个音频")
@@ -370,6 +376,12 @@ class CallLLM:
                         xxh3_64_hexdigest(u.encode()) for u in audio_urls
                     ]
                     unique_prompt = f"{self.audio_caption_prompt}\n\n[Audio Fingerprint: {','.join(audio_fingerprints)}]"
+                    if question:
+                        unique_prompt += (
+                            f"\n\n# 额外关注的确定问题\n"
+                            f"请在此次转述中特别关注以下问题，并确保将针对该问题的分析或回答**包含在输出 JSON 的 \"caption\"（如果是音频氛围/情感描述相关）或 \"text\"（如果是语音转写的文字相关）字段中**：\n"
+                            f"{question}"
+                        )
                     llm_resp = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=unique_prompt,
