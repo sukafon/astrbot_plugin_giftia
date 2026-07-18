@@ -1,8 +1,7 @@
-import { refreshScopedFilters } from '../filters.js';
+import { initializeScopedView } from '../filters.js';
 
 export async function initializeTokenStatsTab() {
-    await refreshScopedFilters("tokenLogs");
-    await loadTokenStatsSummary();
+    await initializeScopedView("tokenLogs");
 }
 
 export async function loadTokenStatsSummary() {

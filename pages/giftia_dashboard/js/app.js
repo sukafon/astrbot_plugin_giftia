@@ -266,7 +266,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         }
                     } else if (app.activeTab === "token-stats") {
                         await app.refreshScopedFilters("tokenLogs", preserveSession);
-                        await app.loadTokenStatsSummary();
+                        await app.loadScopedViewData("tokenLogs");
                     }
                 }, 300);
             });

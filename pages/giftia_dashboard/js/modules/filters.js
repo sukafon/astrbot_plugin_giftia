@@ -196,7 +196,7 @@ export async function loadScopedViewData(viewKey) {
             await window.GiftiaApp.loadGroupProfiles();
             break;
         case "tokenLogs":
-            await window.GiftiaApp.loadTokenLogs();
+            await window.GiftiaApp.loadTokenStatsSummary();
             break;
         default:
             break;

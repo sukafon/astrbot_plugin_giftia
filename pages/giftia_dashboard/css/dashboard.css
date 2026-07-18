@@ -148,13 +148,7 @@
     margin-bottom: 24px;
 }
 
-/* Media Grid Layout */
-.media-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 20px;
-    margin-bottom: 24px;
-}
+
 
 /* Sub-tab Navigation and Panels for Profiles */
 .sub-tab-navigation {
