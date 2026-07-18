@@ -243,10 +243,213 @@ class TokenUsageRepository(BaseRepository):
                     })
             by_model.sort(key=lambda x: x["total_tokens"], reverse=True)
 
+            # Calculate time series data
+            unit = "day"
+            min_date_str = None
+            max_date_str = None
+            if time_range == "today":
+                unit = "hour"
+            elif not time_range: # 全部时间
+                # Find min and max dates
+                async with self.conn.execute("SELECT MIN(created_at), MAX(created_at) FROM token_usage") as cursor:
+                    row = await cursor.fetchone()
+                    if row and row[0]:
+                        min_date_str = row[0]
+                        max_date_str = row[1]
+                
+                async with self.conn.execute("SELECT MIN(date), MAX(date) FROM token_daily_stats") as cursor:
+                    row = await cursor.fetchone()
+                    if row and row[0]:
+                        if not min_date_str or row[0] < min_date_str.split(" ")[0]:
+                            min_date_str = row[0] + " 00:00:00"
+                        if not max_date_str or row[1] > max_date_str.split(" ")[0]:
+                            max_date_str = row[1] + " 23:59:59"
+                
+                if min_date_str and max_date_str:
+                    try:
+                        min_dt = datetime.strptime(min_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                        max_dt = datetime.strptime(max_date_str.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                        if (max_dt - min_dt).days > 30:
+                            unit = "month"
+                    except Exception:
+                        pass
+
+            # Pre-populate time buckets
+            now = datetime.now()
+            time_buckets = []
+            if unit == "hour":
+                time_buckets = [f"{h:02d}" for h in range(24)]
+            elif unit == "day":
+                days_count = 30
+                if time_range == "week":
+                    days_count = 7
+                elif time_range == "month":
+                    days_count = 30
+                elif time_range == "3months":
+                    days_count = 90
+                elif time_range == "year":
+                    days_count = 365
+                elif not time_range and min_date_str:
+                    try:
+                        min_dt = datetime.strptime(min_date_str.split(" ")[0], "%Y-%m-%d")
+                        days_count = (now - min_dt).days + 1
+                    except Exception:
+                        pass
+                days_count = max(1, min(days_count, 365))
+                time_buckets = [(now - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days_count)]
+                time_buckets.reverse()
+            elif unit == "month":
+                start_year = now.year
+                start_month = now.month
+                if min_date_str:
+                    try:
+                        start_year = int(min_date_str[:4])
+                        start_month = int(min_date_str[5:7])
+                    except Exception:
+                        pass
+                
+                curr_y, curr_m = start_year, start_month
+                while (curr_y < now.year) or (curr_y == now.year and curr_m <= now.month):
+                    time_buckets.append(f"{curr_y}-{curr_m:02d}")
+                    curr_m += 1
+                    if curr_m > 12:
+                        curr_m = 1
+                        curr_y += 1
+
+            raw_points = []
+            # 1. From token_usage
+            sql_ts_usage = f"""
+                SELECT strftime('%Y-%m-%d %H:%M:%S', datetime(created_at, 'localtime')) as local_time,
+                       provider_id, model_name, type, group_or_user_id, total_tokens
+                FROM token_usage
+                {where_usage}
+            """
+            async with self.conn.execute(sql_ts_usage, params_usage) as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    raw_points.append({
+                        "local_time": r["local_time"],
+                        "provider_id": r["provider_id"] or "",
+                        "model_name": r["model_name"] or "",
+                        "type": r["type"] or "",
+                        "group_or_user_id": r["group_or_user_id"] or "",
+                        "total": r["total_tokens"] or 0
+                    })
+
+            # 2. From token_daily_stats
+            if unit != "hour":
+                sql_ts_daily = f"""
+                    SELECT date, provider_id, model_name, type, group_or_user_id, total_tokens
+                    FROM token_daily_stats
+                    {where_daily}
+                """
+                async with self.conn.execute(sql_ts_daily, params_daily) as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        raw_points.append({
+                            "local_time": r["date"] + " 00:00:00",
+                            "provider_id": r["provider_id"] or "",
+                            "model_name": r["model_name"] or "",
+                            "type": r["type"] or "",
+                            "group_or_user_id": r["group_or_user_id"] or "",
+                            "total": r["total_tokens"] or 0
+                        })
+
+            model_totals = defaultdict(int)
+            type_totals = defaultdict(int)
+            group_totals = defaultdict(int)
+
+            for p in raw_points:
+                provider_id = p['provider_id']
+                model_name = p['model_name']
+                norm_provider_id = provider_id
+                norm_model_name = model_name
+                if provider_id and "/" in provider_id:
+                    parts = provider_id.split("/")
+                    norm_provider_id = parts[0]
+                    norm_model_name = "/".join(parts[1:])
+                
+                m_key = f"{norm_provider_id}/{norm_model_name}" if norm_provider_id else norm_model_name
+                t_key = p['type']
+                g_key = p['group_or_user_id'] or "私聊/系统"
+                if t_key != "tts":
+                    model_totals[m_key] += p["total"]
+                    type_totals[t_key] += p["total"]
+                    group_totals[g_key] += p["total"]
+
+            top_models = set(sorted(model_totals.keys(), key=lambda x: model_totals[x], reverse=True)[:5])
+            top_types = set(sorted(type_totals.keys(), key=lambda x: type_totals[x], reverse=True)[:5])
+            top_groups = set(sorted(group_totals.keys(), key=lambda x: group_totals[x], reverse=True)[:5])
+
+            timeline_data = {
+                b: {
+                    "model": defaultdict(int),
+                    "type": defaultdict(int),
+                    "group": defaultdict(int)
+                } for b in time_buckets
+            }
+
+            for p in raw_points:
+                t_str = p["local_time"]
+                if unit == "hour":
+                    bucket_key = t_str[11:13]
+                elif unit == "day":
+                    bucket_key = t_str[:10]
+                else:
+                    bucket_key = t_str[:7]
+                
+                if bucket_key not in timeline_data:
+                    continue
+
+                provider_id = p['provider_id']
+                model_name = p['model_name']
+                norm_provider_id = provider_id
+                norm_model_name = model_name
+                if provider_id and "/" in provider_id:
+                    parts = provider_id.split("/")
+                    norm_provider_id = parts[0]
+                    norm_model_name = "/".join(parts[1:])
+                
+                m_key = f"{norm_provider_id}/{norm_model_name}" if norm_provider_id else norm_model_name
+                t_key = p['type']
+                g_key = p['group_or_user_id'] or "私聊/系统"
+                tokens = p["total"]
+
+                if t_key != "tts":
+                    if m_key in top_models:
+                        timeline_data[bucket_key]["model"][m_key] += tokens
+                    else:
+                        timeline_data[bucket_key]["model"]["其他"] += tokens
+
+                    if t_key in top_types:
+                        timeline_data[bucket_key]["type"][t_key] += tokens
+                    else:
+                        timeline_data[bucket_key]["type"]["其他"] += tokens
+
+                    if g_key in top_groups:
+                        timeline_data[bucket_key]["group"][g_key] += tokens
+                    else:
+                        timeline_data[bucket_key]["group"]["其他"] += tokens
+
+            timeline_list = []
+            for b in time_buckets:
+                timeline_list.append({
+                    "time": b,
+                    "model": dict(timeline_data[b]["model"]),
+                    "type": dict(timeline_data[b]["type"]),
+                    "group": dict(timeline_data[b]["group"])
+                })
+
+            time_series = {
+                "unit": unit,
+                "timeline": timeline_list
+            }
+
             return {
                 "summary": summary,
                 "by_group": by_group,
                 "by_model": by_model,
+                "time_series": time_series
             }
         except Exception as e:
             logger.error(f"[Database] get_token_stats error: {e}", exc_info=True)
@@ -254,6 +457,7 @@ class TokenUsageRepository(BaseRepository):
                 "summary": {},
                 "by_group": [],
                 "by_model": [],
+                "time_series": {"unit": "day", "timeline": []}
             }
 
     async def get_token_logs(

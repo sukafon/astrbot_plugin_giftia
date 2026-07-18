@@ -623,13 +623,6 @@ class CallLLM:
         model_name = provider_id
 
         if llm_resp:
-            raw = llm_resp.raw_completion
-            if raw:
-                if hasattr(raw, "model"):
-                    model_name = getattr(raw, "model") or provider_id
-                elif hasattr(raw, "model_name"):
-                    model_name = getattr(raw, "model_name") or provider_id
-
             if prompt_tokens == 0 and completion_tokens == 0:
                 extra_info["usage_missing"] = True
         else:

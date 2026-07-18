@@ -1,7 +1,85 @@
 import { initializeScopedView } from '../filters.js';
 
+let chartTabsInitialized = false;
+let activeTokenTab = "group"; // group, model, type
+let lastStats = null;
+let tokenChartInstance = null;
+
+// Public color mapping scheme
+const colorsPalette = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#0ea5e9', '#14b8a6', '#f43f5e', '#6b7280'];
+const keyColorsCache = {};
+const staticTypeColors = {
+    'reply': '#6366f1',
+    'reply_tokens': '#6366f1',
+    'decision': '#10b981',
+    'decision_tokens': '#10b981',
+    'image_caption': '#f59e0b',
+    'image_caption_tokens': '#f59e0b',
+    'sticker_analysis': '#14b8a6',
+    'sticker_analysis_tokens': '#14b8a6',
+    'audio_caption': '#ec4899',
+    'audio_caption_tokens': '#ec4899',
+    'passive_summary': '#8b5cf6',
+    'passive_summary_tokens': '#8b5cf6',
+    '其他': '#9ca3af',
+    'Others': '#9ca3af'
+};
+
+function getColorForKey(key) {
+    if (staticTypeColors[key]) {
+        return staticTypeColors[key];
+    }
+    if (!keyColorsCache[key]) {
+        const usedCount = Object.keys(keyColorsCache).length;
+        keyColorsCache[key] = colorsPalette[usedCount % colorsPalette.length];
+    }
+    return keyColorsCache[key];
+}
+
 export async function initializeTokenStatsTab() {
     await initializeScopedView("tokenLogs");
+    initChartTabs();
+}
+
+function initChartTabs() {
+    if (chartTabsInitialized) return;
+    const container = document.getElementById("token-chart-tabs-nav");
+    if (!container) return;
+    
+    container.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".btn-tab");
+        if (!btn) return;
+        
+        const tab = btn.getAttribute("data-tab");
+        if (!tab) return;
+        
+        container.querySelectorAll(".btn-tab").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        
+        activeTokenTab = tab;
+        
+        const subtitle = document.getElementById("token-breakdown-subtitle");
+        if (subtitle) {
+            const titles = {
+                "group": "按会话/群聊占比明细",
+                "model": "按供应商/模型占比明细",
+                "type": "按操作类型占比明细"
+            };
+            subtitle.textContent = titles[tab] || "当前维度占比明细";
+        }
+
+        // If switching to group tab, reset group selection to all sessions
+        const groupSelect = document.getElementById("token-group-id");
+        if (tab === "group" && groupSelect && groupSelect.value !== "") {
+            groupSelect.value = "";
+            // This will reload data with unfiltered group
+            await loadTokenStatsSummary();
+        } else {
+            renderChartAndProgressBars();
+        }
+    });
+    
+    chartTabsInitialized = true;
 }
 
 export async function loadTokenStatsSummary() {
@@ -25,6 +103,10 @@ export async function loadTokenStatsSummary() {
 }
 
 export function renderTokenStatsSummary(stats) {
+    // Clear dynamic colors cache so rendering order remains deterministic and matches
+    for (const k in keyColorsCache) delete keyColorsCache[k];
+
+    lastStats = stats;
     const summary = stats.summary || {};
 
     // Total numbers
@@ -32,34 +114,191 @@ export function renderTokenStatsSummary(stats) {
     document.getElementById("stat-tts-chars").textContent = Number(summary.total_chars_tts || 0).toLocaleString();
 
     // Set title breakdowns on hover
-    const totalCard = document.getElementById("stat-total-tokens").parentElement;
+    const totalCard = document.getElementById("token-chart-legend-stats");
     if (totalCard) {
         totalCard.setAttribute("title", `输入 (Prompt): ${Number(summary.total_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.total_completion_tokens || 0).toLocaleString()}`);
     }
 
-    // 1. Group Breakdown
-    const groupCard = document.getElementById("card-group-breakdown");
-    const groupContainer = document.getElementById("token-group-progress-bars");
-    const groupId = document.getElementById("token-group-id").value;
+    renderChartAndProgressBars();
+}
 
-    if (!groupId) {
-        if (groupCard) groupCard.style.display = "block";
+function renderChartAndProgressBars() {
+    if (!lastStats) return;
+
+    // Clear dynamic colors cache so that the active tab's items always get deterministic colors starting from the first color in the palette
+    for (const k in keyColorsCache) delete keyColorsCache[k];
+
+    const stats = lastStats;
+    const summary = stats.summary || {};
+    const timeSeries = stats.time_series || { unit: 'day', timeline: [] };
+    const timeline = timeSeries.timeline || [];
+
+    // 1. Draw Line Chart
+    const canvasEl = document.getElementById("token-line-chart");
+    const ctx = canvasEl?.getContext("2d");
+    if (ctx) {
+        if (tokenChartInstance) {
+            tokenChartInstance.destroy();
+            tokenChartInstance = null;
+        }
+
+        const labels = timeline.map(item => item.time);
+        const dimension = activeTokenTab;
+        
+        const keyTotals = {};
+        timeline.forEach(item => {
+            Object.entries(item[dimension] || {}).forEach(([k, val]) => {
+                keyTotals[k] = (keyTotals[k] || 0) + val;
+            });
+        });
+
+        const sortedKeys = Object.keys(keyTotals).sort((a, b) => {
+            if (a === "其他") return 1;
+            if (b === "其他") return -1;
+            return keyTotals[b] - keyTotals[a];
+        });
+
+        const datasets = sortedKeys.map((key) => {
+            const data = timeline.map(item => (item[dimension] && item[dimension][key]) || 0);
+            
+            // For the model dimension, display only the model name (remove the provider prefix)
+            let label = key;
+            if (dimension === "model" && key.includes("/")) {
+                label = key.split("/").pop();
+            } else if (dimension === "type") {
+                const typeNameMap = {
+                    'reply': '大模型回复',
+                    'decision': '小模型判断',
+                    'image_caption': '图片转述',
+                    'sticker_analysis': '表情包分析',
+                    'audio_caption': '音频转述',
+                    'passive_summary': '被动总结'
+                };
+                label = typeNameMap[key] || key;
+            }
+
+            const color = getColorForKey(key);
+
+            return {
+                label: label,
+                data: data,
+                borderColor: color,
+                backgroundColor: color + "1a", // ~10% opacity
+                borderWidth: 2,
+                pointRadius: timeline.length > 50 ? 0 : 3,
+                pointHoverRadius: 5,
+                tension: 0.3,
+                fill: true,
+                originalKey: key
+            };
+        });
+
+        const formatLabel = (lbl, unit) => {
+            if (unit === "hour") return `${lbl}:00`;
+            if (unit === "day" && lbl.length === 10) return lbl.substring(5); // MM-DD
+            return lbl;
+        };
+
+        tokenChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels.map(l => formatLabel(l, timeSeries.unit)),
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            boxWidth: 10,
+                            padding: 10,
+                            font: {
+                                size: 11
+                            },
+                            color: 'var(--font-primary)'
+                        }
+                    },
+                    tooltip: {
+                        padding: 10,
+                        callbacks: {
+                            label: function(context) {
+                                const dataset = context.dataset;
+                                let originalKey = dataset.originalKey || dataset.label;
+                                if (dimension === "type") {
+                                    const typeNameMap = {
+                                        'reply': '大模型回复',
+                                        'decision': '小模型判断',
+                                        'image_caption': '图片转述',
+                                        'sticker_analysis': '表情包分析',
+                                        'audio_caption': '音频转述',
+                                        'passive_summary': '被动总结'
+                                    };
+                                    originalKey = typeNameMap[originalKey] || originalKey;
+                                }
+                                return ` ${originalKey}: ${context.raw.toLocaleString()} Tokens`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.05)',
+                            borderColor: 'rgba(255, 255, 255, 0.05)'
+                        },
+                        ticks: {
+                            color: 'var(--font-secondary)',
+                            maxTicksLimit: 12,
+                            font: {
+                                size: 10
+                            }
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.05)',
+                            borderColor: 'rgba(255, 255, 255, 0.05)'
+                        },
+                        ticks: {
+                            color: 'var(--font-secondary)',
+                            font: {
+                                size: 10
+                            },
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // 2. Render Active Progress Bars
+    const container = document.getElementById("token-active-progress-bars");
+    if (!container) return;
+
+    if (activeTokenTab === "group") {
         const groups = stats.by_group || [];
         const maxGroupTokens = groups.reduce((sum, g) => sum + (g.total_tokens || 0), 0) || 1;
-
         if (groups.length === 0) {
-            groupContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+            container.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
         } else {
-            groupContainer.innerHTML = groups.slice(0, 6).map((g, idx) => {
+            container.innerHTML = groups.map((g) => {
                 const tokens = g.total_tokens || 0;
                 const pct = ((tokens / maxGroupTokens) * 100).toFixed(1);
-                const colors = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#0ea5e9'];
-                const barColor = colors[idx % colors.length];
-
+                const gKey = g.group_or_user_id || '私聊/系统';
+                const barColor = getColorForKey(gKey);
                 return `
                     <div class="token-stat-row">
                         <div class="token-stat-info align-center">
-                            <span class="token-stat-name monospace" title="${g.group_or_user_id || '私聊/系统'}">${g.group_or_user_id || '私聊/系统'}</span>
+                            <span class="token-stat-name monospace" title="${gKey}">${gKey}</span>
                             <span class="token-stat-value">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                         </div>
                         <div class="progress-bar-container">
@@ -69,64 +308,41 @@ export function renderTokenStatsSummary(stats) {
                 `;
             }).join('');
         }
-    } else {
-        if (groupCard) groupCard.style.display = "none";
-    }
-
-    // 2. Provider / Model Breakdown
-    const modelContainer = document.getElementById("token-model-progress-bars");
-    const modelTitle = document.getElementById("model-breakdown-title");
-
-    if (modelTitle) {
-        modelTitle.textContent = groupId ? "该会话下按供应商 / 模型 Token 占比" : "按供应商 / 模型 Token 占比";
-    }
-
-    const models = stats.by_model || [];
-    const maxModelTokens = models.reduce((sum, m) => sum + (m.total_tokens || 0), 0) || 1;
-
-    if (models.length === 0) {
-        modelContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
-    } else {
-        modelContainer.innerHTML = models.slice(0, 6).map((m, idx) => {
-            const tokens = m.total_tokens || 0;
-            const pct = ((tokens / maxModelTokens) * 100).toFixed(1);
-
-            // Determine model name as main text and provider id as subtext.
-            let mainText = m.model_name || '未知';
-            let subText = m.provider_id || '';
-
-            // If provider_id contains '/', it's in the form 'provider/model'.
-            // In that case, we can extract the provider as subText and the model as mainText.
-            if (subText && subText.includes('/')) {
-                const parts = subText.split('/');
-                subText = parts[0];
-                mainText = parts.slice(1).join('/');
-            }
-
-            const providerName = m.provider_id ? (m.provider_id.includes('/') ? m.provider_id : `${m.provider_id} (${mainText})`) : mainText;
-            const colors = ['#8b5cf6', '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#0ea5e9'];
-            const barColor = colors[idx % colors.length];
-
-            return `
-                <div class="token-stat-row help-cursor" title="输入 (Prompt): ${Number(m.prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(m.completion_tokens || 0).toLocaleString()}">
-                    <div class="token-stat-info align-start">
-                        <div class="token-stat-name-col">
-                            <span class="token-stat-name bold" title="${providerName}">${mainText}</span>
-                            ${subText ? `<span class="token-stat-subname" title="${subText}">${subText}</span>` : ''}
+    } else if (activeTokenTab === "model") {
+        const models = stats.by_model || [];
+        const maxModelTokens = models.reduce((sum, m) => sum + (m.total_tokens || 0), 0) || 1;
+        if (models.length === 0) {
+            container.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+        } else {
+            container.innerHTML = models.map((m) => {
+                const tokens = m.total_tokens || 0;
+                const pct = ((tokens / maxModelTokens) * 100).toFixed(1);
+                let mainText = m.model_name || '未知';
+                let subText = m.provider_id || '';
+                if (subText && subText.includes('/')) {
+                    const parts = subText.split('/');
+                    subText = parts.slice(1).join('/');
+                }
+                const providerName = m.provider_id || mainText;
+                const mKey = m.provider_id ? `${m.provider_id}/${m.model_name}` : m.model_name;
+                const barColor = getColorForKey(mKey);
+                return `
+                    <div class="token-stat-row help-cursor" title="输入 (Prompt): ${Number(m.prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(m.completion_tokens || 0).toLocaleString()}">
+                        <div class="token-stat-info align-start">
+                            <div class="token-stat-name-col">
+                                <span class="token-stat-name bold" title="${providerName}">${mainText}</span>
+                                ${subText ? `<span class="token-stat-subname" title="${subText}">${subText}</span>` : ''}
+                            </div>
+                            <span class="token-stat-value margin-left">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                         </div>
-                        <span class="token-stat-value margin-left">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
+                        </div>
                     </div>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    }
-
-    // 3. Category Breakdown (Type progress bars) on Card C
-    const typeContainer = document.getElementById("token-type-progress-bars");
-    if (typeContainer) {
+                `;
+            }).join('');
+        }
+    } else if (activeTokenTab === "type") {
         const categories = [
             { key: 'reply_tokens', name: '大模型回复', class: 'reply' },
             { key: 'decision_tokens', name: '小模型判断', class: 'decision' },
@@ -135,34 +351,21 @@ export function renderTokenStatsSummary(stats) {
             { key: 'audio_caption_tokens', name: '音频转述', class: 'audio_caption' },
             { key: 'passive_summary_tokens', name: '被动总结', class: 'passive_summary' }
         ];
-
         const activeCategories = categories.filter(cat => (summary[cat.key] || 0) > 0);
         const maxTypeTokens = activeCategories.reduce((sum, cat) => sum + (summary[cat.key] || 0), 0) || 1;
-
         if (activeCategories.length === 0) {
-            typeContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+            container.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
         } else {
-            typeContainer.innerHTML = activeCategories.map(cat => {
+            container.innerHTML = activeCategories.map(cat => {
                 const tokens = summary[cat.key] || 0;
                 const pct = ((tokens / maxTypeTokens) * 100).toFixed(1);
-
                 let hoverTitle = "";
                 if (cat.key === 'reply_tokens') {
                     hoverTitle = `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`;
                 } else if (cat.key === 'decision_tokens') {
                     hoverTitle = `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`;
                 }
-
-                const colorMap = {
-                    'reply': '#6366f1',
-                    'decision': '#10b981',
-                    'image_caption': '#f59e0b',
-                    'sticker_analysis': '#14b8a6',
-                    'audio_caption': '#ec4899',
-                    'passive_summary': '#8b5cf6'
-                };
-                const barColor = colorMap[cat.class] || '#6366f1';
-
+                const barColor = getColorForKey(cat.class);
                 return `
                     <div class="token-stat-row ${hoverTitle ? 'help-cursor' : ''}" ${hoverTitle ? `title="${hoverTitle}"` : ''}>
                         <div class="token-stat-info align-center">

@@ -46,17 +46,13 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                     )
                     if llm_resp and self.plugin:
                         prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(llm_resp)
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        model_name = provider_id
                         await self.plugin.db.log_token_usage(
                             bot_name=bot_name,
                             group_or_user_id=group_or_user_id,
                             type="passive_summary",
                             provider_id=provider_id,
-                            model_name=model_name or provider_id,
+                            model_name=model_name,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             total_tokens=total_tokens,

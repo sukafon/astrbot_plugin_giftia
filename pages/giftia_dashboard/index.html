@@ -21,6 +21,7 @@
     <script src="js/api.js" defer></script>
     <script src="js/modals.js" defer></script>
     <script type="module" src="js/app.js"></script>
+    <script src="js/chart.umd.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -337,56 +338,39 @@
                             <label>时间范围</label>
                             <select id="token-time-range">
                                 <option value="">全部时间</option>
-                                <option value="today">今天</option>
+                                <option value="today" selected>今天</option>
                                 <option value="week">最近7天</option>
                                 <option value="month">最近30天</option>
                                 <option value="3months">最近三个月</option>
                                 <option value="year">最近一年</option>
                             </select>
                         </div>
-                        <div class="filter-group flex-grow" style="align-self: flex-end; display: flex; gap: 8px; justify-content: flex-end;">
-                            <button class="btn btn-secondary" onclick="openTokenAutoCleanModal()">自动清理设置</button>
-                            <button class="btn btn-danger" onclick="openTokenClearModal()">清空日志</button>
+                        <div class="filter-group flex-grow" style="align-self: flex-end; display: flex; flex-direction: row; gap: 8px; justify-content: flex-end; min-width: unset;">
+                            <button class="btn btn-secondary" onclick="openTokenAutoCleanModal()" style="min-width: 110px;">自动清理设置</button>
+                            <button class="btn btn-danger" onclick="openTokenClearModal()" style="min-width: 90px;">清空日志</button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Top Summary Cards -->
-                <div class="token-summary-row">
-                    <div class="card metric-card total-tokens help-cursor" title="悬停展示输入与输出各自消耗">
-                        <div class="metric-label">总模型 Token 消耗 ⓘ</div>
-                        <div class="metric-value large" id="stat-total-tokens">0</div>
-                        <div class="metric-desc">不包含 TTS 合成字符数</div>
-                    </div>
-                    <div class="card metric-card tts-chars">
-                        <div class="metric-label">TTS 合成总字符数</div>
-                        <div class="metric-value large" id="stat-tts-chars">0</div>
-                        <div class="metric-desc">按 synthesized characters 计费</div>
-                    </div>
-                </div>
-
-                <div class="token-charts-row" id="token-charts-container">
-                    <!-- Card A: Group breakdown -->
-                    <div id="card-group-breakdown" class="card token-breakdown-card">
-                        <h3>按会话/群聊 Token 占比</h3>
-                        <div id="token-group-progress-bars" class="token-progress-bars-container">
-                            <!-- Dynamic progress bars -->
+                <!-- Unified Token Statistics Chart Card -->
+                <div class="card token-chart-large-card" style="width: 100%; margin-top: 16px;">
+                    <div class="token-chart-header">
+                        <div class="token-chart-tabs" id="token-chart-tabs-nav">
+                            <button class="btn-tab active" data-tab="group">按会话</button>
+                            <button class="btn-tab" data-tab="model">按模型</button>
+                            <button class="btn-tab" data-tab="type">按类型</button>
+                        </div>
+                        <div class="token-chart-legend-info help-cursor" id="token-chart-legend-stats" title="悬停展示输入与输出各自消耗" style="font-size: 0.85rem; color: var(--font-secondary); cursor: help;">
+                            ALL: <span id="stat-total-tokens" class="bold" style="color: var(--font-primary); font-weight: 600;">0</span> Tokens | TTS: <span id="stat-tts-chars" class="bold" style="color: var(--font-primary); font-weight: 600;">0</span> Character
                         </div>
                     </div>
-
-                    <!-- Card B: Provider / Model breakdown -->
-                    <div id="card-model-breakdown" class="card token-breakdown-card">
-                        <h3 id="model-breakdown-title">按供应商 / 模型 Token 占比</h3>
-                        <div id="token-model-progress-bars" class="token-progress-bars-container">
-                            <!-- Dynamic progress bars -->
-                        </div>
+                    <div class="token-chart-canvas-container">
+                        <canvas id="token-line-chart"></canvas>
                     </div>
-
-                    <!-- Card C: Category Breakdown -->
-                    <div id="card-type-breakdown" class="card token-breakdown-card">
-                        <h3>按操作类型 Token 占比</h3>
-                        <div id="token-type-progress-bars" class="token-progress-bars-container">
-                            <!-- Dynamic progress bars -->
+                    <div class="token-chart-breakdown-section">
+                        <h4 id="token-breakdown-subtitle">当前维度占比明细</h4>
+                        <div id="token-active-progress-bars" class="token-progress-bars-container">
+                            <!-- Progress bars will be rendered here dynamically -->
                         </div>
                     </div>
                 </div>
