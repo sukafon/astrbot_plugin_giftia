@@ -543,7 +543,7 @@ class MessageForwardParser:
                 url = seg_data.get("url") or ""
                 file_name = seg_data.get("file") or seg_data.get("path") or ""
                 part, media_result = await self.format_image_ref(
-                    str(url or ""), str(file_name or ""), defer_caption
+                    str(url or ""), str(file_name or ""), defer_caption, event=event
                 )
                 result.merge(media_result)
                 parts.append(part)
@@ -551,7 +551,7 @@ class MessageForwardParser:
                 url = seg_data.get("url") or ""
                 file_name = seg_data.get("file") or seg_data.get("path") or ""
                 part, media_result = await self.format_audio_ref(
-                    str(url or ""), str(file_name or ""), defer_caption
+                    str(url or ""), str(file_name or ""), defer_caption, event=event
                 )
                 result.merge(media_result)
                 parts.append(part)
