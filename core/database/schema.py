@@ -491,5 +491,59 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 updated_at DATETIME
             )
         """)
+        # Token 消耗统计表
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_name TEXT,
+                group_or_user_id TEXT,
+                type TEXT NOT NULL,
+                provider_id TEXT,
+                model_name TEXT,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                extra_info TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                call_count INTEGER DEFAULT 1
+            )
+        """)
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage (created_at)"
+        )
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_token_usage_lookup ON token_usage (bot_name, group_or_user_id, type)"
+        )
+        # Token 每日拍扁统计历史表
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS token_daily_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                bot_name TEXT,
+                group_or_user_id TEXT,
+                type TEXT NOT NULL,
+                provider_id TEXT,
+                model_name TEXT,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                status TEXT,
+                call_count INTEGER DEFAULT 0,
+                UNIQUE(date, bot_name, group_or_user_id, type, provider_id, model_name, status)
+            )
+        """)
+        await cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_token_daily_date ON token_daily_stats (date)"
+        )
+        
+        # 数据库迁移：为已存在的表添加 call_count 字段
+        try:
+            await cursor.execute("ALTER TABLE token_usage ADD COLUMN call_count INTEGER DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            await cursor.execute("ALTER TABLE token_daily_stats ADD COLUMN call_count INTEGER DEFAULT 0")
+        except Exception:
+            pass
     # 提交
     await conn.commit()

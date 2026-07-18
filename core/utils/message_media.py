@@ -105,6 +105,7 @@ class MessageMediaFormatter:
         file_name: str | None,
         defer_caption: bool,
         custom_desc: str | None = None,
+        event = None,
     ) -> tuple[str, ChainParseResult]:
         result = ChainParseResult()
         decision_url = self.first_media_url(url, file_name)
@@ -133,9 +134,17 @@ class MessageMediaFormatter:
                 )
             )
         )
+        # Resolve bot_name and group_or_user_id from event
+        bot_name = ""
+        group_or_user_id = ""
+        if event and self.call_llm.plugin:
+            bot_name = self.call_llm.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+            group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+
         if not media_caption and should_try_caption:
             hash_val, media_caption = await self.get_image_caption(
-                url or "", file_name, defer_caption, custom_desc=custom_desc
+                url or "", file_name, defer_caption, custom_desc=custom_desc,
+                bot_name=bot_name, group_or_user_id=group_or_user_id
             )
         if hash_val and media_caption:
             result.media_id_list.append(hash_val)
@@ -147,7 +156,7 @@ class MessageMediaFormatter:
         return "[图片]", result
 
     async def format_audio_ref(
-        self, url: str, file_name: str | None, defer_caption: bool
+        self, url: str, file_name: str | None, defer_caption: bool, event = None
     ) -> tuple[str, ChainParseResult]:
         result = ChainParseResult()
         decision_url = self.first_media_url(url, file_name)
@@ -178,9 +187,17 @@ class MessageMediaFormatter:
                 )
             )
         )
+        # Resolve bot_name and group_or_user_id from event
+        bot_name = ""
+        group_or_user_id = ""
+        if event and self.call_llm.plugin:
+            bot_name = self.call_llm.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+            group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+
         if not media_caption and should_try_caption:
             hash_val, media_caption = await self.get_audio_caption(
-                url or "", file_name, defer_caption
+                url or "", file_name, defer_caption,
+                bot_name=bot_name, group_or_user_id=group_or_user_id
             )
         if hash_val and media_caption:
             result.media_id_list.append(hash_val)
@@ -194,6 +211,8 @@ class MessageMediaFormatter:
         file_name: str | None = None,
         defer_caption: bool = False,
         custom_desc: str | None = None,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> tuple[str | None, MediaCaption | None]:
         """获取图片描述"""
         if not url and file_name:
@@ -368,7 +387,9 @@ class MessageMediaFormatter:
                 f"url={url_disp!r}"
             )
             # 调用LLM生成图片描述
-            media_caption = await self.call_llm.call_llm_image_caption(base64s)
+            media_caption = await self.call_llm.call_llm_image_caption(
+                base64s, bot_name=bot_name, group_or_user_id=group_or_user_id
+            )
             if not media_caption:
                 media_caption = MediaCaption(
                     hash_val=hash_val,
@@ -391,7 +412,12 @@ class MessageMediaFormatter:
             return hash_val, media_caption
 
     async def get_audio_caption(
-        self, url: str, file_name: str | None = None, defer_caption: bool = False
+        self,
+        url: str,
+        file_name: str | None = None,
+        defer_caption: bool = False,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> tuple[str | None, MediaCaption | None]:
         """获取语音描述"""
         if not url and file_name:
@@ -472,7 +498,9 @@ class MessageMediaFormatter:
                 return hash_val, media_caption
 
             # 调用LLM生成语音描述
-            media_caption = await self.call_llm.call_llm_audio_caption([url])
+            media_caption = await self.call_llm.call_llm_audio_caption(
+                [url], bot_name=bot_name, group_or_user_id=group_or_user_id
+            )
             if not media_caption:
                 # 即使LLM失败，也需要保存一个未转述的或者空的对象，但标记为 captioned=False 方便后续重试
                 media_caption = MediaCaption(

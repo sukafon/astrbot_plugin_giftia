@@ -319,13 +319,14 @@ class MessageParser:
                     comp.file,
                     defer_caption,
                     custom_desc=custom_desc,
+                    event=event,
                 )
                 result.merge(media_result)
                 msg_parts.append(part)
             # 语音消息
             elif isinstance(comp, Record):
                 part, media_result = await self._format_audio_ref(
-                    comp.url or "", comp.file, defer_caption
+                    comp.url or "", comp.file, defer_caption, event=event
                 )
                 result.merge(media_result)
                 msg_parts.append(part)
@@ -420,21 +421,24 @@ class MessageParser:
         file_name: str | None,
         defer_caption: bool,
         custom_desc: str | None = None,
+        event: AstrMessageEvent | None = None,
     ) -> tuple[str, ChainParseResult]:
         return await self.media_formatter.format_image_ref(
             url,
             file_name,
             defer_caption,
             custom_desc=custom_desc,
+            event=event,
         )
 
     async def _format_audio_ref(
-        self, url: str, file_name: str | None, defer_caption: bool
+        self, url: str, file_name: str | None, defer_caption: bool, event: AstrMessageEvent | None = None
     ) -> tuple[str, ChainParseResult]:
         return await self.media_formatter.format_audio_ref(
             url,
             file_name,
             defer_caption,
+            event=event,
         )
 
     async def _component_nodes_to_forward_result(

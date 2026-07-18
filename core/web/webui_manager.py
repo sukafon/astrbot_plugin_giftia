@@ -285,3 +285,28 @@ class WebUIManager:
             methods=["POST"],
             desc="Delete group profile",
         )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/token/stats",
+            view_handler=self.web_api.get_token_stats,
+            methods=["GET"],
+            desc="Get token usage stats",
+        )
+
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/token/clear",
+            view_handler=self.web_api.clear_token_logs,
+            methods=["POST"],
+            desc="Clear token usage logs",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/token/auto_clean/config",
+            view_handler=self.web_api.get_auto_clean_token_config,
+            methods=["GET"],
+            desc="Get token auto clean config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/token/auto_clean/config",
+            view_handler=self.web_api.set_auto_clean_token_config,
+            methods=["POST"],
+            desc="Set token auto clean config",
+        )

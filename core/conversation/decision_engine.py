@@ -392,6 +392,8 @@ class DecisionEngine:
                     user_prompt=user_prompt,
                     image_urls=image_urls,
                     audio_urls=audio_urls,
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
                 )
 
                 if result is None:

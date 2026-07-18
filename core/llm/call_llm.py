@@ -29,10 +29,12 @@ class CallLLM:
         xml_parse: XmlParse,
         network_config: dict,
         caption_config: dict,
+        plugin=None,
     ):
         self.context = context
         self.xml_parse = xml_parse
         self.network_conf = network_config
+        self.plugin = plugin
         self.sticker_analysis_prompt = DEFAULT_STICKER_ANALYSIS_PROMPT
         # 图片转述配置
         image_caption_provider_ids = caption_config.get("image_caption_provider_ids")
@@ -66,6 +68,8 @@ class CallLLM:
         user_prompt: str,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> Decision | None:
         """调用LLM进行决策"""
         if system_prompt:
@@ -88,23 +92,55 @@ class CallLLM:
                         image_urls=image_urls,
                         audio_urls=audio_urls,
                     )
-                    if llm_resp.completion_text:
+                    parsed_result = None
+                    is_parsed = False
+                    if llm_resp and llm_resp.completion_text:
                         logger.info(
                             f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
                         )
-                        result = self.xml_parse.decode_decision_xml(
+                        parsed_result = self.xml_parse.decode_decision_xml(
                             llm_resp.completion_text
                         )
-                        if result is not None:
-                            return result
-                        logger.warning(
-                            f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
+                        if parsed_result is not None:
+                            is_parsed = True
+
+                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="decision",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"status": "success" if is_parsed else "parse_failed"}
                         )
-                        continue
-                    logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                    if parsed_result is not None:
+                        return parsed_result
+                    logger.warning(
+                        f"LLM 决策 XML 解析失败，准备重试。provider_id: {provider_id}"
+                    )
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
+                    if self.plugin:
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="decision",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": str(e)}
+                        )
                     continue
         return None
 
@@ -258,6 +294,52 @@ class CallLLM:
                             tool_call_timeout=timeout,
                             stream=True,
                         )
+                    parsed_result = None
+                    is_parsed = False
+                    status_val = "parse_failed"
+
+                    if llm_resp.completion_text:
+                        parsed_result = await self.xml_parse.decode_llm_xml(
+                            llm_resp.completion_text, group_or_user_id
+                        )
+                        if parsed_result is not None:
+                            is_parsed = True
+                            status_val = "success"
+                            parsed_result.native_tools_called = list(
+                                llm_resp.tools_call_name or []
+                            )
+                    elif llm_resp.reasoning_content:
+                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
+                        status_val = "parse_failed"
+                    else:
+                        # Succeeded but both completion and reasoning are empty.
+                        is_parsed = True
+                        status_val = "success"
+                        parsed_result = XmlLlmResult(
+                            native_tools_called=list(llm_resp.tools_call_name or [])
+                        )
+
+                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
+                        bot_name = ""
+                        if event:
+                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="reply",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"status": status_val}
+                        )
+
                     if llm_resp.tools_call_name:
                         logger.info(
                             f"\n<tools_call>\n{llm_resp.tools_call_name}\n</tools_call>"
@@ -266,49 +348,71 @@ class CallLLM:
                         logger.info(
                             f"\n<reasoning>\n{llm_resp.reasoning_content}\n</reasoning>"
                         )
-                    if llm_resp.completion_text:
-                        logger.info(
-                            f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
-                        )
-                        result = await self.xml_parse.decode_llm_xml(
-                            llm_resp.completion_text, group_or_user_id
-                        )
-                        if result is not None:
-                            result.native_tools_called = list(
-                                llm_resp.tools_call_name or []
+
+                    if parsed_result is not None:
+                        if llm_resp.completion_text:
+                            logger.info(
+                                f"\n<completion>\n{llm_resp.completion_text}\n</completion>"
                             )
-                            return result
-                        logger.warning(
-                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
-                        )
-                        continue
-                    elif llm_resp.reasoning_content:
-                        # LLM generated reasoning but empty text completion; likely safety blocked or cut off.
+                        return parsed_result
+
+                    if llm_resp.reasoning_content:
                         logger.warning(
                             f"LLM generated reasoning but empty completion, treating as failure. provider_id: {provider_id}"
                         )
                         continue
                     else:
-                        # Succeeded but both completion and reasoning are empty.
-                        logger.info(
-                            f"LLM returned completely empty response, treating as no reply. provider_id: {provider_id}"
+                        logger.warning(
+                            f"LLM回复 XML 解析失败且无法补救，准备重试。provider_id: {provider_id}"
                         )
-                        return XmlLlmResult(
-                            native_tools_called=list(llm_resp.tools_call_name or [])
-                        )
+                        continue
                 except EmptyModelOutputError:
                     # Gemini empty output error; treat as no reply needed.
                     logger.info(
                         f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
                     )
+                    if self.plugin:
+                        bot_name = ""
+                        if event:
+                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="reply",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": "EmptyModelOutputError"}
+                        )
                     return XmlLlmResult()
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
+                    if self.plugin:
+                        bot_name = ""
+                        if event:
+                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="reply",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": str(e)}
+                        )
                     continue
         return None
 
     async def call_llm_image_caption(
-        self, image_urls: list[str], question: str | None = None
+        self,
+        image_urls: list[str],
+        question: str | None = None,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> MediaCaption | None:
         """调用LLM生成图片描述"""
         logger.info(f"调用LLM生成图片描述，共{len(image_urls)}张图片")
@@ -344,25 +448,61 @@ class CallLLM:
                         prompt=unique_prompt,
                         image_urls=image_urls,
                     )
-                    if llm_resp.completion_text:
+                    is_parsed = False
+                    parsed = None
+                    if llm_resp and llm_resp.completion_text:
+                        parsed = decode_media_caption_json(llm_resp.completion_text)
+                        if parsed:
+                            is_parsed = True
+
+                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="image_caption",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        )
+                    if parsed:
                         logger.info(
                             f"[Giftia] LLM转述响应片段: "
                             f"{llm_resp.completion_text[:120]!r}"
                         )
-                        parsed = decode_media_caption_json(llm_resp.completion_text)
-                        if parsed:
-                            return parsed
-                        logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
-                    else:
-                        logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                        return parsed
+                    logger.warning("解析图片转述 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
+                    if self.plugin:
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="image_caption",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": str(e)}
+                        )
                     continue
         return None
 
     async def call_llm_audio_caption(
-        self, audio_urls: list[str], question: str | None = None
+        self,
+        audio_urls: list[str],
+        question: str | None = None,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> MediaCaption | None:
         """调用LLM生成音频描述"""
         logger.info(f"调用LLM生成音频描述，共{len(audio_urls)}个音频")
@@ -387,21 +527,58 @@ class CallLLM:
                         prompt=unique_prompt,
                         audio_urls=audio_urls,
                     )
-                    if llm_resp.completion_text:
+                    is_parsed = False
+                    parsed = None
+                    if llm_resp and llm_resp.completion_text:
                         parsed = decode_media_audio_json(llm_resp.completion_text)
                         if parsed:
-                            return parsed
-                        logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
-                    else:
-                        logger.error(f"LLM回复失败: {str(llm_resp)[:1024]}")
+                            is_parsed = True
+
+                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="audio_caption",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        )
+                    if parsed:
+                        return parsed
+                    logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
+                    if self.plugin:
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="audio_caption",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": str(e)}
+                        )
                     continue
         return None
 
     async def call_llm_sticker_analysis(
-        self, image_urls: list[str], categories: list[str], media_id: str
+        self,
+        image_urls: list[str],
+        categories: list[str],
+        media_id: str,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> tuple[bool, Sticker | None]:
         """调用LLM生成表情包分析结果"""
         logger.info(f"调用LLM生成表情包分析结果，共{len(image_urls)}张图片")
@@ -431,13 +608,33 @@ class CallLLM:
                         prompt=unique_prompt,
                         image_urls=image_urls,
                     )
-                    if llm_resp.completion_text:
+                    is_parsed = False
+                    result_dict = None
+                    if llm_resp and llm_resp.completion_text:
                         result_dict = self.xml_parse.parse_str_json(
                             llm_resp.completion_text
                         )
-                        if not result_dict:
-                            continue
+                        if result_dict:
+                            is_parsed = True
 
+                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="sticker_analysis",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"status": "success" if is_parsed else "parse_failed"}
+                        )
+                    if result_dict:
                         is_useful = result_dict.get("isUseful", False)
                         if not is_useful:
                             return False, None
@@ -454,7 +651,21 @@ class CallLLM:
                             description=result_dict.get("description", ""),
                         )
                         return True, sticker
+                    logger.warning("解析表情包分析 JSON 失败，准备重试或降级...")
+                    continue
                 except Exception as e:
                     logger.error(f"LLM表情包分析失败: {str(e)}")
+                    if self.plugin:
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="sticker_analysis",
+                            provider_id=provider_id,
+                            model_name=provider_id,
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                            extra_info={"status": "api_failed", "error": str(e)}
+                        )
                     continue
         return False, None
