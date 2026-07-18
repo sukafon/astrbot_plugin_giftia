@@ -200,6 +200,7 @@ class ReplyPipeline:
             bot_name=bot_name,
             recent_messages=recent_messages,
             caption_config=caption_config,
+            group_or_user_id=group_or_user_id,
         )
 
         if relevant_memories is None:

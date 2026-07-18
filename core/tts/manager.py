@@ -173,29 +173,50 @@ class TTSManager:
         """
         return text
 
-    async def get_audio_path(self, resolved: ResolvedTTSRequest) -> str:
+    async def get_audio_path(self, resolved: ResolvedTTSRequest, event=None) -> str:
         lock = self._lock_for_provider(resolved.provider_id)
         async with lock:
+            audio_path = ""
             if self.provider_type() != "minimax":
-                return await resolved.provider.get_audio(resolved.text)
-
-            emotion = resolved.emotion.strip().lower()
-            if emotion not in MINIMAX_EMOTIONS or not hasattr(
-                resolved.provider, "voice_setting"
-            ):
-                return await resolved.provider.get_audio(resolved.text)
-
-            voice_setting = resolved.provider.voice_setting
-            marker = object()
-            old_emotion = voice_setting.get("emotion", marker)
-            voice_setting["emotion"] = emotion
-            try:
-                return await resolved.provider.get_audio(resolved.text)
-            finally:
-                if old_emotion is marker:
-                    voice_setting.pop("emotion", None)
+                audio_path = await resolved.provider.get_audio(resolved.text)
+            else:
+                emotion = resolved.emotion.strip().lower()
+                if emotion not in MINIMAX_EMOTIONS or not hasattr(
+                    resolved.provider, "voice_setting"
+                ):
+                    audio_path = await resolved.provider.get_audio(resolved.text)
                 else:
-                    voice_setting["emotion"] = old_emotion
+                    voice_setting = resolved.provider.voice_setting
+                    marker = object()
+                    old_emotion = voice_setting.get("emotion", marker)
+                    voice_setting["emotion"] = emotion
+                    try:
+                        audio_path = await resolved.provider.get_audio(resolved.text)
+                    finally:
+                        if old_emotion is marker:
+                            voice_setting.pop("emotion", None)
+                        else:
+                            voice_setting["emotion"] = old_emotion
+            
+            if audio_path and self.plugin:
+                bot_name = ""
+                group_or_user_id = ""
+                if event:
+                    bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+                char_count = len(resolved.text)
+                await self.plugin.db.log_token_usage(
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                    type="tts",
+                    provider_id=resolved.provider_id,
+                    model_name=self.provider_type(),
+                    prompt_tokens=char_count,
+                    completion_tokens=0,
+                    total_tokens=char_count,
+                    extra_info={"text_len": char_count},
+                )
+            return audio_path
 
     async def build_record(self, event, segment: TTSRequest) -> Record | None:
         if segment.pre_recorded_path:
@@ -215,7 +236,7 @@ class TTSManager:
                 f"[Giftia TTS] 请求语音合成: lang={resolved.lang}, "
                 f"provider={resolved.provider_id}, text={resolved.text}"
             )
-            audio_path = await self.get_audio_path(resolved)
+            audio_path = await self.get_audio_path(resolved, event)
             if not audio_path:
                 logger.error("[Giftia TTS] TTS 供应商未返回音频文件路径。")
                 return None

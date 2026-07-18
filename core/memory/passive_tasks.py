@@ -16,6 +16,8 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         task_name: str,
         system_prompt: str,
         user_prompt: str,
+        bot_name: str = "",
+        group_or_user_id: str = "",
     ) -> str | None:
         provider_ids = self.plugin.passive_memory_provider_ids
         if not provider_ids:
@@ -41,6 +43,23 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                         system_prompt=system_prompt,
                         prompt=user_prompt,
                     )
+                    if llm_resp and getattr(llm_resp, "usage", None) and self.plugin:
+                        model_name = ""
+                        if hasattr(llm_resp.raw_completion, "model"):
+                            model_name = getattr(llm_resp.raw_completion, "model") or ""
+                        elif hasattr(llm_resp.raw_completion, "model_name"):
+                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                        await self.plugin.db.log_token_usage(
+                            bot_name=bot_name,
+                            group_or_user_id=group_or_user_id,
+                            type="passive_summary",
+                            provider_id=provider_id,
+                            model_name=model_name or provider_id,
+                            prompt_tokens=llm_resp.usage.input,
+                            completion_tokens=llm_resp.usage.output,
+                            total_tokens=llm_resp.usage.total,
+                            extra_info={"task_name": task_name},
+                        )
                     if llm_resp and llm_resp.completion_text:
                         return llm_resp.completion_text
                 except Exception as e:
@@ -72,7 +91,8 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         )
         user_prompt = self._build_memory_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
-            "长期记忆提炼", sys_prompt, user_prompt
+            "长期记忆提炼", sys_prompt, user_prompt,
+            bot_name=bot_name, group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False
@@ -150,7 +170,8 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
         logger.debug(f"[Giftia Passive Memory] 关系画像维护系统提示词:\n{sys_prompt}")
         user_prompt = self._build_profile_user_prompt(group_or_user_id, context)
         completion_text = await self._call_summary_llm(
-            "关系画像维护", sys_prompt, user_prompt
+            "关系画像维护", sys_prompt, user_prompt,
+            bot_name=bot_name, group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False
@@ -315,7 +336,8 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
             sample_limit=sample_limit,
         )
         completion_text = await self._call_summary_llm(
-            f"用户画像维护({user_id})", sys_prompt, user_prompt
+            f"用户画像维护({user_id})", sys_prompt, user_prompt,
+            bot_name=bot_name, group_or_user_id=group_or_user_id,
         )
         if not completion_text:
             return False

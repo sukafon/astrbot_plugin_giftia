@@ -12,7 +12,8 @@ window.GiftiaApp = {
         media: { page: 1, limit: 12, total: 0 },
         forwards: { page: 1, limit: 15, total: 0 },
         userProfiles: { page: 1, limit: 15, total: 0 },
-        groupProfiles: { page: 1, limit: 15, total: 0 }
+        groupProfiles: { page: 1, limit: 15, total: 0 },
+        tokenLogs: { page: 1, limit: 15, total: 0 }
     },
 
     loadedOriginalMediaG: new Set(),
@@ -54,6 +55,13 @@ window.GiftiaApp = {
                 botInputId: "profile-bot-name",
                 groupInputId: "profile-group-id-input",
                 paginationKey: "groupProfiles",
+            },
+            tokenLogs: {
+                endpoint: "/token/logs",
+                filterEndpoint: "/chat_history/filter_options",
+                botInputId: "token-bot-name",
+                groupInputId: "token-group-id",
+                paginationKey: "tokenLogs",
             }
         };
         return configs[viewKey];
@@ -149,16 +157,37 @@ window.GiftiaApp = {
             this.populateBotSelect(botEl, bots, selectedBotName);
 
             if (groupEl && groupEl.tagName === "SELECT") {
-                const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
-                    ? currentSession
-                    : (sessions[0] ? sessions[0].group_or_user_id : "");
-                groupEl.value = nextSession;
-                this.populateSessionSelect(groupEl, sessions, nextSession);
+                if (viewKey === "tokenLogs") {
+                    const nextSession = preserveSession && (currentSession === "" || sessions.some(item => item.group_or_user_id === currentSession))
+                        ? currentSession
+                        : "";
+                    groupEl.innerHTML = "";
+                    groupEl.append(new Option("全部会话/群聊", ""));
+                    sessions.forEach(session => {
+                        const sessionId = session.group_or_user_id || "";
+                        const total = session.total || 0;
+                        groupEl.append(new Option(`${sessionId} (${total})`, sessionId));
+                    });
+                    groupEl.disabled = false;
+                    groupEl.value = nextSession;
+                } else {
+                    const nextSession = preserveSession && sessions.some(item => item.group_or_user_id === currentSession)
+                        ? currentSession
+                        : (sessions[0] ? sessions[0].group_or_user_id : "");
+                    groupEl.value = nextSession;
+                    this.populateSessionSelect(groupEl, sessions, nextSession);
+                }
             }
         } catch (e) {
             if (groupEl && groupEl.tagName === "SELECT") {
                 groupEl.value = "";
-                this.populateSessionSelect(groupEl, [], "");
+                if (viewKey === "tokenLogs") {
+                    groupEl.innerHTML = "";
+                    groupEl.append(new Option("全部会话/群聊", ""));
+                    groupEl.disabled = false;
+                } else {
+                    this.populateSessionSelect(groupEl, [], "");
+                }
             }
         }
     },
@@ -184,6 +213,9 @@ window.GiftiaApp = {
                 break;
             case "groupProfiles":
                 await this.loadGroupProfiles();
+                break;
+            case "tokenLogs":
+                await this.loadTokenLogs();
                 break;
             default:
                 break;
@@ -211,6 +243,8 @@ window.GiftiaApp = {
             this.initializeScopedView("forwards");
         } else if (this.activeTab === "profiles") {
             this.loadProfilesData();
+        } else if (this.activeTab === "token-stats") {
+            this.initializeTokenStatsTab();
         }
     },
 
@@ -1392,7 +1426,8 @@ document.addEventListener("DOMContentLoaded", () => {
         "memory-bot-name", "memory-group-id", "memory-associated-user-id", "memory-search",
         "media-type", "media-search",
         "forward-bot-name", "forward-group-id", "forward-status", "forward-search",
-        "profile-type", "profile-bot-name", "profile-group-id-select", "profile-group-id-input", "profile-user-id"
+        "profile-type", "profile-bot-name", "profile-group-id-select", "profile-group-id-input", "profile-user-id",
+        "token-bot-name", "token-group-id", "token-time-range"
     ];
 
     filterInputIds.forEach(id => {
@@ -1408,7 +1443,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         "memory-bot-name",
                         "forward-bot-name",
                         "profile-bot-name",
-                        "profile-type"
+                        "profile-type",
+                        "token-bot-name"
                     ].includes(id);
                     if (app.activeTab === "chat-history") {
                         app.resetPagination("history");
@@ -1437,6 +1473,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             await app.refreshScopedFilters("groupProfiles", preserveSession);
                             await app.loadGroupProfiles();
                         }
+                    } else if (app.activeTab === "token-stats") {
+                        await app.refreshScopedFilters("tokenLogs", preserveSession);
+                        await app.loadTokenStatsSummary();
                     }
                 }, 300);
             });
@@ -1471,4 +1510,235 @@ window.filterMemoryByUser = async function(userId) {
         app.resetPagination("memories");
         await app.loadMemories();
     }
+};
+
+GiftiaApp.initializeTokenStatsTab = async function() {
+    await this.refreshScopedFilters("tokenLogs");
+    await this.loadTokenStatsSummary();
+};
+
+GiftiaApp.loadTokenStatsSummary = async function() {
+    const botName = document.getElementById("token-bot-name").value;
+    const groupId = document.getElementById("token-group-id").value;
+    const timeRange = document.getElementById("token-time-range").value;
+    
+    const params = {};
+    if (botName) params.bot_name = botName;
+    if (groupId) params.group_or_user_id = groupId;
+    if (timeRange) params.time_range = timeRange;
+    
+    try {
+        const res = await window.apiGet("/token/stats", params);
+        if (res.status === "success" && res.stats) {
+            this.renderTokenStatsSummary(res.stats);
+        }
+    } catch (e) {
+        console.error("加载 Token 统计概要失败", e);
+    }
+};
+
+GiftiaApp.renderTokenStatsSummary = function(stats) {
+    const summary = stats.summary || {};
+    
+    // Total numbers
+    document.getElementById("stat-total-tokens").textContent = Number(summary.total_tokens || 0).toLocaleString();
+    document.getElementById("stat-tts-chars").textContent = Number(summary.total_chars_tts || 0).toLocaleString();
+    document.getElementById("stat-reply-tokens").textContent = Number(summary.reply_tokens || 0).toLocaleString();
+    document.getElementById("stat-decision-tokens").textContent = Number(summary.decision_tokens || 0).toLocaleString();
+    
+    // Set title breakdowns on hover
+    const totalCard = document.getElementById("stat-total-tokens").parentElement;
+    if (totalCard) {
+        totalCard.setAttribute("title", `输入 (Prompt): ${Number(summary.total_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.total_completion_tokens || 0).toLocaleString()}`);
+    }
+    const replyCard = document.getElementById("stat-reply-tokens").parentElement;
+    if (replyCard) {
+        replyCard.setAttribute("title", `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`);
+    }
+    const decisionCard = document.getElementById("stat-decision-tokens").parentElement;
+    if (decisionCard) {
+        decisionCard.setAttribute("title", `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`);
+    }
+
+    // 1. Group Breakdown
+    const groupCard = document.getElementById("card-group-breakdown");
+    const groupContainer = document.getElementById("token-group-progress-bars");
+    const groupId = document.getElementById("token-group-id").value;
+    
+    if (!groupId) {
+        if (groupCard) groupCard.style.display = "block";
+        const groups = stats.by_group || [];
+        const maxGroupTokens = groups.reduce((sum, g) => sum + (g.total_tokens || 0), 0) || 1;
+        
+        if (groups.length === 0) {
+            groupContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+        } else {
+            groupContainer.innerHTML = groups.slice(0, 6).map((g, idx) => {
+                const tokens = g.total_tokens || 0;
+                const pct = ((tokens / maxGroupTokens) * 100).toFixed(1);
+                const colors = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#0ea5e9'];
+                const barColor = colors[idx % colors.length];
+                
+                return `
+                    <div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                            <span style="font-weight: 500; font-family: monospace;">${g.group_or_user_id || '私聊/系统'}</span>
+                            <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                        </div>
+                        <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
+                            <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } else {
+        if (groupCard) groupCard.style.display = "none";
+    }
+
+    // 2. Model Breakdown
+    const modelContainer = document.getElementById("token-model-progress-bars");
+    const modelTitle = document.getElementById("model-breakdown-title");
+    
+    if (modelTitle) {
+        modelTitle.textContent = groupId ? "该会话下按模型 Token 占比" : "按模型 Token 占比";
+    }
+    
+    const models = stats.by_model || [];
+    const maxModelTokens = models.reduce((sum, m) => sum + (m.total_tokens || 0), 0) || 1;
+    
+    if (models.length === 0) {
+        modelContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+    } else {
+        modelContainer.innerHTML = models.slice(0, 6).map((m, idx) => {
+            const tokens = m.total_tokens || 0;
+            const pct = ((tokens / maxModelTokens) * 100).toFixed(1);
+            const colors = ['#8b5cf6', '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#0ea5e9'];
+            const barColor = colors[idx % colors.length];
+            
+            return `
+                <div title="输入 (Prompt): ${Number(m.prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(m.completion_tokens || 0).toLocaleString()}" style="cursor: help;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                        <span style="font-weight: 500; font-family: monospace;">${m.model_name}</span>
+                        <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                    </div>
+                    <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
+                        <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    // 3. Category Breakdown (Type progress bars) on Card C
+    const typeContainer = document.getElementById("token-type-progress-bars");
+    if (typeContainer) {
+        const categories = [
+            { key: 'reply_tokens', name: '大模型回复', class: 'reply' },
+            { key: 'decision_tokens', name: '小模型判断', class: 'decision' },
+            { key: 'image_caption_tokens', name: '图片转述', class: 'image_caption' },
+            { key: 'sticker_analysis_tokens', name: '表情包分析', class: 'sticker_analysis' },
+            { key: 'audio_caption_tokens', name: '音频转述', class: 'audio_caption' },
+            { key: 'passive_summary_tokens', name: '被动总结', class: 'passive_summary' }
+        ];
+        
+        const maxTypeTokens = categories.reduce((sum, cat) => sum + (summary[cat.key] || 0), 0) || 1;
+        
+        typeContainer.innerHTML = categories.map(cat => {
+            const tokens = summary[cat.key] || 0;
+            const pct = ((tokens / maxTypeTokens) * 100).toFixed(1);
+            
+            let hoverTitle = "";
+            if (cat.key === 'reply_tokens') {
+                hoverTitle = `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`;
+            } else if (cat.key === 'decision_tokens') {
+                hoverTitle = `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`;
+            }
+            
+            const colorMap = {
+                'reply': '#6366f1',
+                'decision': '#10b981',
+                'image_caption': '#f59e0b',
+                'sticker_analysis': '#14b8a6',
+                'audio_caption': '#ec4899',
+                'passive_summary': '#8b5cf6'
+            };
+            const barColor = colorMap[cat.class] || '#6366f1';
+
+            return `
+                <div ${hoverTitle ? `title="${hoverTitle}" style="cursor: help;"` : ''}>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                        <span style="font-weight: 500;">${cat.name}</span>
+                        <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                    </div>
+                    <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
+                        <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+};
+
+// Modal handlers
+window.openTokenAutoCleanModal = async function() {
+    try {
+        const res = await window.apiGet("/token/auto_clean/config");
+        if (res.status === "success" && res.config) {
+            document.getElementById("token-auto-clean-enabled").checked = res.config.enabled;
+            document.getElementById("token-auto-clean-days").value = res.config.days;
+            window.openModal("token-auto-clean-modal");
+        } else {
+            window.showToast("获取自动清理配置失败: " + (res.message || "未知错误"));
+        }
+    } catch (e) {
+        window.showToast("获取自动清理配置失败: " + (e.message || e));
+    }
+};
+
+window.submitTokenAutoCleanConfig = async function() {
+    const enabled = document.getElementById("token-auto-clean-enabled").checked;
+    const days = parseInt(document.getElementById("token-auto-clean-days").value) || 365;
+    
+    try {
+        const res = await window.apiPost("/token/auto_clean/config", { enabled, days });
+        if (res.status === "success") {
+            window.showToast("配置保存成功");
+            window.closeModal("token-auto-clean-modal");
+        } else {
+            window.showToast("保存配置失败: " + (res.message || "未知错误"));
+        }
+    } catch (e) {
+        window.showToast("保存配置失败: " + (e.message || e));
+    }
+};
+
+window.openTokenClearModal = function() {
+    const botName = document.getElementById("token-bot-name").value;
+    const groupId = document.getElementById("token-group-id").value;
+    const timeRange = document.getElementById("token-time-range").value;
+    
+    let confirmMsg = "警告：这将永久删除符合当前筛选条件的所有 Token 和合成字符的记录，无法恢复！";
+    if (!botName && !groupId && !timeRange) {
+        confirmMsg = "警告：您未设置任何筛选条件，这将永久删除所有历史 Token 和合成字符的记录，无法恢复！";
+    }
+    
+    window.showConfirm("确认清空日志", confirmMsg, async () => {
+        try {
+            const res = await window.apiPost("/token/clear", {
+                bot_name: botName,
+                group_or_user_id: groupId,
+                time_range: timeRange
+            });
+            if (res.status === "success") {
+                window.showToast(res.message || "清空成功");
+                const app = window.GiftiaApp;
+                await app.loadTokenStatsSummary();
+            } else {
+                window.showToast("清除日志失败: " + (res.message || "未知错误"));
+            }
+        } catch (e) {
+            window.showToast("清除日志失败: " + (e.message || e));
+        }
+    });
 };

@@ -44,6 +44,7 @@ class ToolsFunc:
         # 启动时更新自动清理任务
         self.update_auto_clean_media_job()
         self.update_auto_clean_memory_job()
+        self.update_auto_clean_token_job()
 
     def register_funcs(self):
         """注册定时任务函数"""
@@ -55,6 +56,9 @@ class ToolsFunc:
         )
         self.task_manager.register_func(
             "auto_clean_memories", self.auto_clean_memories
+        )
+        self.task_manager.register_func(
+            "auto_clean_token_usage", self.auto_clean_token_usage
         )
 
     def add_backup_message_to_r2(self):
@@ -457,3 +461,44 @@ class ToolsFunc:
         except Exception as e:
             logger.error(f"[Giftia] 自动清理媒体缓存失败: {e}")
             return {"status": "error", "message": f"自动清理媒体缓存失败: {str(e)}"}
+
+    def update_auto_clean_token_job(self):
+        """添加/更新或移除自动清理 Token 消耗日志的定时任务"""
+        async def _update():
+            raw_cfg = await self.db.get_kv_data("auto_clean_token_config")
+            try:
+                cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": True, "days": 30}
+            except Exception:
+                cfg = {"enabled": True, "days": 30}
+            
+            if cfg.get("enabled", True):
+                # 每天凌晨 4 点执行自动清理
+                self.task_manager.add_job(
+                    task_id="system_auto_clean_token_usage",
+                    func_name="auto_clean_token_usage",
+                    time_expr="0 4 * * *",
+                )
+            else:
+                self.task_manager.remove_job("system_auto_clean_token_usage")
+        
+        asyncio.create_task(_update())
+
+    async def auto_clean_token_usage(self):
+        """自动清理过期 Token 日志"""
+        try:
+            raw_cfg = await self.db.get_kv_data("auto_clean_token_config")
+            try:
+                cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": True, "days": 365}
+            except Exception:
+                cfg = {"enabled": True, "days": 365}
+            
+            if cfg.get("enabled", True):
+                # 1. 先将昨日及以前的数据拍扁汇总归档
+                await self.db.squash_token_logs()
+                
+                # 2. 清理超过保留天数的历史归档
+                days = int(cfg.get("days", 365))
+                cleaned_count = await self.db.clear_token_logs(before_days=days)
+                logger.info(f"[Giftia] 自动清理完成，共物理删除 {cleaned_count} 条过期 Token 记录 (保留最近 {days} 天)")
+        except Exception as e:
+            logger.error(f"[Giftia] 自动清理 Token 记录失败: {e}")

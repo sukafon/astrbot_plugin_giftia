@@ -22,7 +22,7 @@ class MediaCaptioner:
         return bool(caption_config.get("image_caption_enabled", True))
 
     async def transcribe_media_if_deferred(
-        self, bot_name: str, recent_messages: list, caption_config: dict
+        self, bot_name: str, recent_messages: list, caption_config: dict, group_or_user_id: str = ""
     ) -> list[MediaCaption]:
         """
         根据近期消息中的媒体ID，如果未转述，进行懒加载转述，并缓存。
@@ -71,7 +71,9 @@ class MediaCaptioner:
                                 )
                                 if audio_urls and audio_urls[0]:
                                     transcribed = await self.plugin.call_llm.call_llm_audio_caption(
-                                        audio_urls
+                                        audio_urls,
+                                        bot_name=bot_name,
+                                        group_or_user_id=group_or_user_id,
                                     )
                                     if transcribed:
                                         media_caption.genre = transcribed.genre
@@ -103,7 +105,9 @@ class MediaCaptioner:
                                     )
                                     if base64s:
                                         transcribed = await self.plugin.call_llm.call_llm_image_caption(
-                                            base64s
+                                            base64s,
+                                            bot_name=bot_name,
+                                            group_or_user_id=group_or_user_id,
                                         )
                                         if transcribed:
                                             media_caption.genre = transcribed.genre

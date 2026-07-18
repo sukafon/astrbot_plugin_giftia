@@ -195,6 +195,7 @@ class Giftia(Star):
             xml_parse=self.xml_parse,
             caption_config=self.conf.get("caption_config", {}),
             network_config=self.conf.get("network_config", {}),
+            plugin=self,
         )
         self.message_parser = MessageParser(
             data_cache=self.data_cache,
