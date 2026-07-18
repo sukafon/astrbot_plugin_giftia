@@ -67,13 +67,13 @@ export function renderTokenStatsSummary(stats) {
                 const barColor = colors[idx % colors.length];
 
                 return `
-                    <div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
-                            <span style="font-weight: 500; font-family: monospace;">${g.group_or_user_id || '私聊/系统'}</span>
-                            <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                    <div class="token-stat-row">
+                        <div class="token-stat-info align-center">
+                            <span class="token-stat-name monospace" title="${g.group_or_user_id || '私聊/系统'}">${g.group_or_user_id || '私聊/系统'}</span>
+                            <span class="token-stat-value">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                         </div>
-                        <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
-                            <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
                         </div>
                     </div>
                 `;
@@ -83,12 +83,12 @@ export function renderTokenStatsSummary(stats) {
         if (groupCard) groupCard.style.display = "none";
     }
 
-    // 2. Model Breakdown
+    // 2. Provider / Model Breakdown
     const modelContainer = document.getElementById("token-model-progress-bars");
     const modelTitle = document.getElementById("model-breakdown-title");
 
     if (modelTitle) {
-        modelTitle.textContent = groupId ? "该会话下按模型 Token 占比" : "按模型 Token 占比";
+        modelTitle.textContent = groupId ? "该会话下按供应商 / 模型 Token 占比" : "按供应商 / 模型 Token 占比";
     }
 
     const models = stats.by_model || [];
@@ -100,17 +100,34 @@ export function renderTokenStatsSummary(stats) {
         modelContainer.innerHTML = models.slice(0, 6).map((m, idx) => {
             const tokens = m.total_tokens || 0;
             const pct = ((tokens / maxModelTokens) * 100).toFixed(1);
+
+            // Determine model name as main text and provider id as subtext.
+            let mainText = m.model_name || '未知';
+            let subText = m.provider_id || '';
+
+            // If provider_id contains '/', it's in the form 'provider/model'.
+            // In that case, we can extract the provider as subText and the model as mainText.
+            if (subText && subText.includes('/')) {
+                const parts = subText.split('/');
+                subText = parts[0];
+                mainText = parts.slice(1).join('/');
+            }
+
+            const providerName = m.provider_id ? (m.provider_id.includes('/') ? m.provider_id : `${m.provider_id} (${mainText})`) : mainText;
             const colors = ['#8b5cf6', '#6366f1', '#10b981', '#f59e0b', '#ec4899', '#0ea5e9'];
             const barColor = colors[idx % colors.length];
 
             return `
-                <div title="输入 (Prompt): ${Number(m.prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(m.completion_tokens || 0).toLocaleString()}" style="cursor: help;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
-                        <span style="font-weight: 500; font-family: monospace;">${m.model_name}</span>
-                        <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                <div class="token-stat-row help-cursor" title="输入 (Prompt): ${Number(m.prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(m.completion_tokens || 0).toLocaleString()}">
+                    <div class="token-stat-info align-start">
+                        <div class="token-stat-name-col">
+                            <span class="token-stat-name bold" title="${providerName}">${mainText}</span>
+                            ${subText ? `<span class="token-stat-subname" title="${subText}">${subText}</span>` : ''}
+                        </div>
+                        <span class="token-stat-value margin-left">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                     </div>
-                    <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
-                        <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
                     </div>
                 </div>
             `;
@@ -153,13 +170,13 @@ export function renderTokenStatsSummary(stats) {
             const barColor = colorMap[cat.class] || '#6366f1';
 
             return `
-                <div ${hoverTitle ? `title="${hoverTitle}" style="cursor: help;"` : ''}>
-                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
-                        <span style="font-weight: 500;">${cat.name}</span>
-                        <span style="color: var(--font-secondary);">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                <div class="token-stat-row ${hoverTitle ? 'help-cursor' : ''}" ${hoverTitle ? `title="${hoverTitle}"` : ''}>
+                    <div class="token-stat-info align-center">
+                        <span class="token-stat-name">${cat.name}</span>
+                        <span class="token-stat-value no-mono">${tokens.toLocaleString()} Tokens (${pct}%)</span>
                     </div>
-                    <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background-color: var(--bg-secondary); overflow: hidden;">
-                        <div class="progress-bar-fg" style="height: 100%; width: ${pct}%; border-radius: 4px; background-color: ${barColor};"></div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
                     </div>
                 </div>
             `;

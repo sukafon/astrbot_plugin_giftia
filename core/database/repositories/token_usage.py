@@ -103,26 +103,27 @@ class TokenUsageRepository(BaseRepository):
             where_usage = f"WHERE {' AND '.join(conditions_usage)}" if conditions_usage else ""
             where_daily = f"WHERE {' AND '.join(conditions_daily)}" if conditions_daily else ""
 
-            # Query token_usage (今日明细)
+            # Query token_usage (今日明细). Keep provider_id in the grouping so
+            # identically named models from different providers are not merged.
             sql_usage = f"""
-                SELECT group_or_user_id, model_name, type,
+                SELECT group_or_user_id, provider_id, model_name, type,
                        SUM(prompt_tokens) as prompt,
                        SUM(completion_tokens) as completion,
                        SUM(total_tokens) as total
                 FROM token_usage
                 {where_usage}
-                GROUP BY group_or_user_id, model_name, type
+                GROUP BY group_or_user_id, provider_id, model_name, type
             """
 
             # Query token_daily_stats (历史归档)
             sql_daily = f"""
-                SELECT group_or_user_id, model_name, type,
+                SELECT group_or_user_id, provider_id, model_name, type,
                        SUM(prompt_tokens) as prompt,
                        SUM(completion_tokens) as completion,
                        SUM(total_tokens) as total
                 FROM token_daily_stats
                 {where_daily}
-                GROUP BY group_or_user_id, model_name, type
+                GROUP BY group_or_user_id, provider_id, model_name, type
             """
 
             merged = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0})
@@ -130,7 +131,12 @@ class TokenUsageRepository(BaseRepository):
             async with self.conn.execute(sql_usage, params_usage) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
-                    key = (r["group_or_user_id"] or "", r["model_name"] or "", r["type"])
+                    key = (
+                        r["group_or_user_id"] or "",
+                        r["provider_id"] or "",
+                        r["model_name"] or "",
+                        r["type"],
+                    )
                     merged[key]["prompt"] += r["prompt"] or 0
                     merged[key]["completion"] += r["completion"] or 0
                     merged[key]["total"] += r["total"] or 0
@@ -138,7 +144,12 @@ class TokenUsageRepository(BaseRepository):
             async with self.conn.execute(sql_daily, params_daily) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
-                    key = (r["group_or_user_id"] or "", r["model_name"] or "", r["type"])
+                    key = (
+                        r["group_or_user_id"] or "",
+                        r["provider_id"] or "",
+                        r["model_name"] or "",
+                        r["type"],
+                    )
                     merged[key]["prompt"] += r["prompt"] or 0
                     merged[key]["completion"] += r["completion"] or 0
                     merged[key]["total"] += r["total"] or 0
@@ -165,7 +176,7 @@ class TokenUsageRepository(BaseRepository):
             model_map = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "tts_chars": 0})
 
             for key, val in merged.items():
-                group_id, model_name, type_name = key
+                group_id, provider_id, model_name, type_name = key
                 prompt = val["prompt"]
                 completion = val["completion"]
                 total = val["total"]
@@ -176,15 +187,15 @@ class TokenUsageRepository(BaseRepository):
                     summary["total_completion_tokens"] += completion
 
                     group_map[group_id]["tokens"] += total
-                    model_map[model_name]["prompt"] += prompt
-                    model_map[model_name]["completion"] += completion
-                    model_map[model_name]["total"] += total
+                    model_map[(provider_id, model_name)]["prompt"] += prompt
+                    model_map[(provider_id, model_name)]["completion"] += completion
+                    model_map[(provider_id, model_name)]["total"] += total
                 else:
                     summary["total_chars_tts"] += total
                     summary["tts_chars"] += total
 
                     group_map[group_id]["tts_chars"] += total
-                    model_map[model_name]["tts_chars"] += total
+                    model_map[(provider_id, model_name)]["tts_chars"] += total
 
                 if type_name == "decision":
                     summary["decision_tokens"] += total
@@ -213,9 +224,10 @@ class TokenUsageRepository(BaseRepository):
             by_group.sort(key=lambda x: x["total_tokens"], reverse=True)
 
             by_model = []
-            for mname, mval in model_map.items():
+            for (provider_id, model_name), mval in model_map.items():
                 by_model.append({
-                    "model_name": mname or "未知",
+                    "provider_id": provider_id or None,
+                    "model_name": model_name or "未知",
                     "prompt_tokens": mval["prompt"],
                     "completion_tokens": mval["completion"],
                     "total_tokens": mval["total"],

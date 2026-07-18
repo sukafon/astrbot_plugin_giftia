@@ -200,6 +200,8 @@ class MediaCaptioner:
                                 image_urls=base64s,
                                 categories=categories,
                                 media_id=sticker_id,
+                                bot_name=bot_name,
+                                group_or_user_id=group_or_user_id,
                             )
                         # 如果判定为有用，则下载保存到本地
                         if is_useful and sticker:
