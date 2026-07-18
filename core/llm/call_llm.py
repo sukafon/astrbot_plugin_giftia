@@ -20,6 +20,7 @@ from .preset_prompts import (
     build_xml_instructions,
 )
 from .xml_parse import XmlParse
+from ..utils.token_utils import extract_tokens_robust
 
 
 class CallLLM:
@@ -618,25 +619,11 @@ class CallLLM:
         else:
             extra_info = dict(extra_info)
 
-        prompt_tokens = 0
-        completion_tokens = 0
-        total_tokens = 0
+        prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(llm_resp)
         model_name = provider_id
 
         if llm_resp:
-            raw = llm_resp.raw_completion
-            if raw:
-                if hasattr(raw, "model"):
-                    model_name = getattr(raw, "model") or provider_id
-                elif hasattr(raw, "model_name"):
-                    model_name = getattr(raw, "model_name") or provider_id
-            
-            usage = getattr(llm_resp, "usage", None)
-            if usage:
-                prompt_tokens = usage.input
-                completion_tokens = usage.output
-                total_tokens = usage.total
-            else:
+            if prompt_tokens == 0 and completion_tokens == 0:
                 extra_info["usage_missing"] = True
         else:
             extra_info["usage_missing"] = True

@@ -5,6 +5,7 @@ from datetime import datetime
 from astrbot.api import logger
 
 from ..utils.schemas import normalize_memory_importance
+from ..utils.token_utils import extract_tokens_robust
 from .passive_context import PassiveContextMixin
 
 RELATION_DELTA_LIMIT = 5
@@ -43,21 +44,18 @@ class PassiveSummaryTaskMixin(PassiveContextMixin):
                         system_prompt=system_prompt,
                         prompt=user_prompt,
                     )
-                    if llm_resp and getattr(llm_resp, "usage", None) and self.plugin:
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
+                    if llm_resp and self.plugin:
+                        prompt_tokens, completion_tokens, total_tokens = extract_tokens_robust(llm_resp)
+                        model_name = provider_id
                         await self.plugin.db.log_token_usage(
                             bot_name=bot_name,
                             group_or_user_id=group_or_user_id,
                             type="passive_summary",
                             provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
+                            model_name=model_name,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=total_tokens,
                             extra_info={"task_name": task_name},
                         )
                     if llm_resp and llm_resp.completion_text:
