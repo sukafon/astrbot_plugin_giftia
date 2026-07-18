@@ -104,23 +104,14 @@ class CallLLM:
                         if parsed_result is not None:
                             is_parsed = True
 
-                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="decision",
-                            provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
-                            extra_info={"status": "success" if is_parsed else "parse_failed"}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="decision",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                    )
                     if parsed_result is not None:
                         return parsed_result
                     logger.warning(
@@ -129,18 +120,14 @@ class CallLLM:
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
-                    if self.plugin:
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="decision",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": str(e)}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="decision",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
                     continue
         return None
 
@@ -319,26 +306,17 @@ class CallLLM:
                             native_tools_called=list(llm_resp.tools_call_name or [])
                         )
 
-                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
-                        bot_name = ""
-                        if event:
-                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="reply",
-                            provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
-                            extra_info={"status": status_val}
-                        )
+                    bot_name = ""
+                    if event:
+                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="reply",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": status_val}
+                    )
 
                     if llm_resp.tools_call_name:
                         logger.info(
@@ -371,39 +349,31 @@ class CallLLM:
                     logger.info(
                         f"LLM generated empty output error, treating as no reply. provider_id: {provider_id}"
                     )
-                    if self.plugin:
-                        bot_name = ""
-                        if event:
-                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="reply",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": "EmptyModelOutputError"}
-                        )
+                    bot_name = ""
+                    if event:
+                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="reply",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": "EmptyModelOutputError"}
+                    )
                     return XmlLlmResult()
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}，provider_id: {provider_id}")
-                    if self.plugin:
-                        bot_name = ""
-                        if event:
-                            bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="reply",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": str(e)}
-                        )
+                    bot_name = ""
+                    if event:
+                        bot_name = self.plugin.adapter_id_map.get(event.platform_meta.id) or ""
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="reply",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
                     continue
         return None
 
@@ -455,23 +425,14 @@ class CallLLM:
                         if parsed:
                             is_parsed = True
 
-                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="image_caption",
-                            provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
-                            extra_info={"status": "success" if is_parsed else "parse_failed"}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="image_caption",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                    )
                     if parsed:
                         logger.info(
                             f"[Giftia] LLM转述响应片段: "
@@ -482,18 +443,14 @@ class CallLLM:
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
-                    if self.plugin:
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="image_caption",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": str(e)}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="image_caption",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
                     continue
         return None
 
@@ -534,41 +491,28 @@ class CallLLM:
                         if parsed:
                             is_parsed = True
 
-                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="audio_caption",
-                            provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
-                            extra_info={"status": "success" if is_parsed else "parse_failed"}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="audio_caption",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                    )
                     if parsed:
                         return parsed
                     logger.warning("解析音频转述 JSON 失败，准备重试或降级...")
                     continue
                 except Exception as e:
                     logger.error(f"LLM回复失败: {str(e)}")
-                    if self.plugin:
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="audio_caption",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": str(e)}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="audio_caption",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
                     continue
         return None
 
@@ -617,23 +561,14 @@ class CallLLM:
                         if result_dict:
                             is_parsed = True
 
-                    if self.plugin and llm_resp and getattr(llm_resp, "usage", None):
-                        model_name = ""
-                        if hasattr(llm_resp.raw_completion, "model"):
-                            model_name = getattr(llm_resp.raw_completion, "model") or ""
-                        elif hasattr(llm_resp.raw_completion, "model_name"):
-                            model_name = getattr(llm_resp.raw_completion, "model_name") or ""
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="sticker_analysis",
-                            provider_id=provider_id,
-                            model_name=model_name or provider_id,
-                            prompt_tokens=llm_resp.usage.input,
-                            completion_tokens=llm_resp.usage.output,
-                            total_tokens=llm_resp.usage.total,
-                            extra_info={"status": "success" if is_parsed else "parse_failed"}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="sticker_analysis",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                    )
                     if result_dict:
                         is_useful = result_dict.get("isUseful", False)
                         if not is_useful:
@@ -655,17 +590,65 @@ class CallLLM:
                     continue
                 except Exception as e:
                     logger.error(f"LLM表情包分析失败: {str(e)}")
-                    if self.plugin:
-                        await self.plugin.db.log_token_usage(
-                            bot_name=bot_name,
-                            group_or_user_id=group_or_user_id,
-                            type="sticker_analysis",
-                            provider_id=provider_id,
-                            model_name=provider_id,
-                            prompt_tokens=0,
-                            completion_tokens=0,
-                            total_tokens=0,
-                            extra_info={"status": "api_failed", "error": str(e)}
-                        )
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="sticker_analysis",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
                     continue
         return False, None
+
+    async def _log_token_usage_safely(
+        self,
+        bot_name: str,
+        group_or_user_id: str,
+        type_name: str,
+        provider_id: str,
+        llm_resp=None,
+        extra_info: dict | None = None,
+    ):
+        if not self.plugin:
+            return
+
+        if extra_info is None:
+            extra_info = {}
+        else:
+            extra_info = dict(extra_info)
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        model_name = provider_id
+
+        if llm_resp:
+            raw = llm_resp.raw_completion
+            if raw:
+                if hasattr(raw, "model"):
+                    model_name = getattr(raw, "model") or provider_id
+                elif hasattr(raw, "model_name"):
+                    model_name = getattr(raw, "model_name") or provider_id
+            
+            usage = getattr(llm_resp, "usage", None)
+            if usage:
+                prompt_tokens = usage.input
+                completion_tokens = usage.output
+                total_tokens = usage.total
+            else:
+                extra_info["usage_missing"] = True
+        else:
+            extra_info["usage_missing"] = True
+
+        await self.plugin.db.log_token_usage(
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+            type=type_name,
+            provider_id=provider_id,
+            model_name=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            extra_info=extra_info
+        )

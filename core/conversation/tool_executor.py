@@ -140,6 +140,7 @@ class ToolExecutor:
                         bot_name=bot_name,
                         hash_val=media_id,
                         question=question,
+                        group_or_user_id=group_or_user_id,
                     )
                     if updated_caption:
                         parts = []

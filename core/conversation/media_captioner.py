@@ -216,7 +216,7 @@ class MediaCaptioner:
                     )
 
     async def retranscribe_media_with_question(
-        self, bot_name: str, hash_val: str, question: str
+        self, bot_name: str, hash_val: str, question: str, group_or_user_id: str = ""
     ) -> MediaCaption | None:
         """
         强制针对给定的 media_id (hash_val) 和额外关注的问题，进行重新转述，并更新缓存与数据库。
@@ -243,7 +243,7 @@ class MediaCaptioner:
                 )
                 if audio_urls and audio_urls[0]:
                     transcribed = await self.plugin.call_llm.call_llm_audio_caption(
-                        audio_urls, question=question
+                        audio_urls, question=question, bot_name=bot_name, group_or_user_id=group_or_user_id
                     )
                     if transcribed:
                         media_caption.genre = transcribed.genre
@@ -274,7 +274,7 @@ class MediaCaptioner:
                     )
                     if base64s:
                         transcribed = await self.plugin.call_llm.call_llm_image_caption(
-                            base64s, question=question
+                            base64s, question=question, bot_name=bot_name, group_or_user_id=group_or_user_id
                         )
                         if transcribed:
                             media_caption.genre = transcribed.genre
