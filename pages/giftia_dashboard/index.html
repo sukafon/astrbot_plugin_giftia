@@ -10,6 +10,9 @@
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/base.css">
     <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/components/tables.css">
+    <link rel="stylesheet" href="css/components/cards.css">
+    <link rel="stylesheet" href="css/components/token_stats.css">
     <link rel="stylesheet" href="css/dashboard.css">
     <link rel="stylesheet" href="css/modals.css">
     <!-- AstrBot Bridge SDK -->
@@ -17,7 +20,7 @@
     <script src="js/utils.js" defer></script>
     <script src="js/api.js" defer></script>
     <script src="js/modals.js" defer></script>
-    <script src="js/app.js" defer></script>
+    <script type="module" src="js/app.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -378,7 +381,7 @@
                             <!-- Dynamic progress bars -->
                         </div>
                     </div>
-                    
+
                     <!-- Card B: Model breakdown -->
                     <div id="card-model-breakdown" class="card token-breakdown-card" style="padding: 20px; border-radius: 8px;">
                         <h3 id="model-breakdown-title" style="margin-top: 0; margin-bottom: 15px; font-size: 1rem; font-weight: 600;">按模型 Token 占比</h3>
@@ -386,7 +389,7 @@
                             <!-- Dynamic progress bars -->
                         </div>
                     </div>
-                    
+
                     <!-- Card C: Category Breakdown -->
                     <div id="card-type-breakdown" class="card token-type-breakdown-card" style="padding: 20px; border-radius: 8px;">
                         <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1rem; font-weight: 600;">按操作类型 Token 占比</h3>
@@ -507,10 +510,10 @@
                                         <input type="checkbox" id="clean-mem-include-never-hit" checked>
                                         <span>包含从未命中的记忆</span>
                                     </label>
-                                    
+
                                     <button id="btn-memory-manual-filter" class="btn btn-secondary" style="width: 100%; margin-top: 16px;" onclick="loadMemoryCleanCandidates()">筛选候选记忆</button>
                                 </div>
-                                
+
                                 <div class="clean-layout-right">
                                     <div id="memory-clean-summary" class="memory-clean-summary">
                                         设置条件后点击“筛选候选记忆”。

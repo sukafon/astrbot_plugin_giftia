@@ -1,0 +1,41 @@
+/* Giftia Dashboard Token Stats Stylesheet Component */
+
+/* Token usage tags / badges */
+.tag {
+    display: inline-block;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    line-height: 1;
+}
+
+.tag-decision {
+    background-color: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+}
+
+.tag-reply {
+    background-color: rgba(99, 102, 241, 0.12);
+    color: #6366f1;
+}
+
+.tag-image_caption {
+    background-color: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+}
+
+.tag-audio_caption {
+    background-color: rgba(236, 72, 153, 0.12);
+    color: #ec4899;
+}
+
+.tag-tts {
+    background-color: rgba(14, 165, 233, 0.12);
+    color: #0ea5e9;
+}
+
+.tag-passive_summary {
+    background-color: rgba(139, 92, 246, 0.12);
+    color: #8b5cf6;
+}

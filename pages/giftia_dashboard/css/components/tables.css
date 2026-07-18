@@ -1,0 +1,259 @@
+/* Giftia Dashboard Table Components Stylesheet */
+
+/* Forward Message Records Table styling */
+.forward-table-container table {
+    table-layout: auto;
+}
+
+.forward-id-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 180px;
+}
+
+.forward-id-cell code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.forward-source-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 160px;
+    color: var(--font-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+.forward-source-cell span:first-child {
+    color: var(--font-color);
+    font-weight: 600;
+}
+
+.forward-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 150px;
+}
+
+.forward-stats span {
+    display: inline-flex;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background-color: var(--bg-secondary);
+    color: var(--font-secondary);
+    border: 1px solid var(--border-color);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.forward-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 92px;
+}
+
+.forward-summary-cell {
+    max-width: 460px;
+    color: var(--font-color);
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.forward-detail-modal-card {
+    max-width: 960px !important;
+    width: 95% !important;
+    height: 720px;
+    max-height: 88vh;
+}
+
+.forward-detail-modal-card .modal-body {
+    gap: 14px;
+    margin-bottom: 16px;
+}
+
+.forward-detail-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.forward-detail-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--bg-secondary);
+    min-width: 0;
+}
+
+.forward-detail-meta-item span {
+    color: var(--font-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.forward-detail-meta-item strong {
+    color: var(--font-color);
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.forward-detail-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.forward-detail-summary {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--primary);
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.02);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+html[data-theme="dark"] .forward-detail-summary {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.forward-detail-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--font-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
+
+.forward-node-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.forward-node {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--card-bg);
+}
+
+.forward-node-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    color: var(--font-secondary);
+    font-size: 12px;
+}
+
+.forward-node-header strong {
+    color: var(--font-color);
+    font-size: 13px;
+}
+
+.forward-node-content {
+    color: var(--font-color);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.forward-node-refs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    color: var(--font-secondary);
+    font-size: 12px;
+}
+
+/* Mobile Media Queries for Responsive Tables */
+@media (max-width: 768px) {
+    #tab-chat-history table,
+    #tab-chat-history thead,
+    #tab-chat-history tbody,
+    #tab-chat-history th,
+    #tab-chat-history td,
+    #tab-chat-history tr,
+    #tab-forward-messages table,
+    #tab-forward-messages thead,
+    #tab-forward-messages tbody,
+    #tab-forward-messages th,
+    #tab-forward-messages td,
+    #tab-forward-messages tr {
+        display: block;
+    }
+
+    #tab-chat-history thead tr,
+    #tab-forward-messages thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+    }
+
+    #tab-chat-history tr,
+    #tab-forward-messages tr {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        padding: 8px;
+        background-color: var(--card-bg);
+        box-shadow: var(--shadow);
+    }
+
+    #tab-chat-history td,
+    #tab-forward-messages td {
+        border: none;
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+        padding-left: 35% !important;
+        text-align: left;
+        white-space: normal !important;
+        min-height: 38px;
+        display: block;
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    #tab-chat-history td:last-child,
+    #tab-forward-messages td:last-child {
+        border-bottom: none;
+    }
+
+    #tab-chat-history td::before,
+    #tab-forward-messages td::before {
+        content: attr(data-label);
+        position: absolute;
+        top: 8px;
+        left: 12px;
+        width: 30%;
+        font-weight: 600;
+        color: var(--font-secondary);
+        font-size: 13px;
+    }
+}
