@@ -30,21 +30,11 @@ export function renderTokenStatsSummary(stats) {
     // Total numbers
     document.getElementById("stat-total-tokens").textContent = Number(summary.total_tokens || 0).toLocaleString();
     document.getElementById("stat-tts-chars").textContent = Number(summary.total_chars_tts || 0).toLocaleString();
-    document.getElementById("stat-reply-tokens").textContent = Number(summary.reply_tokens || 0).toLocaleString();
-    document.getElementById("stat-decision-tokens").textContent = Number(summary.decision_tokens || 0).toLocaleString();
 
     // Set title breakdowns on hover
     const totalCard = document.getElementById("stat-total-tokens").parentElement;
     if (totalCard) {
         totalCard.setAttribute("title", `输入 (Prompt): ${Number(summary.total_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.total_completion_tokens || 0).toLocaleString()}`);
-    }
-    const replyCard = document.getElementById("stat-reply-tokens").parentElement;
-    if (replyCard) {
-        replyCard.setAttribute("title", `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`);
-    }
-    const decisionCard = document.getElementById("stat-decision-tokens").parentElement;
-    if (decisionCard) {
-        decisionCard.setAttribute("title", `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`);
     }
 
     // 1. Group Breakdown
@@ -146,41 +136,46 @@ export function renderTokenStatsSummary(stats) {
             { key: 'passive_summary_tokens', name: '被动总结', class: 'passive_summary' }
         ];
 
-        const maxTypeTokens = categories.reduce((sum, cat) => sum + (summary[cat.key] || 0), 0) || 1;
+        const activeCategories = categories.filter(cat => (summary[cat.key] || 0) > 0);
+        const maxTypeTokens = activeCategories.reduce((sum, cat) => sum + (summary[cat.key] || 0), 0) || 1;
 
-        typeContainer.innerHTML = categories.map(cat => {
-            const tokens = summary[cat.key] || 0;
-            const pct = ((tokens / maxTypeTokens) * 100).toFixed(1);
+        if (activeCategories.length === 0) {
+            typeContainer.innerHTML = '<div style="font-size: 0.85rem; color: var(--font-secondary); text-align: center; padding: 20px 0;">暂无数据</div>';
+        } else {
+            typeContainer.innerHTML = activeCategories.map(cat => {
+                const tokens = summary[cat.key] || 0;
+                const pct = ((tokens / maxTypeTokens) * 100).toFixed(1);
 
-            let hoverTitle = "";
-            if (cat.key === 'reply_tokens') {
-                hoverTitle = `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`;
-            } else if (cat.key === 'decision_tokens') {
-                hoverTitle = `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`;
-            }
+                let hoverTitle = "";
+                if (cat.key === 'reply_tokens') {
+                    hoverTitle = `输入 (Prompt): ${Number(summary.reply_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.reply_completion_tokens || 0).toLocaleString()}`;
+                } else if (cat.key === 'decision_tokens') {
+                    hoverTitle = `输入 (Prompt): ${Number(summary.decision_prompt_tokens || 0).toLocaleString()}\n输出 (Completion): ${Number(summary.decision_completion_tokens || 0).toLocaleString()}`;
+                }
 
-            const colorMap = {
-                'reply': '#6366f1',
-                'decision': '#10b981',
-                'image_caption': '#f59e0b',
-                'sticker_analysis': '#14b8a6',
-                'audio_caption': '#ec4899',
-                'passive_summary': '#8b5cf6'
-            };
-            const barColor = colorMap[cat.class] || '#6366f1';
+                const colorMap = {
+                    'reply': '#6366f1',
+                    'decision': '#10b981',
+                    'image_caption': '#f59e0b',
+                    'sticker_analysis': '#14b8a6',
+                    'audio_caption': '#ec4899',
+                    'passive_summary': '#8b5cf6'
+                };
+                const barColor = colorMap[cat.class] || '#6366f1';
 
-            return `
-                <div class="token-stat-row ${hoverTitle ? 'help-cursor' : ''}" ${hoverTitle ? `title="${hoverTitle}"` : ''}>
-                    <div class="token-stat-info align-center">
-                        <span class="token-stat-name">${cat.name}</span>
-                        <span class="token-stat-value no-mono">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                return `
+                    <div class="token-stat-row ${hoverTitle ? 'help-cursor' : ''}" ${hoverTitle ? `title="${hoverTitle}"` : ''}>
+                        <div class="token-stat-info align-center">
+                            <span class="token-stat-name">${cat.name}</span>
+                            <span class="token-stat-value no-mono">${tokens.toLocaleString()} Tokens (${pct}%)</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
+                        </div>
                     </div>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar-fill" style="width: ${pct}%; background-color: ${barColor};"></div>
-                    </div>
-                </div>
-            `;
-        }).join('');
+                `;
+            }).join('');
+        }
     }
 }
 

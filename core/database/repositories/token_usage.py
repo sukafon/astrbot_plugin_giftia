@@ -181,21 +181,28 @@ class TokenUsageRepository(BaseRepository):
                 completion = val["completion"]
                 total = val["total"]
 
+                norm_provider_id = provider_id
+                norm_model_name = model_name
+                if provider_id and "/" in provider_id:
+                    parts = provider_id.split("/")
+                    norm_provider_id = parts[0]
+                    norm_model_name = "/".join(parts[1:])
+
                 if type_name != "tts":
                     summary["total_tokens"] += total
                     summary["total_prompt_tokens"] += prompt
                     summary["total_completion_tokens"] += completion
 
                     group_map[group_id]["tokens"] += total
-                    model_map[(provider_id, model_name)]["prompt"] += prompt
-                    model_map[(provider_id, model_name)]["completion"] += completion
-                    model_map[(provider_id, model_name)]["total"] += total
+                    model_map[(norm_provider_id, norm_model_name)]["prompt"] += prompt
+                    model_map[(norm_provider_id, norm_model_name)]["completion"] += completion
+                    model_map[(norm_provider_id, norm_model_name)]["total"] += total
                 else:
                     summary["total_chars_tts"] += total
                     summary["tts_chars"] += total
 
                     group_map[group_id]["tts_chars"] += total
-                    model_map[(provider_id, model_name)]["tts_chars"] += total
+                    model_map[(norm_provider_id, norm_model_name)]["tts_chars"] += total
 
                 if type_name == "decision":
                     summary["decision_tokens"] += total
@@ -225,14 +232,15 @@ class TokenUsageRepository(BaseRepository):
 
             by_model = []
             for (provider_id, model_name), mval in model_map.items():
-                by_model.append({
-                    "provider_id": provider_id or None,
-                    "model_name": model_name or "未知",
-                    "prompt_tokens": mval["prompt"],
-                    "completion_tokens": mval["completion"],
-                    "total_tokens": mval["total"],
-                    "total_chars_tts": mval["tts_chars"]
-                })
+                if mval["total"] > 0:
+                    by_model.append({
+                        "provider_id": provider_id or None,
+                        "model_name": model_name or "未知",
+                        "prompt_tokens": mval["prompt"],
+                        "completion_tokens": mval["completion"],
+                        "total_tokens": mval["total"],
+                        "total_chars_tts": mval["tts_chars"]
+                    })
             by_model.sort(key=lambda x: x["total_tokens"], reverse=True)
 
             return {
