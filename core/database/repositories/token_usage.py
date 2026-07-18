@@ -1,6 +1,6 @@
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import aiosqlite
 from astrbot.api import logger
 from .base import BaseRepository
@@ -43,6 +43,38 @@ class TokenUsageRepository(BaseRepository):
             await self.conn.commit()
         except Exception as e:
             logger.error(f"[Database] Failed to log token usage: {e}")
+
+    def _parse_db_utc_to_local_dt(self, utc_str: str) -> datetime:
+        """解析数据库中的 UTC 时间字符串为带本地时区的 datetime 对象（支持带与不带小数秒）"""
+        if not utc_str:
+            return datetime.now().astimezone()
+        try:
+            return datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc).astimezone()
+        except Exception as e:
+            logger.error(f"[Database] Error parsing UTC string {utc_str}: {e}")
+            return datetime.now().astimezone()
+
+    def _local_str_to_utc_str(self, local_str: str) -> str:
+        """本地时间字符串转为 UTC 时间字符串"""
+        if not local_str:
+            return local_str
+        try:
+            dt = datetime.strptime(local_str, "%Y-%m-%d %H:%M:%S")
+            utc_dt = dt.astimezone().astimezone(timezone.utc)
+            return utc_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            logger.error(f"[Database] Error converting local to UTC: {e}")
+            return local_str
+
+    def _utc_str_to_local_str(self, utc_str: str) -> str:
+        """数据库中的 UTC 时间字符串转为本地时间字符串"""
+        if not utc_str:
+            return utc_str
+        try:
+            local_dt = self._parse_db_utc_to_local_dt(utc_str)
+            return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return utc_str
 
     def _get_time_range_thresholds(self, time_range: str) -> tuple[str | None, str | None]:
         """返回对应的时间阈值 (usage_threshold, daily_threshold)"""
@@ -94,8 +126,9 @@ class TokenUsageRepository(BaseRepository):
             if time_range:
                 usage_thresh, daily_thresh = self._get_time_range_thresholds(time_range)
                 if usage_thresh:
+                    usage_thresh_utc = self._local_str_to_utc_str(usage_thresh)
                     conditions_usage.append("created_at >= ?")
-                    params_usage.append(usage_thresh)
+                    params_usage.append(usage_thresh_utc)
                 if daily_thresh:
                     conditions_daily.append("date >= ?")
                     params_daily.append(daily_thresh)
@@ -254,8 +287,8 @@ class TokenUsageRepository(BaseRepository):
                 async with self.conn.execute("SELECT MIN(created_at), MAX(created_at) FROM token_usage") as cursor:
                     row = await cursor.fetchone()
                     if row and row[0]:
-                        min_date_str = row[0]
-                        max_date_str = row[1]
+                        min_date_str = self._utc_str_to_local_str(row[0])
+                        max_date_str = self._utc_str_to_local_str(row[1])
                 
                 async with self.conn.execute("SELECT MIN(date), MAX(date) FROM token_daily_stats") as cursor:
                     row = await cursor.fetchone()
@@ -485,16 +518,19 @@ class TokenUsageRepository(BaseRepository):
                 now = datetime.now()
                 if time_range == "today":
                     today_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+                    today_str_utc = self._local_str_to_utc_str(today_str)
                     conditions.append("created_at >= ?")
-                    params.append(today_str)
+                    params.append(today_str_utc)
                 elif time_range == "week":
                     week_str = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+                    week_str_utc = self._local_str_to_utc_str(week_str)
                     conditions.append("created_at >= ?")
-                    params.append(week_str)
+                    params.append(week_str_utc)
                 elif time_range == "month":
                     month_str = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+                    month_str_utc = self._local_str_to_utc_str(month_str)
                     conditions.append("created_at >= ?")
-                    params.append(month_str)
+                    params.append(month_str_utc)
 
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -518,6 +554,7 @@ class TokenUsageRepository(BaseRepository):
             async with self.conn.execute(sql_select, select_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
+                    created_at_str = self._utc_str_to_local_str(r["created_at"])
                     logs.append({
                         "id": r["id"],
                         "bot_name": r["bot_name"],
@@ -528,7 +565,7 @@ class TokenUsageRepository(BaseRepository):
                         "prompt_tokens": r["prompt_tokens"],
                         "completion_tokens": r["completion_tokens"],
                         "total_tokens": r["total_tokens"],
-                        "created_at": r["created_at"],
+                        "created_at": created_at_str,
                     })
 
             return logs, total_count
@@ -541,6 +578,7 @@ class TokenUsageRepository(BaseRepository):
         try:
             # 1. 确定今日凌晨的临界时间点（本地时间）
             cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+            cutoff_utc = self._local_str_to_utc_str(cutoff)
 
             # 2. 查询所有早于临界点的详细记录
             sql_select = """
@@ -551,7 +589,7 @@ class TokenUsageRepository(BaseRepository):
             """
 
             rows_to_squash = []
-            async with self.conn.execute(sql_select, (cutoff,)) as cursor:
+            async with self.conn.execute(sql_select, (cutoff_utc,)) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     rows_to_squash.append({
@@ -574,8 +612,16 @@ class TokenUsageRepository(BaseRepository):
             # 3. 按维度分类累加
             daily_sums = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "count": 0})
             for r in rows_to_squash:
-                # 提取日期 YYYY-MM-DD
-                date_str = r["created_at"].split(" ")[0] if r["created_at"] else datetime.now().strftime("%Y-%m-%d")
+                # 提取日期 YYYY-MM-DD (按本地时间提取)
+                date_str = None
+                if r["created_at"]:
+                    try:
+                        local_dt = self._parse_db_utc_to_local_dt(r["created_at"])
+                        date_str = local_dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
+                if not date_str:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
 
                 # 提取 status 字段
                 status = "success"
@@ -626,7 +672,7 @@ class TokenUsageRepository(BaseRepository):
                 upsert_count += 1
 
             # 5. 删除已拍扁的详细日志
-            cursor_del = await self.conn.execute("DELETE FROM token_usage WHERE created_at < ?", (cutoff,))
+            cursor_del = await self.conn.execute("DELETE FROM token_usage WHERE created_at < ?", (cutoff_utc,))
             deleted_count = cursor_del.rowcount
             await self.conn.commit()
 
@@ -649,8 +695,9 @@ class TokenUsageRepository(BaseRepository):
             params_usage = []
             if before_days is not None:
                 cutoff = (datetime.now() - timedelta(days=before_days)).strftime("%Y-%m-%d %H:%M:%S")
+                cutoff_utc = self._local_str_to_utc_str(cutoff)
                 conds_usage.append("created_at < ?")
-                params_usage.append(cutoff)
+                params_usage.append(cutoff_utc)
             if bot_name:
                 conds_usage.append("bot_name = ?")
                 params_usage.append(bot_name)
@@ -660,8 +707,9 @@ class TokenUsageRepository(BaseRepository):
             if time_range:
                 usage_thresh, _ = self._get_time_range_thresholds(time_range)
                 if usage_thresh:
+                    usage_thresh_utc = self._local_str_to_utc_str(usage_thresh)
                     conds_usage.append("created_at >= ?")
-                    params_usage.append(usage_thresh)
+                    params_usage.append(usage_thresh_utc)
 
             where_usage = f"WHERE {' AND '.join(conds_usage)}" if conds_usage else ""
             sql_usage = f"DELETE FROM token_usage {where_usage}"
