@@ -68,6 +68,7 @@ class Status:
     action: str = ""
     energy: str = ""
     timestamp: float = 0.0
+    last_updated: float = 0.0
 
 
 @dataclass(repr=False, slots=True)
