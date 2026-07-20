@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 import aiosqlite
 from .base import BaseRepository
 from ...utils.schemas import Status
@@ -27,6 +28,7 @@ class BotStatusRepository(BaseRepository):
                 action=row["action"],
                 energy=row["energy"],
                 timestamp=ts,
+                last_updated=ts,
             )
         else:
             return Status(
@@ -36,12 +38,15 @@ class BotStatusRepository(BaseRepository):
                 action="拿起手机聊天",
                 energy="80",
                 timestamp=0.0,
+                last_updated=0.0,
             )
 
     async def upsert_bot_status(
         self, group_or_user_id: str, bot_name: str, status: Status
     ):
-        update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        update_time = now.strftime("%Y-%m-%d %H:%M:%S")
+        status.last_updated = now.replace(microsecond=0).timestamp()
         await self.conn.execute(
             """
             INSERT INTO bot_status (group_or_user_id, bot_name, mood, state, memory, action, energy, created_at, updated_at)

@@ -245,7 +245,7 @@ class DataCache:
         status_data = asdict(status)
         # 仅对非空值进行差分覆盖
         for key, value in status_data.items():
-            if key != "timestamp" and value is not None and value != "":
+            if key not in ("timestamp", "last_updated") and value is not None and value != "":
                 setattr(current_status, key, value)
         await self.db.upsert_bot_status(
             bot_name=bot_name,

@@ -1,4 +1,5 @@
 import re
+import time
 from dataclasses import replace
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
@@ -519,11 +520,24 @@ def parse_status_to_str(status: Status) -> str:
         energy_val = float(status.energy.strip().strip('"'))
     except ValueError:
         energy_val = 100
-    return f"""心情：{status.mood}
+    status_str = f"""心情：{status.mood}
 状态：{status.state}
 思考：{status.memory}
 动作：{status.action}
 能量：{energy_val:.0f}"""
+
+    if status.last_updated > 0:
+        elapsed = time.time() - status.last_updated
+        if elapsed >= 1800:
+            if elapsed < 3600:
+                mins = int(elapsed / 60)
+                time_diff_str = f"{mins}分钟"
+            else:
+                hours = elapsed / 3600
+                time_diff_str = f"{hours:.1f}小时"
+            status_str += f"\n(距离上次状态更新已过去 {time_diff_str})"
+
+    return status_str
 
 
 def build_memory_attrs(
