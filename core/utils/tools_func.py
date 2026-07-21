@@ -42,9 +42,7 @@ class ToolsFunc:
         if self.config.get("r2_config", {}).get("r2_enabled", False):
             self.add_backup_message_to_r2()
         # 启动时更新自动清理任务
-        self.update_auto_clean_media_job()
-        self.update_auto_clean_memory_job()
-        self.update_auto_clean_token_job()
+        self.update_auto_cleanup_jobs()
 
     def register_funcs(self):
         """注册定时任务函数"""
@@ -59,6 +57,9 @@ class ToolsFunc:
         )
         self.task_manager.register_func(
             "auto_clean_token_usage", self.auto_clean_token_usage
+        )
+        self.task_manager.register_func(
+            "auto_cleanup_unified", self.auto_cleanup_unified
         )
 
     def add_backup_message_to_r2(self):
@@ -82,28 +83,66 @@ class ToolsFunc:
             if success:
                 await self.db.upsert_kv_data("last_backup_message_time", time.time())
 
-    def update_auto_clean_media_job(self):
-        """添加/更新或移除自动清理媒体文件缓存的定时任务"""
+    async def _get_media_clean_cfg(self) -> dict:
+        """
+        读取并解析 auto_clean_media_config 配置，统一默认值与错误处理。
+        """
+        raw_media_cfg = await self.db.get_kv_data("auto_clean_media_config")
+        try:
+            return (
+                json.loads(raw_media_cfg)
+                if raw_media_cfg
+                else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
+            )
+        except Exception:
+            return {"enabled": False, "keep_genres": ["表情包", "sticker"]}
 
+    async def _get_token_clean_cfg(self) -> dict:
+        """
+        读取并解析 auto_clean_token_config 配置，统一默认值与错误处理。
+        """
+        raw_token_cfg = await self.db.get_kv_data("auto_clean_token_config")
+        try:
+            return (
+                json.loads(raw_token_cfg)
+                if raw_token_cfg
+                else {"enabled": True, "days": 365}
+            )
+        except Exception:
+            return {"enabled": True, "days": 365}
+
+    def update_auto_cleanup_jobs(self):
+        """统一管理所有的自动清理定时任务"""
         async def _update():
-            raw_cfg = await self.db.get_kv_data("auto_clean_media_config")
-            try:
-                cfg = (
-                    json.loads(raw_cfg)
-                    if raw_cfg
-                    else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
-                )
-            except Exception:
-                cfg = {"enabled": False, "keep_genres": ["表情包", "sticker"]}
-
-            if cfg.get("enabled", False):
+            # 1. 读取各任务配置
+            media_cfg = await self._get_media_clean_cfg()
+            
+            raw_memory_cfg = await self.db.get_kv_data("auto_clean_memory_config")
+            memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
+            
+            token_cfg = await self._get_token_clean_cfg()
+                
+            media_enabled = bool(media_cfg.get("enabled", False))
+            memory_enabled = bool(memory_cfg.get("enabled", False))
+            token_enabled = bool(token_cfg.get("enabled", True))
+            
+            # 是否需要注册统一清理 (只要有任意一个清理开启)
+            any_enabled = media_enabled or memory_enabled or token_enabled
+            
+            if any_enabled:
                 self.task_manager.add_job(
-                    task_id="system_auto_clean_media_cache",
-                    func_name="auto_clean_media_cache",
-                    time_expr="0 3 * * *",  # 每天凌晨 03:00
+                    task_id="system_auto_cleanup_unified",
+                    func_name="auto_cleanup_unified",
+                    time_expr="0 3 * * *",
                 )
             else:
-                self.task_manager.remove_job("system_auto_clean_media_cache")
+                if self.task_manager.get_job_info("system_auto_cleanup_unified"):
+                    self.task_manager.remove_job("system_auto_cleanup_unified")
+                
+            # 物理清理/移除原有的三个历史分散定时任务（仅在存在时清理，避免 scheduler 打印警告日志）
+            for old_task in ["system_auto_clean_media_cache", "system_auto_clean_memories", "system_auto_clean_token_usage"]:
+                if self.task_manager.get_job_info(old_task):
+                    self.task_manager.remove_job(old_task)
 
         try:
             loop = asyncio.get_running_loop()
@@ -113,6 +152,10 @@ class ToolsFunc:
                 asyncio.run(_update())
         except RuntimeError:
             asyncio.run(_update())
+
+    def update_auto_clean_media_job(self):
+        """兼容层：统一自动清理更新"""
+        self.update_auto_cleanup_jobs()
 
     @classmethod
     def normalize_auto_clean_memory_config(cls, raw_cfg=None) -> dict:
@@ -168,29 +211,53 @@ class ToolsFunc:
         return cfg
 
     def update_auto_clean_memory_job(self):
-        """添加/更新或移除自动清理长期记忆的定时任务"""
+        """兼容层：统一自动清理更新"""
+        self.update_auto_cleanup_jobs()
 
-        async def _update():
-            raw_cfg = await self.db.get_kv_data("auto_clean_memory_config")
-            cfg = self.normalize_auto_clean_memory_config(raw_cfg)
-
-            if cfg.get("enabled", False):
-                self.task_manager.add_job(
-                    task_id="system_auto_clean_memories",
-                    func_name="auto_clean_memories",
-                    time_expr=cfg.get("cron", "30 3 * * *"),
-                )
-            else:
-                self.task_manager.remove_job("system_auto_clean_memories")
-
-        try:
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                loop.create_task(_update())
-            else:
-                asyncio.run(_update())
-        except RuntimeError:
-            asyncio.run(_update())
+    async def auto_cleanup_unified(self):
+        """统一自动清理任务，按顺序线性执行各项已启用的清理子任务。"""
+        logger.info("[Giftia] 开始执行统一自动清理流程...")
+        
+        # 1. 媒体缓存清理
+        media_cfg = await self._get_media_clean_cfg()
+            
+        if media_cfg.get("enabled", False):
+            logger.info("[Giftia] 1/3 正在执行自动清理媒体缓存...")
+            try:
+                res = await self.auto_clean_media_cache()
+                logger.info(f"[Giftia] 媒体缓存清理结果: {res.get('message', '无结果')}")
+            except Exception as e:
+                logger.error(f"[Giftia] 媒体缓存自动清理执行异常: {e}")
+        else:
+            logger.info("[Giftia] 1/3 自动清理媒体缓存未启用，跳过")
+            
+        # 2. 长期记忆清理
+        raw_memory_cfg = await self.db.get_kv_data("auto_clean_memory_config")
+        memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
+        
+        if memory_cfg.get("enabled", False):
+            logger.info("[Giftia] 2/3 正在执行自动清理长期记忆...")
+            try:
+                res = await self.auto_clean_memories()
+                logger.info(f"[Giftia] 长期记忆清理结果: {res.get('message', '无结果')}")
+            except Exception as e:
+                logger.error(f"[Giftia] 长期记忆自动清理执行异常: {e}")
+        else:
+            logger.info("[Giftia] 2/3 自动清理长期记忆未启用，跳过")
+            
+        # 3. Token 消耗日志清理
+        token_cfg = await self._get_token_clean_cfg()
+            
+        if token_cfg.get("enabled", True):
+            logger.info("[Giftia] 3/3 正在执行自动清理 Token 消耗日志...")
+            try:
+                await self.auto_clean_token_usage()
+            except Exception as e:
+                logger.error(f"[Giftia] Token 消耗日志自动清理执行异常: {e}")
+        else:
+            logger.info("[Giftia] 3/3 自动清理 Token 消耗日志未启用，跳过")
+            
+        logger.info("[Giftia] 统一自动清理流程执行结束。")
 
     def _build_auto_clean_memory_query(self, cfg: dict) -> tuple[str, list]:
         max_importance = min(int(cfg.get("max_importance", 3)), 7)
@@ -307,15 +374,7 @@ class ToolsFunc:
             from astrbot.core.star.star_tools import StarTools
 
             # 1. 读取自动清理配置
-            raw_cfg = await self.db.get_kv_data("auto_clean_media_config")
-            try:
-                cfg = (
-                    json.loads(raw_cfg)
-                    if raw_cfg
-                    else {"enabled": False, "keep_genres": ["表情包", "sticker"]}
-                )
-            except Exception:
-                cfg = {"enabled": False, "keep_genres": ["表情包", "sticker"]}
+            cfg = await self._get_media_clean_cfg()
 
             keep_genres = cfg.get("keep_genres", ["表情包", "sticker"])
 
@@ -463,34 +522,13 @@ class ToolsFunc:
             return {"status": "error", "message": f"自动清理媒体缓存失败: {str(e)}"}
 
     def update_auto_clean_token_job(self):
-        """添加/更新或移除自动清理 Token 消耗日志的定时任务"""
-        async def _update():
-            raw_cfg = await self.db.get_kv_data("auto_clean_token_config")
-            try:
-                cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": True, "days": 30}
-            except Exception:
-                cfg = {"enabled": True, "days": 30}
-            
-            if cfg.get("enabled", True):
-                # 每天凌晨 4 点执行自动清理
-                self.task_manager.add_job(
-                    task_id="system_auto_clean_token_usage",
-                    func_name="auto_clean_token_usage",
-                    time_expr="0 4 * * *",
-                )
-            else:
-                self.task_manager.remove_job("system_auto_clean_token_usage")
-        
-        asyncio.create_task(_update())
+        """兼容层：统一自动清理更新"""
+        self.update_auto_cleanup_jobs()
 
     async def auto_clean_token_usage(self):
         """自动清理过期 Token 日志"""
         try:
-            raw_cfg = await self.db.get_kv_data("auto_clean_token_config")
-            try:
-                cfg = json.loads(raw_cfg) if raw_cfg else {"enabled": True, "days": 365}
-            except Exception:
-                cfg = {"enabled": True, "days": 365}
+            cfg = await self._get_token_clean_cfg()
             
             if cfg.get("enabled", True):
                 # 1. 先将昨日及以前的数据拍扁汇总归档

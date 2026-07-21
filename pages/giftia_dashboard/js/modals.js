@@ -404,7 +404,7 @@ window.saveAutoCleanMemoryConfig = async function() {
         const res = await window.apiPost("/memories/auto_clean/config", config);
         if (res.status === "success") {
             window.showToast("自动清理配置保存成功！");
-            summary.innerHTML = "配置已保存。启用后每天凌晨 03:30 执行自动清理。";
+            summary.innerHTML = "配置已保存。启用后每天凌晨 03:00 执行自动清理（作为每日统一清理任务执行）。";
             summary.style.borderLeftColor = "var(--success)";
         } else {
             window.showToast(`保存失败: ${res.message || "请求出错"}`);
