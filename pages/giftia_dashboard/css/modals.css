@@ -340,9 +340,11 @@ html[data-theme="dark"] .edit-media-tab-header {
     display: inline-block;
     width: 46px;
     height: 24px;
+    flex-shrink: 0;
 }
 
 .switch-checkbox {
+    position: absolute;
     opacity: 0;
     width: 0;
     height: 0;
