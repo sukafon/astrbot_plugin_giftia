@@ -70,6 +70,7 @@ class MessageParser:
             chain_to_result=self.chain_to_result,
             format_image_ref=self._format_image_ref,
             format_audio_ref=self._format_audio_ref,
+            format_video_ref=self._format_video_ref,
         )
 
     async def _resolve_user_name(
@@ -331,8 +332,15 @@ class MessageParser:
                 result.merge(media_result)
                 msg_parts.append(part)
             elif isinstance(comp, Video):
-                # 暂不支持视频转述，考虑用工具异步支持
-                msg_parts.append("[视频]")
+                part, media_result = await self._format_video_ref(
+                    comp.url or "",
+                    getattr(comp, "file", None),
+                    defer_caption,
+                    event=event,
+                    path=getattr(comp, "path", None),
+                )
+                result.merge(media_result)
+                msg_parts.append(part)
             elif isinstance(comp, Json):
                 forward_result = await self._json_to_forward_result(
                     comp.data,
@@ -439,6 +447,22 @@ class MessageParser:
             file_name,
             defer_caption,
             event=event,
+        )
+
+    async def _format_video_ref(
+        self,
+        url: str,
+        file_name: str | None,
+        defer_caption: bool,
+        event: AstrMessageEvent | None = None,
+        path: str | None = None,
+    ) -> tuple[str, ChainParseResult]:
+        return await self.media_formatter.format_video_ref(
+            url,
+            file_name,
+            defer_caption,
+            event=event,
+            path=path,
         )
 
     async def _component_nodes_to_forward_result(

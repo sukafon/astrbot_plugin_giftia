@@ -17,6 +17,7 @@ from .core.llm.call_llm import CallLLM
 from .core.llm.llm_tools import (
     GetMessageContextTool,
     InspectForwardMessageTool,
+    InspectVideoTool,
     SearchChatHistoryTool,
     SearchUserProfileTool,
     remove_tools,
@@ -237,6 +238,9 @@ class Giftia(Star):
         if self.conf.get("tools_config", {}).get("inspect_forward_message_enabled", True):
             self.context.add_llm_tools(InspectForwardMessageTool(plugin=self))
             logger.info("已注册函数调用工具: inspect_forward_message")
+        if self.conf.get("tools_config", {}).get("inspect_video_enabled", True):
+            self.context.add_llm_tools(InspectVideoTool(plugin=self))
+            logger.info("已注册函数调用工具: inspect_video")
         # 注册 Web UI 及 API 路由
         self.webui_manager = WebUIManager(self)
         self.webui_manager.register_routes()

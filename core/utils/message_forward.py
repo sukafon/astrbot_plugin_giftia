@@ -44,10 +44,11 @@ class MessageForwardParser:
         "nodes",
     }
 
-    def __init__(self, chain_to_result, format_image_ref, format_audio_ref):
+    def __init__(self, chain_to_result, format_image_ref, format_audio_ref, format_video_ref=None):
         self.chain_to_result = chain_to_result
         self.format_image_ref = format_image_ref
         self.format_audio_ref = format_audio_ref
+        self.format_video_ref = format_video_ref
 
     @staticmethod
     def make_forward_id(payload: dict) -> str:
@@ -556,7 +557,16 @@ class MessageForwardParser:
                 result.merge(media_result)
                 parts.append(part)
             elif seg_type == "video":
-                parts.append("[视频]")
+                url = seg_data.get("url") or ""
+                file_name = seg_data.get("file") or seg_data.get("path") or ""
+                if self.format_video_ref:
+                    part, media_result = await self.format_video_ref(
+                        str(url or ""), str(file_name or ""), defer_caption, event=event
+                    )
+                    result.merge(media_result)
+                    parts.append(part)
+                else:
+                    parts.append("[视频]")
             elif seg_type == "file":
                 name = (
                     seg_data.get("name")

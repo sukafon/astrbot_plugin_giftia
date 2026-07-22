@@ -179,6 +179,31 @@
                 "default": [],
                 "hint": "选择用于音频转述的提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则不启用。"
             },
+            "video_caption_enabled": {
+                "description": "启用视频转述",
+                "type": "bool",
+                "default": true,
+                "hint": "启用视频按需转述与切片智能分析。"
+            },
+            "video_caption_provider_ids": {
+                "type": "list",
+                "description": "视频转述提供商（按优先级多选）",
+                "_special": "select_providers",
+                "default": [],
+                "hint": "选择用于视频转述的多模态提供商。若选择多个，第一个失败时会自动降级尝试后面的提供商。留空则复用图片转述提供商或默认提供商。"
+            },
+            "video_max_file_size_mb": {
+                "description": "视频处理最大文件大小(MB)",
+                "type": "int",
+                "default": 50,
+                "hint": "缓存与转述允许的最大视频文件体积(MB)，超过此限制将只保留元数据不进行全量下载/转述。"
+            },
+            "video_clip_threshold_seconds": {
+                "description": "视频切片与直接转述阈值(秒)",
+                "type": "int",
+                "default": 30,
+                "hint": "视频时长不超过该阈值时直接转述，超过该阈值时需要指定起始时间由Bot使用工具进行切片转述。"
+            },
             "defer_caption_enabled": {
                 "description": "按需延迟媒体转述",
                 "type": "bool",
@@ -372,6 +397,12 @@
                 "type": "int",
                 "default": 2,
                 "hint": "音频转述重试上限"
+            },
+            "video_caption_retry_times": {
+                "description": "视频转述重试上限",
+                "type": "int",
+                "default": 2,
+                "hint": "视频转述重试上限"
             }
         }
     },
@@ -486,6 +517,12 @@
                 "type": "int",
                 "default": 20,
                 "hint": "合并转发节点数不超过该值时直接返回原文，超过时才生成并复用总结"
+            },
+            "inspect_video_enabled": {
+                "description": "启用视频查看与切片分析工具",
+                "type": "bool",
+                "default": true,
+                "hint": "允许AI在需要时按media_id和起始时间切片查看视频内容"
             },
             "active_user_brief_limit": {
                 "description": "活跃用户摘要数量",

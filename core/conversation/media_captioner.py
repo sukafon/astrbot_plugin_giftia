@@ -1,3 +1,6 @@
+import os
+import base64
+from pathlib import Path
 import asyncio
 import copy
 import re
@@ -8,6 +11,7 @@ from astrbot.api.message_components import Image, Reply
 from astrbot.core.star.star_tools import StarTools
 
 from ..utils.schemas import MediaCaption, XmlLlmResult, extract_media_ids
+from ..utils.video_utils import check_ffmpeg_available, clip_video_ffmpeg, format_duration, format_file_size
 
 
 class MediaCaptioner:
@@ -19,6 +23,9 @@ class MediaCaptioner:
         media_type = str(getattr(media_caption, "media_type", "") or "").lower()
         if media_type == "audio":
             return bool(caption_config.get("audio_caption_enabled", True))
+        elif media_type == "video":
+            # 视频不触发全局被动/延迟自动转述，仅在 Bot 主动调用 inspect_video 工具时按需切片转述
+            return False
         return bool(caption_config.get("image_caption_enabled", True))
 
     async def transcribe_media_if_deferred(
@@ -85,7 +92,7 @@ class MediaCaptioner:
                                         await self.plugin.data_cache.update_caption(
                                             media_caption
                                         )
-                            else:  # image or other media
+                            else:  # image media
                                 image_bytes = None
                                 if cache_file.exists():
                                     try:
@@ -256,7 +263,16 @@ class MediaCaptioner:
                         media_caption.is_captioned = True
                         await self.plugin.data_cache.update_caption(media_caption)
                         return media_caption
-            else:  # image or other media
+            elif media_caption.media_type == "video":
+                caption_text = await self.transcribe_video_media(
+                    media_caption,
+                    start_time=0,
+                    bot_name=bot_name,
+                    group_or_user_id=group_or_user_id,
+                )
+                media_caption.caption = caption_text
+                return media_caption
+            elif media_caption.media_type == "image":  # image media
                 image_bytes = None
                 if cache_file.exists():
                     try:
@@ -291,3 +307,101 @@ class MediaCaptioner:
             logger.error(f"[Giftia] 重新转述处理失败: {e}", exc_info=True)
             raise e
         return None
+
+    async def transcribe_video_media(
+        self,
+        media_caption: MediaCaption,
+        start_time: int = 0,
+        question: str = "",
+        bot_name: str = "",
+        group_or_user_id: str = "",
+    ) -> str:
+        """对视频进行缓存、切片并调用 LLM 进行转述理解"""
+        caption_config = getattr(self.plugin, "conf", {}).get("caption_config", {})
+        threshold = int(caption_config.get("video_clip_threshold_seconds", 30))
+
+        url = media_caption.url or media_caption.file_name
+        if not url:
+            return "[视频文件路径或URL无效]"
+
+        cache_dir = StarTools.get_data_dir("astrbot_plugin_giftia") / "media_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        local_video_path = cache_dir / f"{media_caption.hash_val}.mp4"
+
+        if not local_video_path.exists():
+            if url.startswith("file://"):
+                local_video_path = Path(url.replace("file://", ""))
+            elif url.startswith("http://") or url.startswith("https://"):
+                logger.info(f"[Giftia] 下载视频文件进行分析: hash={media_caption.hash_val}")
+                video_bytes = await self.plugin.http_manager.download_media(url)
+                if not video_bytes:
+                    return "[视频下载失败]"
+                local_video_path.write_bytes(video_bytes)
+            elif os.path.exists(url):
+                local_video_path = Path(url)
+
+        if not local_video_path.exists():
+            return "[本地视频文件不存在]"
+
+        duration = media_caption.duration or 0.0
+        target_video_file = str(local_video_path)
+        clip_info_str = ""
+
+        if duration > threshold:
+            clip_output = cache_dir / f"{media_caption.hash_val}_clip_{start_time}_{threshold}.mp4"
+            if not clip_output.exists():
+                success = await clip_video_ffmpeg(
+                    str(local_video_path),
+                    start_time=start_time,
+                    duration=threshold,
+                    output_path=str(clip_output)
+                )
+                if success:
+                    target_video_file = str(clip_output)
+                    clip_info_str = f" (切片区间: {start_time}s ~ {start_time + threshold}s)"
+            else:
+                target_video_file = str(clip_output)
+                clip_info_str = f" (切片区间: {start_time}s ~ {start_time + threshold}s)"
+
+        # 拦截保护：检查目标视频/切片文件大小，防止超大视频爆内存
+        max_size_mb = int(caption_config.get("video_max_file_size_mb", 50))
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if os.path.exists(target_video_file):
+            actual_size = os.path.getsize(target_video_file)
+            if actual_size > max_size_bytes:
+                logger.warning(
+                    f"[Giftia] 视频文件 ({format_file_size(actual_size)}) 超出转述限制 ({max_size_mb}MB)，取消读取"
+                )
+                return f"[视频文件体积 ({format_file_size(actual_size)}) 超过系统转述限制 ({max_size_mb}MB)，无法读取转述]"
+
+        # 强抓原生视频全量字节包转 Base64 (data:video/mp4;base64,...)
+        try:
+            video_raw_bytes = Path(target_video_file).read_bytes()
+            video_b64_str = base64.b64encode(video_raw_bytes).decode("utf-8")
+            video_data_url = f"data:video/mp4;base64,{video_b64_str}"
+        except Exception as e:
+            logger.error(f"[Giftia] 视频文件读取或编码 Base64 失败: {e}")
+            return f"[视频编码失败: {e}]"
+
+        try:
+            transcribed = await self.plugin.call_llm.call_llm_video_caption(
+                video_url=video_data_url,
+                question=question,
+                bot_name=bot_name,
+                group_or_user_id=group_or_user_id,
+            )
+            if transcribed:
+                caption_text = f"{transcribed.caption}{clip_info_str}"
+                media_caption.genre = transcribed.genre
+                media_caption.character = transcribed.character
+                media_caption.source = transcribed.source
+                media_caption.text = transcribed.text
+                media_caption.caption = caption_text
+                media_caption.is_captioned = True
+                await self.plugin.data_cache.update_caption(media_caption)
+                return caption_text
+        except Exception as e:
+            logger.error(f"[Giftia] 原生视频转述 LLM 调用失败: {e}", exc_info=True)
+            return f"[视频转述失败: {e}]"
+
+        return "[视频解析未生成有效结论]"

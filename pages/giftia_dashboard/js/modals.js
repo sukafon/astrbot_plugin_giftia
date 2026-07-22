@@ -12,6 +12,23 @@ window.closeModal = function(id) {
     const modal = document.getElementById(id);
     if (modal) {
         modal.classList.remove("show");
+
+        // 暂停并重置该弹窗内部的所有音视频播放器，防止背景声音继续播放
+        modal.querySelectorAll("video, audio").forEach(mediaEl => {
+            try {
+                mediaEl.pause();
+                mediaEl.removeAttribute("src");
+                mediaEl.load();
+            } catch (e) {}
+        });
+
+        if (id === "edit-media-modal") {
+            const previewBox = document.getElementById("edit-media-preview");
+            if (previewBox) {
+                previewBox.innerHTML = "";
+            }
+        }
+
         // Only remove modal-open class if no other modals are open
         const openedModals = document.querySelectorAll(".modal-overlay.show");
         if (openedModals.length === 0) {
@@ -504,6 +521,14 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
                     </div>
                 `;
             }
+        } else if (type === "video") {
+            const uniqueId = `edit-media-preview-video-${hash}`;
+            previewContainer.innerHTML = `
+                <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 140px; cursor: pointer; text-align: center; padding: 12px; box-sizing: border-box; background: rgba(0,0,0,0.04); border-radius: 6px;" onclick="window.loadVideoOnDemand('${hash}', '${uniqueId}-box', '${encodeURIComponent(url || '')}')">
+                    <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333);">▶️ 点击加载/播放视频</div>
+                </div>
+            `;
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }
@@ -523,6 +548,14 @@ window.openEditMediaModal = function(hash, urlEncoded, type, captionEncoded, gen
             const uniqueId = `edit-media-preview-audio-${hash}`;
             previewContainer.innerHTML = `<audio id="${uniqueId}" controls></audio>`;
             window.GiftiaApp.loadMediaFileB64(hash, uniqueId, url, type);
+        } else if (type === "video") {
+            const uniqueId = `edit-media-preview-video-${hash}`;
+            previewContainer.innerHTML = `
+                <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 140px; cursor: pointer; text-align: center; padding: 12px; box-sizing: border-box; background: rgba(0,0,0,0.04); border-radius: 6px;" onclick="window.loadVideoOnDemand('${hash}', '${uniqueId}-box', '${encodeURIComponent(url || '')}')">
+                    <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333);">▶️ 点击加载/播放视频</div>
+                </div>
+            `;
         } else {
             previewContainer.innerHTML = `<div style="font-size: 24px;">📄</div>`;
         }

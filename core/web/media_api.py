@@ -126,7 +126,7 @@ class MediaApi:
 
             # Query data
             data_sql = f"""
-                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, query_times, created_at
+                SELECT id, hash_val, file_name, url, media_type, genre, character, source, text, caption, is_captioned, duration, file_size, query_times, created_at
                 FROM media_caption
                 {where_clause}
                 ORDER BY created_at DESC
@@ -137,6 +137,7 @@ class MediaApi:
             async with self.giftia.db.conn.execute(data_sql, data_params) as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
+                    r_keys = r.keys() if hasattr(r, "keys") else []
                     items.append(
                         {
                             "id": r["id"],
@@ -150,6 +151,8 @@ class MediaApi:
                             "text": r["text"],
                             "caption": r["caption"],
                             "is_captioned": bool(r["is_captioned"]),
+                            "duration": float(r["duration"]) if "duration" in r_keys and r["duration"] is not None else 0.0,
+                            "file_size": int(r["file_size"]) if "file_size" in r_keys and r["file_size"] is not None else 0,
                             "query_times": r["query_times"],
                             "created_at": r["created_at"],
                         }

@@ -357,3 +357,20 @@ window.toggleProfileText = function(btn) {
     }
 };
 
+window.formatFileSize = function(bytes) {
+    if (!bytes || bytes <= 0) return "";
+    if (bytes < 1024) return bytes + "B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + "KB";
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + "MB";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + "GB";
+};
+
+window.formatDuration = function(seconds) {
+    if (!seconds || seconds <= 0) return "";
+    const sec = Math.floor(seconds);
+    if (sec < 60) return sec + "s";
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+

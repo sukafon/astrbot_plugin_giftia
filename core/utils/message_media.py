@@ -1,3 +1,4 @@
+import os
 import asyncio
 import base64 as b64_module
 import contextlib
@@ -15,6 +16,7 @@ from ..llm.call_llm import CallLLM
 from .http_manager import HttpManager
 from .message_parse_types import ChainParseResult
 from .schemas import MediaCaption
+from .video_utils import get_remote_video_info, format_file_size, format_duration
 
 # 支持的图片文件格式
 SUPPORTED_FILE_FORMATS_WITH_DOT = (
@@ -90,14 +92,44 @@ class MessageMediaFormatter:
     def filename_stable_hash(file_name: str | None) -> str | None:
         if not file_name or is_temp_or_local_path(file_name):
             return None
-        stem = re.sub(r"\.[^.]+$", "", file_name)
-        if re.fullmatch(r"[a-fA-F0-9]{32}", stem):
-            return stem.lower()
+        stem = re.sub(r"\.[^.]+$", "", os.path.basename(file_name))
+        if re.fullmatch(r"[a-fA-F0-9]{16,64}", stem):
+            return stem.lower()[:16]
         return None
 
     @staticmethod
     def is_filename_stable_hash(hash_val: str | None) -> bool:
-        return bool(hash_val and re.fullmatch(r"[a-fA-F0-9]{32}", str(hash_val)))
+        return bool(hash_val and re.fullmatch(r"[a-fA-F0-9]{16,64}", str(hash_val)))
+
+    @staticmethod
+    def get_stable_hash(file_name: str | None, url: str | None) -> str:
+        """
+        获取稳定的 16 位媒体哈希值。
+        1. 优先提取 16~64 位 Hex 文件名标识。
+        2. 如果为网络 URL，自动剥离 ?rkey=.../token 等动态 Query 鉴权参数，确保相同视频哈希完全一致。
+        """
+        for cand in (file_name, url):
+            if not cand or not isinstance(cand, str):
+                continue
+            cand_str = cand.strip()
+            if is_temp_or_local_path(cand_str):
+                continue
+
+            clean_path = urllib.parse.urlparse(cand_str).path if cand_str.startswith("http") else cand_str
+            basename = os.path.basename(clean_path)
+            stem = re.sub(r"\.[^.]+$", "", basename)
+            if re.fullmatch(r"[a-fA-F0-9]{16,64}", stem):
+                return stem.lower()[:16]
+
+        target_str = url or file_name or ""
+        if target_str.startswith("http://") or target_str.startswith("https://"):
+            try:
+                parsed = urllib.parse.urlparse(target_str)
+                target_str = parsed.netloc + parsed.path
+            except Exception:
+                pass
+
+        return xxh3_64_hexdigest(target_str.encode("utf-8"))[:16]
 
     async def format_image_ref(
         self,
@@ -204,6 +236,81 @@ class MessageMediaFormatter:
             await self.data_cache.set_caption(media_caption)
             return f"[语音:{hash_val}]", result
         return "[语音]", result
+
+    async def format_video_ref(
+        self, url: str, file_name: str | None, defer_caption: bool, event = None, path: str | None = None
+    ) -> tuple[str, ChainParseResult]:
+        result = ChainParseResult()
+        decision_url = self.first_media_url(url, file_name)
+
+        # 1. 尝试多维获取远程/本地视频元数据 (file_size, duration)
+        file_size, duration = await get_remote_video_info(
+            url=decision_url or url or "",
+            file_name=file_name or "",
+            path=path or "",
+            event=event,
+        )
+
+        # 2. 从配置获取限制
+        caption_config = {}
+        if self.call_llm and hasattr(self.call_llm, "plugin") and self.call_llm.plugin:
+            caption_config = getattr(self.call_llm.plugin, "conf", {}).get("caption_config", {})
+        
+        max_size_mb = caption_config.get("video_max_file_size_mb", 50)
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        # 3. 计算 16 位稳定哈希
+        hash_val = self.get_stable_hash(file_name, decision_url or url or path or "")
+
+        size_str = format_file_size(file_size)
+        dur_str = format_duration(duration)
+
+        # 4. 检查大小超限
+        is_over_limit = (file_size > 0) and (file_size > max_size_bytes)
+        
+        existing_caption = await self.data_cache.get_caption_by_hash(hash_val) if hash_val else None
+
+        if is_over_limit:
+            tag = f"[视频:{hash_val}][文件过大:{size_str}]"
+            if not existing_caption:
+                media_caption = MediaCaption(
+                    hash_val=hash_val,
+                    file_name=file_name or "",
+                    url=decision_url or url or "",
+                    media_type="video",
+                    duration=duration,
+                    file_size=file_size,
+                    is_captioned=True,
+                    text=f"[视频体积过大已限制转述: {size_str}]",
+                    caption=f"[视频体积过大已限制转述: {size_str}]",
+                )
+                await self.data_cache.set_caption(media_caption)
+            result.media_id_list.append(hash_val)
+            return tag, result
+
+        # 5. 未超限逻辑：构建灵活、防御性的 Tag
+        if dur_str and size_str:
+            tag = f"[视频:{hash_val}][时长:{dur_str}, 大小:{size_str}]"
+        elif size_str:
+            tag = f"[视频:{hash_val}][大小:{size_str}]"
+        elif dur_str:
+            tag = f"[视频:{hash_val}][时长:{dur_str}]"
+        else:
+            tag = f"[视频:{hash_val}]"
+        
+        if not existing_caption:
+            media_caption = MediaCaption(
+                hash_val=hash_val,
+                file_name=file_name or "",
+                url=decision_url or url or "",
+                media_type="video",
+                duration=duration,
+                file_size=file_size,
+                is_captioned=False,
+            )
+            await self.data_cache.set_caption(media_caption)
+        result.media_id_list.append(hash_val)
+        return tag, result
 
     async def get_image_caption(
         self,

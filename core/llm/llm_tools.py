@@ -9,6 +9,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .prompt import USER_PROFILE_FIELDS, normalize_profile_text, normalize_profile_value
+from ..conversation.media_captioner import MediaCaptioner
 from ..utils.schemas import MessageData, FORWARD_MEDIA_PATTERN, FORWARD_NESTED_PATTERN
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ TOOLS_NAMESPACE = [
     "get_message_context",
     "search_user_profile",
     "inspect_forward_message",
+    "inspect_video",
 ]
 
 
@@ -638,6 +640,72 @@ class InspectForwardMessageTool(FunctionTool):
             lines.append("媒体转述未启用，原文中只保留媒体脚注。")
 
         return "\n\n".join(line for line in lines if line).strip()
+
+
+@dataclass
+class InspectVideoTool(FunctionTool):
+    plugin: Any = None
+    name: str = "inspect_video"
+    description: str = (
+        "按 media_id 查看当前会话中 [视频:media_id] 的画面内容。如果视频较长且用户问的是后半段，"
+        "可通过 start_time 指定切片起始秒数（默认为 0 秒）。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "media_id": {
+                    "type": "string",
+                    "description": "视频消息占位符 [视频:media_id] 中的 16 位哈希 ID。",
+                },
+                "start_time": {
+                    "type": "integer",
+                    "description": "视频截取起始时间(秒)，默认 0。",
+                },
+                "question": {
+                    "type": "string",
+                    "description": "希望能特别关注的观察指令或具体问题（例如：'查看 15 秒出现的文字'、'查看人物衣服颜色'）。可选填。",
+                },
+            },
+            "required": ["media_id"],
+        }
+    )
+
+    async def call(self, context, **kwargs) -> str:
+        if self.plugin is None:
+            return "分析失败：未绑定插件实例"
+
+        # 兼容 ContextWrapper 或 AstrMessageEvent
+        if hasattr(context, "context") and hasattr(context.context, "event"):
+            event = context.context.event
+        else:
+            event = context
+
+        platform_id = getattr(getattr(event, "platform_meta", None), "id", None)
+        bot_name = self.plugin.adapter_id_map.get(platform_id) or "" if platform_id else ""
+        group_or_user_id = ""
+        if hasattr(event, "get_group_id") and hasattr(event, "get_sender_id"):
+            group_or_user_id = event.get_group_id() or event.get_sender_id() or ""
+
+        media_id = str(kwargs.get("media_id") or "").strip()
+        start_time = int(kwargs.get("start_time") or 0)
+        question = str(kwargs.get("question") or "").strip()
+
+        if not media_id:
+            return "请求参数错误：未提供 media_id"
+
+        media_caption = await self.plugin.data_cache.get_caption_by_hash(media_id)
+        if not media_caption:
+            return f"未找到 media_id 为 [{media_id}] 的视频数据记录"
+
+        caption_result = await MediaCaptioner(self.plugin).transcribe_video_media(
+            media_caption,
+            start_time=start_time,
+            question=question,
+            bot_name=bot_name,
+            group_or_user_id=group_or_user_id,
+        )
+        return f"视频 [{media_id}] 分析转述结果:\n{caption_result}"
 
 
 def remove_tools(context: Context):

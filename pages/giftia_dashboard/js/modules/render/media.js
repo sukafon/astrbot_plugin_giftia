@@ -98,7 +98,7 @@ export async function loadMediaFileB64(hash, elementId, fallbackUrl, type, isThu
         const endpoint = isThumbnail ? `/media/file/thumbnail/b64/${hash}` : `/media/file/b64/${hash}`;
         const res = await window.apiGet(endpoint);
         if (res && res.status === "success" && res.base64) {
-            const mimeType = res.content_type || (type === "image" ? "image/jpeg" : "audio/mpeg");
+            const mimeType = res.content_type || (type === "image" ? "image/jpeg" : (type === "video" ? "video/mp4" : "audio/mpeg"));
 
             // 音频：若客户端无法播放该格式，才展示不支持提示
             if (type === "audio" || type === "voice") {
@@ -138,6 +138,33 @@ export async function loadMediaFileB64(hash, elementId, fallbackUrl, type, isThu
     }
 }
 
+window.loadVideoOnDemand = async function(hash, boxId, fallbackUrlEncoded) {
+    const boxEl = document.getElementById(boxId);
+    if (!boxEl) return;
+
+    boxEl.onclick = null;
+    boxEl.style.cursor = "default";
+    boxEl.innerHTML = `<div class="loading-row flex-grow" style="font-size: 12px; padding: 12px;"><span class="loader"></span> 加载视频流中...</div>`;
+
+    try {
+        const res = await window.apiGet(`/media/file/b64/${hash}`);
+        if (res && res.status === "success" && res.base64) {
+            const mimeType = res.content_type || "video/mp4";
+            boxEl.innerHTML = `<video controls autoplay preload="metadata" style="width: 100%; height: 100%; object-fit: contain;" src="data:${mimeType};base64,${res.base64}"></video>`;
+        } else {
+            const fallbackUrl = decodeURIComponent(fallbackUrlEncoded || "");
+            if (fallbackUrl && (fallbackUrl.startsWith("http://") || fallbackUrl.startsWith("https://"))) {
+                boxEl.innerHTML = `<video controls autoplay preload="metadata" style="width: 100%; height: 100%; object-fit: contain;" src="${fallbackUrl}"></video>`;
+            } else {
+                boxEl.innerHTML = `<div style="font-size: 11px; color: #888; padding: 8px;">🎬 视频源已过期清理或仅在机器人本地</div>`;
+            }
+        }
+    } catch (e) {
+        console.error("加载按需视频失败:", e);
+        boxEl.innerHTML = `<div style="font-size: 11px; color: #e74c3c; padding: 8px;">加载失败: ${e.message}</div>`;
+    }
+};
+
 export function renderMedia(items) {
     const container = document.getElementById("media-list");
     if (!items || items.length === 0) {
@@ -152,6 +179,18 @@ export function renderMedia(items) {
             preview = `<img id="${uniqueId}" src="placeholder.png" alt="加载中...">`;
         } else if ((item.media_type === "audio" || item.media_type === "voice") && item.url) {
             preview = `<audio id="${uniqueId}" class="media-audio-player" controls></audio>`;
+        } else if (item.media_type === "video") {
+            const durStr = item.duration ? window.formatDuration(item.duration) : "";
+            const sizeStr = item.file_size ? window.formatFileSize(item.file_size) : "";
+            const metaTag = [durStr ? `⏱️ ${durStr}` : "", sizeStr ? `📦 ${sizeStr}` : ""].filter(Boolean).join(" | ");
+
+            preview = `
+                <div id="${uniqueId}-box" class="media-video-placeholder-box" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; cursor: pointer; text-align: center; padding: 8px; box-sizing: border-box; background: rgba(0,0,0,0.04); transition: background 0.2s;" onclick="window.loadVideoOnDemand('${item.hash_val}', '${uniqueId}-box', '${encodeURIComponent(item.url || '')}')">
+                    <div style="font-size: 28px; margin-bottom: 2px;">🎬</div>
+                    <div style="font-size: 12px; font-weight: 600; color: var(--font-primary, #333); margin-bottom: 2px;">▶️ 点击加载播放</div>
+                    <div style="font-size: 11px; color: var(--font-secondary, #777);">${metaTag || '视频缓存'}</div>
+                </div>
+            `;
         } else {
             preview = `<div style="font-size: 32px;">📄</div>`;
         }
