@@ -3,7 +3,7 @@ import re
 
 from astrbot.core.message.components import BaseMessageComponent
 
-FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音):([^\]\s]+)\]")
+FORWARD_MEDIA_PATTERN = re.compile(r"\[(?:图片|语音|视频):([^\]\s]+)\]")
 FORWARD_NESTED_PATTERN = re.compile(r"\[合并转发:([^\]\s]+)\]")
 
 
@@ -58,6 +58,8 @@ class MediaCaption:
     text: str = ""
     caption: str = ""
     is_captioned: bool = True
+    duration: float = 0.0
+    file_size: int = 0
 
 
 @dataclass(repr=False, slots=True)

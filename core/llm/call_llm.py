@@ -15,6 +15,7 @@ from .json_parse import decode_media_audio_json, decode_media_caption_json
 from .preset_prompts import (
     DEFAULT_AUDIO_CAPTION_PROMPT,
     DEFAULT_IMAGE_CAPTION_PROMPT,
+    DEFAULT_VIDEO_CAPTION_PROMPT,
     DEFAULT_STICKER_ANALYSIS_PROMPT,
     DEFAULT_DECISION_RULES,
     build_xml_instructions,
@@ -61,6 +62,12 @@ class CallLLM:
                 audio_caption_provider_ids = []
         self.audio_caption_provider_ids = [p for p in audio_caption_provider_ids if p]
         self.audio_caption_prompt = DEFAULT_AUDIO_CAPTION_PROMPT
+        # 视频转述配置
+        video_caption_provider_ids = caption_config.get("video_caption_provider_ids")
+        if not video_caption_provider_ids:
+            video_caption_provider_ids = self.image_caption_provider_ids
+        self.video_caption_provider_ids = [p for p in video_caption_provider_ids if p]
+        self.video_caption_prompt = DEFAULT_VIDEO_CAPTION_PROMPT
 
     async def call_llm_decision(
         self,
@@ -639,3 +646,66 @@ class CallLLM:
             total_tokens=total_tokens,
             extra_info=extra_info
         )
+
+    async def call_llm_video_caption(
+        self,
+        video_url: str,
+        question: str | None = None,
+        bot_name: str = "",
+        group_or_user_id: str = "",
+    ) -> MediaCaption | None:
+        """调用支持原生视频理解的大语言模型 (如 Gemini 3.6 Flash) 进行视频与语音全量转述"""
+        logger.info(f"调用LLM生成原生视频描述(音频与画面同频)，带问题={bool(question)}")
+        for provider_id in self.video_caption_provider_ids:
+            for i in range(self.network_conf.get("image_caption_retry_times", 2)):
+                if i > 0:
+                    logger.warning(f"LLM生成视频描述失败，{provider_id} 重试第 {i} 次")
+                try:
+                    payload = video_url.removeprefix("base64://")
+                    video_sig = f"{len(payload)}:{xxh3_64_hexdigest(payload[200:328].encode()) if len(payload) > 328 else 'sig'}"
+
+                    unique_prompt = f"{self.video_caption_prompt}\n\n[Video Fingerprint: {video_sig}]"
+                    if question:
+                        unique_prompt += (
+                            f"\n\n# 带着以下问题看视频\n"
+                            f"请在转述中特别关注并回答该问题，将针对该问题的回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
+                            f"{question}"
+                        )
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=unique_prompt,
+                        image_urls=[video_url],
+                    )
+                    is_parsed = False
+                    parsed = None
+                    if llm_resp and llm_resp.completion_text:
+                        parsed = decode_media_caption_json(llm_resp.completion_text)
+                        if parsed:
+                            is_parsed = True
+
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="video_caption",
+                        provider_id=provider_id,
+                        llm_resp=llm_resp,
+                        extra_info={"status": "success" if is_parsed else "parse_failed"}
+                    )
+                    if parsed:
+                        logger.info(
+                            f"[Giftia] LLM原生视频转述响应片段: "
+                            f"{llm_resp.completion_text[:120]!r}"
+                        )
+                        return parsed
+                except Exception as e:
+                    logger.error(f"LLM原生视频转述异常: {e}")
+                    await self._log_token_usage_safely(
+                        bot_name=bot_name,
+                        group_or_user_id=group_or_user_id,
+                        type_name="video_caption",
+                        provider_id=provider_id,
+                        llm_resp=None,
+                        extra_info={"status": "api_failed", "error": str(e)}
+                    )
+                    continue
+        return None

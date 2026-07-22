@@ -88,23 +88,24 @@ async def initialize_database(conn: aiosqlite.Connection) -> None:
                 text TEXT,
                 caption TEXT,
                 is_captioned INTEGER DEFAULT 1,
+                duration REAL DEFAULT 0.0,
+                file_size INTEGER DEFAULT 0,
                 query_times INTEGER,
                 created_at DATETIME,
                 updated_at DATETIME
             )
         """)
-        try:
-            await cursor.execute(
-                "ALTER TABLE media_caption ADD COLUMN is_captioned INTEGER DEFAULT 1"
-            )
-        except aiosqlite.OperationalError as e:
-            if (
-                "duplicate" not in str(e).lower()
-                and "already exists" not in str(e).lower()
-            ):
-                logger.warning(
-                    f"Failed to add is_captioned column to media_caption: {e}"
-                )
+        for col_def in ("is_captioned INTEGER DEFAULT 1", "duration REAL DEFAULT 0.0", "file_size INTEGER DEFAULT 0"):
+            try:
+                await cursor.execute(f"ALTER TABLE media_caption ADD COLUMN {col_def}")
+            except aiosqlite.OperationalError as e:
+                if (
+                    "duplicate" not in str(e).lower()
+                    and "already exists" not in str(e).lower()
+                ):
+                    logger.warning(
+                        f"Failed to add column {col_def} to media_caption: {e}"
+                    )
         # 创建索引
         await cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_url ON media_caption (url)"
