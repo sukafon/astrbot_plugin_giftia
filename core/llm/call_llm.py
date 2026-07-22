@@ -1,9 +1,14 @@
+import asyncio
+import base64
+from pathlib import Path
+import aiohttp
 from xxhash import xxh3_64_hexdigest
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 from astrbot.core.exceptions import EmptyModelOutputError
+from astrbot.core.provider.entities import LLMResponse, TokenUsage
 
 from ..utils.schemas import (
     Decision,
@@ -22,6 +27,61 @@ from .preset_prompts import (
 )
 from .xml_parse import XmlParse
 from ..utils.token_utils import extract_tokens_robust
+import astrbot.core.utils.media_utils as media_utils
+
+from contextlib import contextmanager
+
+_orig_detect_image_mime_type = media_utils.detect_image_mime_type
+
+
+def _smart_detect_media_mime_type(
+    image_source: bytes | str | Path,
+    *,
+    default_mime_type: str | None = "image/jpeg",
+) -> str | None:
+    res = _orig_detect_image_mime_type(image_source, default_mime_type=None)
+    if res:
+        return res
+
+    try:
+        header = b""
+        if isinstance(image_source, bytes):
+            header = image_source[:64]
+        elif isinstance(image_source, (str, Path)):
+            clean = str(image_source).removeprefix("file://")
+            if clean.startswith("data:"):
+                mime = clean.split(";")[0].removeprefix("data:")
+                if mime.startswith("video/"):
+                    return mime
+            elif len(clean) < 4096:
+                p = Path(clean)
+                if p.exists() and p.is_file():
+                    with open(p, "rb") as f:
+                        header = f.read(64)
+
+        if b"ftyp" in header or header.startswith(b"\x00\x00\x00"):
+            return "video/mp4"
+        elif header.startswith(b"\x1a\x45\xdf\xa3"):
+            return "video/webm"
+        elif b"moov" in header or b"free" in header or b"qt  " in header:
+            return "video/quicktime"
+        elif header.startswith(b"RIFF") and b"AVI " in header:
+            return "video/x-msvideo"
+    except Exception:
+        pass
+
+    return default_mime_type
+
+
+@contextmanager
+def _scoped_video_mime_detection():
+    """按需在作用域内临时对 media_utils 附加视频 MIME 类型探测能力，规避全局副作用"""
+    orig_fn = media_utils.detect_image_mime_type
+    media_utils.detect_image_mime_type = _smart_detect_media_mime_type
+    try:
+        yield
+    finally:
+        media_utils.detect_image_mime_type = orig_fn
 
 
 class CallLLM:
@@ -671,11 +731,13 @@ class CallLLM:
                             f"请在转述中特别关注并回答该问题，将针对该问题的回答**包含在输出 JSON 的 \"caption\" 字段中**：\n"
                             f"{question}"
                         )
-                    llm_resp = await self.context.llm_generate(
-                        chat_provider_id=provider_id,
-                        prompt=unique_prompt,
-                        image_urls=[video_url],
-                    )
+
+                    with _scoped_video_mime_detection():
+                        llm_resp = await self.context.llm_generate(
+                            chat_provider_id=provider_id,
+                            prompt=unique_prompt,
+                            image_urls=[video_url],
+                        )
                     is_parsed = False
                     parsed = None
                     if llm_resp and llm_resp.completion_text:

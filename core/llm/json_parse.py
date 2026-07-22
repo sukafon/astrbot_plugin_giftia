@@ -6,19 +6,45 @@ from ..utils.schemas import MediaCaption
 logger = logging.getLogger("astrbot")
 
 
-def parse_markdown_json(text: str) -> dict | None:
-    """解析可能包裹在 markdown 语法中的 JSON 字符串"""
+import re
+
+
+def parse_markdown_json(text: str) -> dict | list | None:
+    """解析可能包含前导思考文本或包裹在 markdown 语法中的 JSON 字符串 (支持 Object 与 Array)"""
     if not text:
         return None
     clean_text = text.strip()
-    # 兼容 markdown 代码块
-    if clean_text.startswith("```json"):
-        clean_text = clean_text[7:]
-    elif clean_text.startswith("```"):
-        clean_text = clean_text[3:]
-    if clean_text.endswith("```"):
-        clean_text = clean_text[:-3]
-    clean_text = clean_text.strip()
+
+    # 1. 尝试从 ```json [ ... ] ``` 或 ``` { ... } ``` 代码块中提取
+    codeblock_match = re.search(r"```(?:json)?\s*([\[\{].*?[\]\}])\s*```", clean_text, re.DOTALL)
+    if codeblock_match:
+        json_str = codeblock_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+
+    # 2. 查找最外层的 JSON 结构: 对象 { ... } 或 数组 [ ... ]
+    obj_first = clean_text.find("{")
+    obj_last = clean_text.rfind("}")
+    arr_first = clean_text.find("[")
+    arr_last = clean_text.rfind("]")
+
+    candidates = []
+    if obj_first != -1 and obj_last > obj_first:
+        candidates.append((obj_first, clean_text[obj_first : obj_last + 1]))
+    if arr_first != -1 and arr_last > arr_first:
+        candidates.append((arr_first, clean_text[arr_first : arr_last + 1]))
+
+    candidates.sort(key=lambda x: x[0])
+
+    for _, snippet in candidates:
+        try:
+            return json.loads(snippet.strip())
+        except Exception:
+            pass
+
+    # 3. 兜底直接解析整体文本
     try:
         return json.loads(clean_text)
     except Exception as e:
