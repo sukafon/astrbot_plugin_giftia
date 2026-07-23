@@ -459,6 +459,21 @@ class XmlParse:
                             f"Recaption数据不完整，缺少media_id: {child.attrs}, xml_str: {xml_str[:1000]}"
                         )
 
+                elif tag_name == "search_anime":
+                    media_id = self._attr_str(child, "media_id", "") or child.get_text(strip=True)
+                    stype = self._attr_str(child, "type", "anime")
+                    limit = self._attr_int(child, "limit", 3)
+                    if media_id:
+                        result.search_anime_requests.append({
+                            "media_id": media_id,
+                            "type": stype,
+                            "limit": limit,
+                        })
+                    else:
+                        logger.error(
+                            f"Search anime数据不完整，缺少media_id: {child.attrs}, xml_str: {xml_str[:1000]}"
+                        )
+
             return result
         except Exception as e:
             logger.error(f"解析LLM XML失败: {e}, xml_str: {xml_str[:1000]}")
@@ -530,6 +545,7 @@ class XmlParse:
             "decision",
             "caption",
             "recaption",
+            "search_anime",
         ]
         pattern = r"<\s*(/?)\s*(" + "|".join(flat_tags) + r")\b([^>]*?)(/?)\s*>"
 
@@ -625,3 +641,14 @@ class XmlParse:
         if isinstance(val, list):
             return val[0] if val else default
         return val if val is not None else default
+
+    @staticmethod
+    def _attr_int(tag: Tag, attr_name: str, default: int = 0) -> int:
+        """安全获取 BeautifulSoup 标签的整数属性"""
+        val_str = XmlParse._attr_str(tag, attr_name, "")
+        if not val_str:
+            return default
+        try:
+            return int(val_str)
+        except ValueError:
+            return default
