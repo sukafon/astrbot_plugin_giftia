@@ -506,3 +506,80 @@ class ChatHistoryRepository(BaseRepository):
             (message_id, group_or_user_id, bot_name),
         )
         await self.conn.commit()
+
+    async def auto_clean_chat_history(
+        self,
+        max_count_per_session: int = 1000,
+        max_age_days: int = 30,
+        min_keep_per_session: int = 20,
+    ) -> int:
+        """
+        按会话（Option A 并集删除）自动清理聊天记录：
+        - 某条消息如果不属于最新的 min_keep_per_session 条保底记录，
+          且满足（超出 max_count_per_session 条数 OR 早于 max_age_days 天前）时触发清理。
+        """
+        if max_count_per_session <= 0 and max_age_days <= 0:
+            return 0
+
+        clean_keep = max(1, int(min_keep_per_session or 20))
+        clean_count = max(0, int(max_count_per_session or 0))
+        clean_days = max(0, int(max_age_days or 0))
+
+        # 获取所有包含聊天记录的会话
+        async with self.conn.execute(
+            """
+            SELECT DISTINCT bot_name, group_or_user_id
+            FROM chat_history
+            """
+        ) as cursor:
+            sessions = await cursor.fetchall()
+
+        total_deleted = 0
+        for session in sessions:
+            bot_name = session["bot_name"]
+            group_or_user_id = session["group_or_user_id"]
+
+            conds = []
+            params = [bot_name, group_or_user_id, bot_name, group_or_user_id, clean_keep]
+
+            if clean_count > 0:
+                conds.append(
+                    """
+                    id NOT IN (
+                        SELECT id FROM chat_history
+                        WHERE bot_name = ? AND group_or_user_id = ?
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT ?
+                    )
+                    """
+                )
+                params.extend([bot_name, group_or_user_id, clean_count])
+
+            if clean_days > 0:
+                conds.append(
+                    f"created_at < datetime('now', '-{clean_days} days')"
+                )
+
+            if not conds:
+                continue
+
+            where_or = " OR ".join(conds)
+            sql = f"""
+                DELETE FROM chat_history
+                WHERE bot_name = ? AND group_or_user_id = ?
+                  AND id NOT IN (
+                      SELECT id FROM chat_history
+                      WHERE bot_name = ? AND group_or_user_id = ?
+                      ORDER BY created_at DESC, id DESC
+                      LIMIT ?
+                  )
+                  AND ({where_or})
+            """
+
+            async with self.conn.execute(sql, params) as cursor:
+                total_deleted += cursor.rowcount
+
+        await self.conn.commit()
+        return total_deleted
+
+

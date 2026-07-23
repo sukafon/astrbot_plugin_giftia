@@ -116,6 +116,19 @@ class Database(ProfileStoreMixin):
     async def delete_chat_history(self, bot_name: str, group_or_user_id: str):
         return await self.chat_history_repo.delete_chat_history(bot_name, group_or_user_id)
 
+    async def auto_clean_chat_history(
+        self,
+        max_count_per_session: int = 1000,
+        max_age_days: int = 30,
+        min_keep_per_session: int = 20,
+    ) -> int:
+        return await self.chat_history_repo.auto_clean_chat_history(
+            max_count_per_session=max_count_per_session,
+            max_age_days=max_age_days,
+            min_keep_per_session=min_keep_per_session,
+        )
+
+
     async def update_message_decision(
         self, bot_name: str, group_or_user_id: str, message_id: str, reply_decision: int, use_rag: int
     ):
@@ -156,6 +169,10 @@ class Database(ProfileStoreMixin):
 
     async def increment_forward_query_times(self, bot_name: str, group_or_user_id: str, forward_id: str):
         return await self.forwarded_messages_repo.increment_forward_query_times(bot_name, group_or_user_id, forward_id)
+
+    async def clean_old_forwards(self, max_age_hours: int = 24) -> int:
+        return await self.forwarded_messages_repo.clean_old_forwards(max_age_hours)
+
 
     # =========================================================================
     # Media Captions Delegations

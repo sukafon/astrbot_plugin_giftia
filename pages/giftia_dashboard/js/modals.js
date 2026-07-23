@@ -1546,3 +1546,129 @@ window.clearChatHistory = async function() {
         }
     });
 };
+
+// ── Chat History Auto Clean Modal JS ──────────────────────────────────
+window.openChatHistoryAutoCleanModal = async function() {
+    window.openModal("chat-history-auto-clean-modal");
+    await window.loadAutoCleanChatHistoryConfig();
+};
+
+window.loadAutoCleanChatHistoryConfig = async function() {
+    try {
+        const res = await window.apiGet("/chat_history/auto_clean/config");
+        if (res.status === "success" && res.config) {
+            const cfg = res.config;
+            document.getElementById("auto-clean-chat-enabled").checked = Boolean(cfg.enabled);
+            document.getElementById("auto-clean-chat-max-count").value = Math.max(0, parseInt(cfg.max_count_per_session) || 0);
+            document.getElementById("auto-clean-chat-max-days").value = Math.max(0, parseInt(cfg.max_age_days) || 0);
+            document.getElementById("auto-clean-chat-min-keep").value = Math.max(1, parseInt(cfg.min_keep_per_session) || 20);
+        }
+    } catch (e) {
+        window.showToast(`加载聊天记录自动清理配置失败: ${e.message}`);
+    }
+};
+
+window.saveAutoCleanChatHistoryConfig = async function() {
+    const config = {
+        enabled: document.getElementById("auto-clean-chat-enabled").checked,
+        max_count_per_session: Math.max(0, parseInt(document.getElementById("auto-clean-chat-max-count").value) || 0),
+        max_age_days: Math.max(0, parseInt(document.getElementById("auto-clean-chat-max-days").value) || 0),
+        min_keep_per_session: Math.max(1, parseInt(document.getElementById("auto-clean-chat-min-keep").value) || 20)
+    };
+    try {
+        const res = await window.apiPost("/chat_history/auto_clean/config", config);
+        if (res.status === "success") {
+            window.showToast("已保存聊天记录自动清理配置！");
+            window.closeModal("chat-history-auto-clean-modal");
+        } else {
+            window.showToast(`保存配置失败: ${res.message || "请求出错"}`);
+        }
+    } catch (e) {
+        window.showToast(`保存聊天记录自动清理配置出错: ${e.message}`);
+    }
+};
+
+window.triggerAutoCleanChatHistoryImmediately = function() {
+    window.showConfirm("确认执行清理", "确认要按当前自动清理配置立即清理聊天记录吗？此操作无法撤销。", async () => {
+        try {
+            await window.saveAutoCleanChatHistoryConfig();
+            const res = await window.apiPost("/chat_history/auto_clean/trigger", {});
+            if (res.status === "success") {
+                const count = res.deleted_count ?? 0;
+                window.showToast(`聊天记录清理完成，共删除 ${count} 条历史消息`);
+                window.closeModal("chat-history-auto-clean-modal");
+                if (window.GiftiaApp && window.GiftiaApp.loadChatHistory) {
+                    window.GiftiaApp.loadChatHistory();
+                }
+            } else {
+                window.showToast(`执行失败: ${res.message || "请求出错"}`);
+            }
+        } catch (e) {
+            window.showToast(`执行清理出错: ${e.message}`);
+        }
+    });
+};
+
+// ── Expired User Aliases Auto Clean Modal JS ──────────────────────────
+window.openAutoCleanAliasesModal = async function() {
+    window.openModal("auto-clean-aliases-modal");
+    await window.loadAutoCleanAliasesConfig();
+};
+
+window.loadAutoCleanAliasesConfig = async function() {
+    try {
+        const res = await window.apiGet("/profiles/user/aliases/auto_clean/config");
+        if (res.status === "success" && res.config) {
+            const cfg = res.config;
+            document.getElementById("auto-clean-aliases-enabled").checked = Boolean(cfg.enabled);
+            document.getElementById("auto-clean-aliases-min-age-days").value = Math.max(1, parseInt(cfg.min_age_days) || 7);
+            document.getElementById("auto-clean-aliases-count-threshold").value = Math.max(1, parseInt(cfg.count_threshold) || 3);
+        }
+    } catch (e) {
+        window.showToast(`加载过期外号清理配置失败: ${e.message}`);
+    }
+};
+
+window.saveAutoCleanAliasesConfig = async function() {
+    const config = {
+        enabled: document.getElementById("auto-clean-aliases-enabled").checked,
+        min_age_days: Math.max(1, parseInt(document.getElementById("auto-clean-aliases-min-age-days").value) || 7),
+        count_threshold: Math.max(1, parseInt(document.getElementById("auto-clean-aliases-count-threshold").value) || 3)
+    };
+    try {
+        const res = await window.apiPost("/profiles/user/aliases/auto_clean/config", config);
+        if (res.status === "success") {
+            window.showToast("已保存过期外号自动清理配置！");
+            window.closeModal("auto-clean-aliases-modal");
+        } else {
+            window.showToast(`保存配置失败: ${res.message || "请求出错"}`);
+        }
+    } catch (e) {
+        window.showToast(`保存过期外号清理配置出错: ${e.message}`);
+    }
+};
+
+window.triggerAutoCleanAliasesImmediately = function() {
+    window.showConfirm("确认执行清理", "确认要按当前配置立即清理未达标的过期外号吗？此操作无法撤销。", async () => {
+        try {
+            await window.saveAutoCleanAliasesConfig();
+            const res = await window.apiPost("/profiles/user/aliases/auto_clean/trigger", {});
+            if (res.status === "success") {
+                const count = res.deleted_count ?? 0;
+                window.showToast(`过期外号清理完成，共删除 ${count} 条候选外号`);
+                window.closeModal("auto-clean-aliases-modal");
+                if (window.loadUserAliases) {
+                    await window.loadUserAliases();
+                }
+                if (window.GiftiaApp && window.GiftiaApp.loadUserProfiles) {
+                    window.GiftiaApp.loadUserProfiles();
+                }
+            } else {
+                window.showToast(`执行失败: ${res.message || "请求出错"}`);
+            }
+        } catch (e) {
+            window.showToast(`执行清理出错: ${e.message}`);
+        }
+    });
+};
+

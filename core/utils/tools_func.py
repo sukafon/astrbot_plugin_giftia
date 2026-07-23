@@ -22,6 +22,18 @@ class ToolsFunc:
         "max_delete_per_run": 20,
         "cron": "30 3 * * *",
     }
+    DEFAULT_AUTO_CLEAN_USER_ALIASES_CONFIG = {
+        "enabled": True,
+        "min_age_days": 7,
+        "count_threshold": 3,
+    }
+    DEFAULT_AUTO_CLEAN_CHAT_HISTORY_CONFIG = {
+        "enabled": False,
+        "max_count_per_session": 1000,
+        "max_age_days": 30,
+        "min_keep_per_session": 20,
+    }
+
 
     def __init__(
         self,
@@ -157,6 +169,20 @@ class ToolsFunc:
         """兼容层：统一自动清理更新"""
         self.update_auto_cleanup_jobs()
 
+    @staticmethod
+    def _clean_bool(val, default: bool) -> bool:
+        if val is None:
+            return default
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            lowered = val.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        return bool(val)
+
     @classmethod
     def normalize_auto_clean_memory_config(cls, raw_cfg=None) -> dict:
         """归一化长期记忆自动清理配置。"""
@@ -181,26 +207,8 @@ class ToolsFunc:
                 value = min(max_value, value)
             cfg[key] = value
 
-        def clean_bool(key: str, default: bool):
-            value = cfg.get(key, default)
-            if value is None:
-                cfg[key] = default
-                return
-            if isinstance(value, bool):
-                cfg[key] = value
-                return
-            if isinstance(value, str):
-                lowered = value.strip().lower()
-                if lowered in {"1", "true", "yes", "on"}:
-                    cfg[key] = True
-                    return
-                if lowered in {"0", "false", "no", "off"}:
-                    cfg[key] = False
-                    return
-            cfg[key] = bool(value)
-
-        clean_bool("enabled", False)
-        clean_bool("include_never_hit", True)
+        cfg["enabled"] = cls._clean_bool(cfg.get("enabled"), False)
+        cfg["include_never_hit"] = cls._clean_bool(cfg.get("include_never_hit"), True)
         clean_int("max_importance", 3, 1, 7)
         clean_int("max_hit_count", 1, 0, None)
         clean_int("min_age_days", 60, 7, None)
@@ -210,9 +218,108 @@ class ToolsFunc:
         cfg["cron"] = cron or "30 3 * * *"
         return cfg
 
+    @classmethod
+    def normalize_auto_clean_aliases_config(cls, raw_cfg=None) -> dict:
+        """归一化过期外号自动清理配置。"""
+        if isinstance(raw_cfg, str):
+            try:
+                raw_cfg = json.loads(raw_cfg) if raw_cfg else {}
+            except Exception:
+                raw_cfg = {}
+        if not isinstance(raw_cfg, dict):
+            raw_cfg = {}
+
+        cfg = dict(cls.DEFAULT_AUTO_CLEAN_USER_ALIASES_CONFIG)
+        cfg.update(raw_cfg)
+
+        cfg["enabled"] = cls._clean_bool(cfg.get("enabled"), True)
+        try:
+            cfg["min_age_days"] = max(1, int(cfg.get("min_age_days", 7)))
+        except (TypeError, ValueError):
+            cfg["min_age_days"] = 7
+
+        try:
+            cfg["count_threshold"] = max(1, int(cfg.get("count_threshold", 3)))
+        except (TypeError, ValueError):
+            cfg["count_threshold"] = 3
+
+        return cfg
+
+    @classmethod
+    def normalize_auto_clean_chat_history_config(cls, raw_cfg=None) -> dict:
+        """归一化聊天记录自动清理配置。"""
+        if isinstance(raw_cfg, str):
+            try:
+                raw_cfg = json.loads(raw_cfg) if raw_cfg else {}
+            except Exception:
+                raw_cfg = {}
+        if not isinstance(raw_cfg, dict):
+            raw_cfg = {}
+
+        cfg = dict(cls.DEFAULT_AUTO_CLEAN_CHAT_HISTORY_CONFIG)
+        cfg.update(raw_cfg)
+
+        cfg["enabled"] = cls._clean_bool(cfg.get("enabled"), False)
+        try:
+            cfg["max_count_per_session"] = max(0, int(cfg.get("max_count_per_session", 1000)))
+        except (TypeError, ValueError):
+            cfg["max_count_per_session"] = 1000
+
+        try:
+            cfg["max_age_days"] = max(0, int(cfg.get("max_age_days", 30)))
+        except (TypeError, ValueError):
+            cfg["max_age_days"] = 30
+
+        try:
+            cfg["min_keep_per_session"] = max(1, int(cfg.get("min_keep_per_session", 20)))
+        except (TypeError, ValueError):
+            cfg["min_keep_per_session"] = 20
+
+        return cfg
+
+
     def update_auto_clean_memory_job(self):
         """兼容层：统一自动清理更新"""
         self.update_auto_cleanup_jobs()
+
+    async def auto_clean_expired_user_aliases(self, config: dict | None = None) -> dict:
+        """自动清理未达标且过期的外号记录。"""
+        if config is None:
+            raw_cfg = await self.db.get_kv_data("auto_clean_user_aliases_config")
+            config = self.normalize_auto_clean_aliases_config(raw_cfg)
+        else:
+            config = self.normalize_auto_clean_aliases_config(config)
+
+        if not config.get("enabled", True):
+            return {"status": "skipped", "message": "过期外号自动清理未启用", "deleted_count": 0}
+
+        deleted_count = await self.db.delete_expired_user_aliases(
+            min_age_days=config["min_age_days"],
+            count_threshold=config["count_threshold"],
+        )
+        msg = f"过期外号自动清理完成，已清理 {deleted_count} 条低于 {config['count_threshold']} 次且早于 {config['min_age_days']} 天的外号"
+        logger.info(f"[Giftia] {msg}")
+        return {"status": "success", "message": msg, "deleted_count": deleted_count}
+
+    async def auto_clean_chat_history(self, config: dict | None = None) -> dict:
+        """自动清理聊天记录（方案 A 并集删除，保护保底条数）。"""
+        if config is None:
+            raw_cfg = await self.db.get_kv_data("auto_clean_chat_history_config")
+            config = self.normalize_auto_clean_chat_history_config(raw_cfg)
+        else:
+            config = self.normalize_auto_clean_chat_history_config(config)
+
+        if not config.get("enabled", False):
+            return {"status": "skipped", "message": "聊天记录自动清理未启用", "deleted_count": 0}
+
+        deleted_count = await self.db.auto_clean_chat_history(
+            max_count_per_session=config["max_count_per_session"],
+            max_age_days=config["max_age_days"],
+            min_keep_per_session=config["min_keep_per_session"],
+        )
+        msg = f"聊天记录自动清理完成，共清理 {deleted_count} 条消息记录"
+        logger.info(f"[Giftia] {msg}")
+        return {"status": "success", "message": msg, "deleted_count": deleted_count}
 
     async def auto_cleanup_unified(self):
         """统一自动清理任务，按顺序线性执行各项已启用的清理子任务。"""
@@ -222,42 +329,81 @@ class ToolsFunc:
         media_cfg = await self._get_media_clean_cfg()
             
         if media_cfg.get("enabled", False):
-            logger.info("[Giftia] 1/3 正在执行自动清理媒体缓存...")
+            logger.info("[Giftia] 1/6 正在执行自动清理媒体缓存...")
             try:
                 res = await self.auto_clean_media_cache()
                 logger.info(f"[Giftia] 媒体缓存清理结果: {res.get('message', '无结果')}")
             except Exception as e:
                 logger.error(f"[Giftia] 媒体缓存自动清理执行异常: {e}")
         else:
-            logger.info("[Giftia] 1/3 自动清理媒体缓存未启用，跳过")
+            logger.info("[Giftia] 1/6 自动清理媒体缓存未启用，跳过")
             
         # 2. 长期记忆清理
         raw_memory_cfg = await self.db.get_kv_data("auto_clean_memory_config")
         memory_cfg = self.normalize_auto_clean_memory_config(raw_memory_cfg)
         
         if memory_cfg.get("enabled", False):
-            logger.info("[Giftia] 2/3 正在执行自动清理长期记忆...")
+            logger.info("[Giftia] 2/6 正在执行自动清理长期记忆...")
             try:
                 res = await self.auto_clean_memories()
                 logger.info(f"[Giftia] 长期记忆清理结果: {res.get('message', '无结果')}")
             except Exception as e:
                 logger.error(f"[Giftia] 长期记忆自动清理执行异常: {e}")
         else:
-            logger.info("[Giftia] 2/3 自动清理长期记忆未启用，跳过")
-            
-        # 3. Token 消耗日志清理
+            logger.info("[Giftia] 2/6 自动清理长期记忆未启用，跳过")
+
+        # 3. 过期外号清理（默认开启，无需 UI 配置）
+        raw_alias_cfg = await self.db.get_kv_data("auto_clean_user_aliases_config")
+        alias_cfg = self.normalize_auto_clean_aliases_config(raw_alias_cfg)
+
+        if alias_cfg.get("enabled", True):
+            logger.info("[Giftia] 3/6 正在执行自动清理过期外号...")
+            try:
+                res = await self.auto_clean_expired_user_aliases(config=alias_cfg)
+                logger.info(f"[Giftia] 过期外号清理结果: {res.get('message', '无结果')}")
+            except Exception as e:
+                logger.error(f"[Giftia] 过期外号自动清理执行异常: {e}")
+        else:
+            logger.info("[Giftia] 3/6 自动清理过期外号未启用，跳过")
+
+        # 4. 聊天记录清理（控制台开关，默认关闭）
+        raw_chat_cfg = await self.db.get_kv_data("auto_clean_chat_history_config")
+        chat_cfg = self.normalize_auto_clean_chat_history_config(raw_chat_cfg)
+
+        if chat_cfg.get("enabled", False):
+            logger.info("[Giftia] 4/6 正在执行自动清理聊天记录...")
+            try:
+                res = await self.auto_clean_chat_history(config=chat_cfg)
+                logger.info(f"[Giftia] 聊天记录清理结果: {res.get('message', '无结果')}")
+            except Exception as e:
+                logger.error(f"[Giftia] 聊天记录自动清理执行异常: {e}")
+        else:
+            logger.info("[Giftia] 4/6 自动清理聊天记录未启用，跳过")
+
+
+        # 5. 合并转发记录清理（超过 24h 默认自动清理，无需 UI 配置）
+        logger.info("[Giftia] 5/6 正在执行自动清理超过 24h 的合并转发记录...")
+        try:
+            deleted_forwards = await self.db.clean_old_forwards(max_age_hours=24)
+            logger.info(f"[Giftia] 合并转发记录清理结果: 已清理 {deleted_forwards} 条超过 24h 的记录")
+        except Exception as e:
+            logger.error(f"[Giftia] 合并转发自动清理执行异常: {e}")
+
+        # 6. Token 消耗日志清理
         token_cfg = await self._get_token_clean_cfg()
             
         if token_cfg.get("enabled", True):
-            logger.info("[Giftia] 3/3 正在执行自动清理 Token 消耗日志...")
+            logger.info("[Giftia] 6/6 正在执行自动清理 Token 消耗日志...")
             try:
                 await self.auto_clean_token_usage()
             except Exception as e:
                 logger.error(f"[Giftia] Token 消耗日志自动清理执行异常: {e}")
         else:
-            logger.info("[Giftia] 3/3 自动清理 Token 消耗日志未启用，跳过")
+            logger.info("[Giftia] 6/6 自动清理 Token 消耗日志未启用，跳过")
+
             
         logger.info("[Giftia] 统一自动清理流程执行结束。")
+
 
     def _build_auto_clean_memory_query(self, cfg: dict) -> tuple[str, list]:
         max_importance = min(int(cfg.get("max_importance", 3)), 7)
