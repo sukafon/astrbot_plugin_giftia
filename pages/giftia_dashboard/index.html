@@ -113,9 +113,12 @@
                         <div>
                             已归档消息边界 ID: <strong id="history-last-summarized-id" class="badge badge-info" style="font-size: 0.85rem; vertical-align: middle; margin-left: 5px;">无</strong>
                         </div>
-                        <button class="btn btn-danger btn-small" id="btn-clear-history" onclick="clearChatHistory()">
-                            清空当前会话消息
-                        </button>
+                        <div class="header-action-group">
+                            <button class="btn btn-secondary btn-small" style="margin-right: 8px;" onclick="openChatHistoryAutoCleanModal()">自动清理配置</button>
+                            <button class="btn btn-danger btn-small" id="btn-clear-history" onclick="clearChatHistory()">
+                                清空当前会话消息
+                            </button>
+                        </div>
                     </div>
                     <div class="table-container">
                         <table>
@@ -819,7 +822,6 @@
                     </table>
                 </div>
             </div>
-
         </div>
     </div>
 
@@ -982,7 +984,50 @@
         </div>
     </div>
 
+    <!-- MODAL: Chat History Auto Clean -->
+    <div id="chat-history-auto-clean-modal" class="modal-overlay">
+        <div class="modal-card card">
+            <div class="modal-header">
+                <h2>聊天记录自动清理配置</h2>
+                <button class="modal-close-btn" onclick="closeModal('chat-history-auto-clean-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="summary-box alert-box" id="auto-clean-chat-summary" style="border-left: 4px solid var(--primary); background: var(--bg-card); padding: 12px; margin-bottom: 15px; font-size: 13px; border-radius: 6px;">
+                    根据方案 A（并集删除），当会话中的历史记录【超出最大条数】或【早于最大保留天数】时自动清理，且每个会话保底保留最新条数（防止清空上下文）。
+                </div>
+                <div class="form-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                    <div style="flex: 1; min-width: 0; margin-right: 12px;">
+                        <strong style="color: var(--font-primary);">开启定时自动清理</strong>
+                        <div class="muted-text" style="margin-top: 4px;">默认关闭。开启后每天凌晨 03:00 自动清理过期的聊天记录。</div>
+                    </div>
+                    <div class="switch-container">
+                        <input type="checkbox" id="auto-clean-chat-enabled" class="switch-checkbox">
+                        <label for="auto-clean-chat-enabled" class="switch-label"></label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>每个会话最大保留条数 (0 表示不限制条数上限)</label>
+                    <input type="number" id="auto-clean-chat-max-count" min="0" step="50" value="1000">
+                </div>
+                <div class="form-group">
+                    <label>历史记录最大保留天数 (0 表示不限制天数上限)</label>
+                    <input type="number" id="auto-clean-chat-max-days" min="0" step="1" value="30">
+                </div>
+                <div class="form-group">
+                    <label>每个会话最少保底保留条数 (防止完全清空会话上下文)</label>
+                    <input type="number" id="auto-clean-chat-min-keep" min="1" step="1" value="20">
+                </div>
+            </div>
+            <div class="modal-footer flex-between">
+                <button class="btn btn-warning" onclick="triggerAutoCleanChatHistoryImmediately()">立即执行清理</button>
+                <button class="btn btn-primary" onclick="saveAutoCleanChatHistoryConfig()">保存配置</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Feedback Message Toast -->
+
     <div id="toast-message" class="toast">提示信息</div>
 </body>
 </html>
+

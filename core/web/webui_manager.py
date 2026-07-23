@@ -190,6 +190,25 @@ class WebUIManager:
             desc="Delete chat history for a session",
         )
         ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/auto_clean/config",
+            view_handler=self.web_api.get_auto_clean_chat_history_config,
+            methods=["GET"],
+            desc="Get chat history auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/auto_clean/config",
+            view_handler=self.web_api.set_auto_clean_chat_history_config,
+            methods=["POST"],
+            desc="Set chat history auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/chat_history/auto_clean/trigger",
+            view_handler=self.web_api.trigger_auto_clean_chat_history,
+            methods=["POST"],
+            desc="Trigger chat history auto cleanup",
+        )
+
+        ctx.register_web_api(
             route="/astrbot_plugin_giftia/forwards",
             view_handler=self.web_api.get_forwards,
             methods=["GET"],
@@ -261,6 +280,25 @@ class WebUIManager:
             methods=["POST"],
             desc="Delete user profile alias",
         )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/auto_clean/config",
+            view_handler=self.web_api.get_auto_clean_aliases_config,
+            methods=["GET"],
+            desc="Get user aliases auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/auto_clean/config",
+            view_handler=self.web_api.set_auto_clean_aliases_config,
+            methods=["POST"],
+            desc="Set user aliases auto cleanup config",
+        )
+        ctx.register_web_api(
+            route="/astrbot_plugin_giftia/profiles/user/aliases/auto_clean/trigger",
+            view_handler=self.web_api.trigger_auto_clean_aliases,
+            methods=["POST"],
+            desc="Trigger user aliases auto cleanup",
+        )
+
         ctx.register_web_api(
             route="/astrbot_plugin_giftia/profiles/group",
             view_handler=self.web_api.get_group_profiles,

@@ -29,7 +29,7 @@ class ProfileStoreMixin:
         """获取用户外号，按统计数量优先，同数量时旧外号优先"""
         params: list = [bot_name, group_or_user_id, user_id]
         
-        count_clause = "AND ua.alias_count > 3" if not ignore_count_filter else ""
+        count_clause = "AND ua.alias_count >= 3" if not ignore_count_filter else ""
         
         limit_clause = ""
         if limit is not None:
@@ -727,3 +727,23 @@ class ProfileStoreMixin:
             (group_or_user_id, bot_name),
         )
         await self.conn.commit()
+
+    async def delete_expired_user_aliases(
+        self, min_age_days: int = 7, count_threshold: int = 3
+    ) -> int:
+        """自动清理未达标且过期的外号记录（alias_count < count_threshold 且 first_seen_at <= min_age_days 天前）"""
+        clean_days = max(1, int(min_age_days or 7))
+        clean_threshold = max(1, int(count_threshold or 3))
+
+        async with self.conn.execute(
+            f"""
+            DELETE FROM user_aliases
+            WHERE alias_count < ?
+              AND (first_seen_at < datetime('now', '-{clean_days} days') OR first_seen_at IS NULL)
+            """,
+            (clean_threshold,),
+        ) as cursor:
+            deleted_count = cursor.rowcount
+        await self.conn.commit()
+        return deleted_count
+

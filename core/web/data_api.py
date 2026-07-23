@@ -1440,7 +1440,76 @@ class DataApi:
             logger.error(f"[Giftia API] delete_user_alias error: {e}")
             return error_response(f"删除用户外号失败: {str(e)}")
 
+    # ── Chat History Auto Clean APIs ────────────────────────────────────
+
+    async def get_auto_clean_chat_history_config(self):
+        """获取聊天记录自动清理配置。"""
+        try:
+            raw_cfg = await self.giftia.db.get_kv_data("auto_clean_chat_history_config")
+            cfg = self.giftia.tools_func.normalize_auto_clean_chat_history_config(raw_cfg)
+            return json_response({"status": "success", "config": cfg})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_auto_clean_chat_history_config error: {e}")
+            return error_response(f"获取聊天记录自动清理配置失败: {str(e)}")
+
+    async def set_auto_clean_chat_history_config(self):
+        """保存聊天记录自动清理配置。"""
+        try:
+            body = await request.json()
+            cfg = self.giftia.tools_func.normalize_auto_clean_chat_history_config(body)
+            await self.giftia.db.upsert_kv_data(
+                "auto_clean_chat_history_config", json.dumps(cfg)
+            )
+            return json_response({"status": "success", "config": cfg, "message": "已保存聊天记录自动清理配置"})
+        except Exception as e:
+            logger.error(f"[Giftia API] set_auto_clean_chat_history_config error: {e}")
+            return error_response(f"保存聊天记录自动清理配置失败: {str(e)}")
+
+    async def trigger_auto_clean_chat_history(self):
+        """立即手动触发聊天记录自动清理。"""
+        try:
+            res = await self.giftia.tools_func.auto_clean_chat_history()
+            return json_response(res)
+        except Exception as e:
+            logger.error(f"[Giftia API] trigger_auto_clean_chat_history error: {e}")
+            return error_response(f"执行聊天记录自动清理失败: {str(e)}")
+
+    # ── User Aliases Auto Clean APIs ───────────────────────────────────
+
+    async def get_auto_clean_aliases_config(self):
+        """获取过期外号自动清理配置。"""
+        try:
+            raw_cfg = await self.giftia.db.get_kv_data("auto_clean_user_aliases_config")
+            cfg = self.giftia.tools_func.normalize_auto_clean_aliases_config(raw_cfg)
+            return json_response({"status": "success", "config": cfg})
+        except Exception as e:
+            logger.error(f"[Giftia API] get_auto_clean_aliases_config error: {e}")
+            return error_response(f"获取过期外号自动清理配置失败: {str(e)}")
+
+    async def set_auto_clean_aliases_config(self):
+        """保存过期外号自动清理配置。"""
+        try:
+            body = await request.json()
+            cfg = self.giftia.tools_func.normalize_auto_clean_aliases_config(body)
+            await self.giftia.db.upsert_kv_data(
+                "auto_clean_user_aliases_config", json.dumps(cfg)
+            )
+            return json_response({"status": "success", "config": cfg, "message": "已保存过期外号自动清理配置"})
+        except Exception as e:
+            logger.error(f"[Giftia API] set_auto_clean_aliases_config error: {e}")
+            return error_response(f"保存过期外号自动清理配置失败: {str(e)}")
+
+    async def trigger_auto_clean_aliases(self):
+        """立即手动触发过期外号自动清理。"""
+        try:
+            res = await self.giftia.tools_func.auto_clean_expired_user_aliases()
+            return json_response(res)
+        except Exception as e:
+            logger.error(f"[Giftia API] trigger_auto_clean_aliases error: {e}")
+            return error_response(f"执行过期外号自动清理失败: {str(e)}")
+
     # ── Group Profile APIs ──────────────────────────────────────────────
+
 
     async def get_group_profiles(self):
         """Get group profiles with pagination and filters."""

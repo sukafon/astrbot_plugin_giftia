@@ -92,3 +92,18 @@ class ForwardedMessagesRepository(BaseRepository):
             (datetime.now().isoformat(), bot_name, group_or_user_id, forward_id),
         )
         await self.conn.commit()
+
+    async def clean_old_forwards(self, max_age_hours: int = 24) -> int:
+        """删除超过指定小时数（默认 24 小时）的合并转发缓存记录。"""
+        cutoff = (datetime.now() - timedelta(hours=max_age_hours)).isoformat()
+        async with self.conn.execute(
+            """
+            DELETE FROM forwarded_message
+            WHERE COALESCE(created_at, updated_at) < ?
+            """,
+            (cutoff,),
+        ) as cursor:
+            deleted_count = cursor.rowcount
+        await self.conn.commit()
+        return deleted_count
+
