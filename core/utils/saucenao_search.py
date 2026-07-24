@@ -112,16 +112,14 @@ def _parse_saucenao_html(
         if img_elem:
             img_tag = img_elem.find("img")
             if img_tag:
-                img_url = (
+                raw_url = (
                     img_tag.get("src")
                     or img_tag.get("data-src")
                     or img_tag.get("data-src2")
                     or ""
                 )
-                if img_url.startswith("//"):
-                    img_url = "https:" + img_url
-                elif img_url.startswith("/"):
-                    img_url = "https://saucenao.com" + img_url
+                if raw_url:
+                    img_url = urllib.parse.urljoin("https://saucenao.com/", raw_url)
 
         # 标题
         title_elem = res.find("div", class_="resulttitle")
@@ -186,7 +184,7 @@ def _parse_saucenao_html(
             lines.append("链接: " + " ; ".join(item["links"][:3]))
 
         node_content = [Plain("\n".join(lines))]
-        if item["img_url"]:
+        if item["img_url"] and item["img_url"].startswith(("http://", "https://")):
             node_content.append(Image.fromURL(item["img_url"]))
 
         nodes.append(

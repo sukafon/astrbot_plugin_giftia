@@ -54,10 +54,12 @@ async def search_anime_by_image(
                     except Exception as e:
                         logger.warning(f"[Giftia] 本地拉取搜番图片 URL 失败: {e}")
 
+            api_url = "https://api.trace.moe/search"
+            params = {"anilistInfo": "", "cutBorders": ""}
+
             if image_bytes:
-                url = "https://api.trace.moe/search?anilistInfo"
                 post_headers = {"Content-Type": "image/jpeg", **headers}
-                async with session.post(url, data=image_bytes, headers=post_headers) as resp:
+                async with session.post(api_url, params=params, data=image_bytes, headers=post_headers) as resp:
                     if resp.status != 200:
                         err_text = ""
                         try:
@@ -73,8 +75,8 @@ async def search_anime_by_image(
                         )
                     data = await resp.json()
             elif image_url:
-                url = f"https://api.trace.moe/search?anilistInfo&url={urllib.parse.quote(image_url)}"
-                async with session.get(url) as resp:
+                params["url"] = image_url
+                async with session.get(api_url, params=params) as resp:
                     if resp.status != 200:
                         err_text = ""
                         try:
