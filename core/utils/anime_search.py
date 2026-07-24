@@ -111,7 +111,7 @@ async def search_anime_by_image(
                 name=uploader_name,
                 content=[
                     Plain(
-                        f"🔍 以图搜图/搜番结果 ({search_type})\n"
+                        f"🔍 以图搜番结果 (trace.moe)\n"
                         f"共包含 {len(target_results)} 个候选结果："
                     )
                 ],
